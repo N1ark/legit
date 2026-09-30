@@ -1,4 +1,4 @@
-import type { CommitDiff, CommitInfo, OpResult, RepoState } from '../../shared/types.ts';
+import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, RepoState } from '../../shared/types.ts';
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(
@@ -28,7 +28,8 @@ class App {
   busy = $state(false);
   toasts = $state<Toast[]>([]);
 
-  private diffs = new Map<string, Promise<CommitDiff>>();
+  private diffs = new Map<string, Promise<DiffSummary>>();
+  private contents = new Map<string, Promise<HunkData[]>>();
   private gen = 0;
 
   commits = $derived(this.repo?.commits ?? []);
@@ -66,14 +67,49 @@ class App {
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
   }
 
-  diff(sha: string): Promise<CommitDiff> {
+  /** A commit's file list (no content). Cached: commits are immutable. */
+  diff(sha: string): Promise<DiffSummary> {
     let d = this.diffs.get(sha);
     if (!d) {
-      d = request<CommitDiff>(`/api/diff/${sha}`);
+      d = request<DiffSummary>(`/api/diff/${sha}`);
       d.catch(() => this.diffs.delete(sha));
+      if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
       this.diffs.set(sha, d);
     }
     return d;
+  }
+
+  /** Contents of some of a commit's files; misses are fetched in one request. */
+  async fileContents(sha: string, files: number[]): Promise<Record<number, HunkData[]>> {
+    const key = (i: number) => `${sha}:${i}`;
+    const missing = files.filter((i) => !this.contents.has(key(i)));
+    if (missing.length) {
+      const batch = request<FileContents>(`/api/diff/${sha}/files?i=${missing.join(',')}`);
+      for (const i of missing) {
+        const p = batch.then((r) => r[i] ?? []);
+        p.catch(() => this.contents.delete(key(i)));
+        this.contents.set(key(i), p);
+      }
+      while (this.contents.size > 4000) this.contents.delete(this.contents.keys().next().value!);
+    }
+    const out: Record<number, HunkData[]> = {};
+    for (const i of files) out[i] = await this.contents.get(key(i))!;
+    return out;
+  }
+
+  /** Warm the caches for a commit: its file list and the files on its first screen. */
+  prefetch(sha: string) {
+    this.diff(sha)
+      .then((d) => {
+        const first: number[] = [];
+        let y = 0;
+        for (let i = 0; i < d.files.length && y < 2000; i++) {
+          if (d.files[i].rows) first.push(i);
+          y += 40 + d.files[i].rows * 19;
+        }
+        if (first.length) return this.fileContents(sha, first);
+      })
+      .catch(() => {});
   }
 
   /** Run a history-rewriting operation. Returns true on success. */
@@ -121,6 +157,8 @@ class App {
       return;
     } else {
       this.selected = [sha];
+      const i = this.commits.findIndex((x) => x.sha === sha);
+      for (const n of [this.commits[i - 1], this.commits[i + 1]]) if (n) this.prefetch(n.sha);
     }
     this.anchor = sha;
   }

@@ -61,6 +61,7 @@
       aria-selected={app.selected.includes(c.sha)}
       draggable={c.editable && !app.repo?.blocked}
       onclick={(e) => onclick(e, c.sha)}
+      onmouseenter={() => app.prefetch(c.sha)}
       onkeydown={() => {}}
       ondragstart={(e) => ondragstart(e, c.sha)}
       ondragover={(e) => c.editable && ondragover(e, c.sha)}

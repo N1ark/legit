@@ -1,26 +1,10 @@
-// Syntax highlighting for diffs with Prism. Grammars load lazily per language; each side
-// (old/new) of a hunk is tokenized as one block so multi-line strings and comments come out right.
-
-import type { FileDiff } from '../../shared/types.ts';
-
-/** A run of text with its token classes (empty for plain text). */
-export interface Seg {
-  t: string;
-  c: string;
-}
-
-/** Segments per line, per hunk, parallel to `FileDiff.hunks[h].lines`. */
-export type FileTokens = Seg[][][];
-
-type Prism = typeof import('prismjs');
-type Token = import('prismjs').Token;
-type TokenStream = import('prismjs').TokenStream;
+// Which Prism grammar highlights which file, and how to load it (used by the highlight worker).
 
 // Bundled with Prism's core: markup, css, clike, javascript.
-const BUILTIN = new Set(['markup', 'css', 'clike', 'javascript']);
+export const BUILTIN = new Set(['markup', 'css', 'clike', 'javascript']);
 
 // language -> [dependencies not in core, loader]
-const LANGS: Record<string, [string[], () => Promise<unknown>]> = {
+export const LANGS: Record<string, [string[], () => Promise<unknown>]> = {
   typescript: [[], () => import('prismjs/components/prism-typescript.js')],
   jsx: [[], () => import('prismjs/components/prism-jsx.js')],
   tsx: [['jsx', 'typescript'], () => import('prismjs/components/prism-tsx.js')],
@@ -123,104 +107,3 @@ export function language(path: string): string | null {
   return dot > 0 ? (EXT[base.slice(dot + 1).toLowerCase()] ?? null) : null;
 }
 
-let prism: Promise<Prism> | null = null;
-function core(): Promise<Prism> {
-  prism ??= (async () => {
-    // Don't let Prism scan the page on its own.
-    (globalThis as any).Prism = { manual: true, disableWorkerMessageHandler: true };
-    const P = (await import('prismjs')).default;
-    (globalThis as any).Prism = P; // grammars register themselves on the global
-    return P;
-  })();
-  return prism;
-}
-
-const loading = new Map<string, Promise<void>>();
-function load(lang: string): Promise<void> {
-  if (BUILTIN.has(lang)) return core().then(() => {});
-  let p = loading.get(lang);
-  if (!p) {
-    const [deps, imp] = LANGS[lang];
-    p = (async () => {
-      await core();
-      for (const d of deps) await load(d);
-      await imp();
-    })();
-    loading.set(lang, p);
-  }
-  return p;
-}
-
-function flatten(stream: TokenStream, cls: string, out: Seg[]) {
-  if (typeof stream === 'string') {
-    out.push({ t: stream, c: cls });
-    return;
-  }
-  if (!Array.isArray(stream)) stream = [stream];
-  for (const tok of stream as (string | Token)[]) {
-    if (typeof tok === 'string') {
-      out.push({ t: tok, c: cls });
-      continue;
-    }
-    const alias = tok.alias ? ([] as string[]).concat(tok.alias) : [];
-    const c = [cls, ...[tok.type, ...alias].map((x) => `t-${x}`)].filter(Boolean).join(' ');
-    flatten(tok.content, c, out);
-  }
-}
-
-/** Tokenize a block of text into per-line segments. */
-function tokenizeLines(P: Prism, text: string, grammar: import('prismjs').Grammar): Seg[][] {
-  const segs: Seg[] = [];
-  flatten(P.tokenize(text, grammar), '', segs);
-  const lines: Seg[][] = [[]];
-  for (const s of segs) {
-    const parts = s.t.split('\n');
-    parts.forEach((t, i) => {
-      if (i > 0) lines.push([]);
-      if (t) lines[lines.length - 1].push({ t, c: s.c });
-    });
-  }
-  return lines;
-}
-
-const MAX_CHARS = 400_000;
-const MAX_LINE = 2_000;
-const cache = new Map<string, FileTokens | null>();
-
-/** Token segments for every line of a file's hunks, or null if it isn't highlighted. */
-export async function highlight(sha: string, f: FileDiff): Promise<FileTokens | null> {
-  const key = `${sha}\0${f.path}`;
-  if (cache.has(key)) return cache.get(key)!;
-  const lang = language(f.path);
-  let chars = 0;
-  let long = false;
-  for (const h of f.hunks) {
-    for (const l of h.lines) {
-      chars += l.s.length;
-      if (l.s.length > MAX_LINE) long = true;
-    }
-  }
-  let result: FileTokens | null = null;
-  if (lang && !f.binary && !long && chars <= MAX_CHARS) {
-    await load(lang);
-    const P = await core();
-    const grammar = P.languages[lang];
-    if (grammar) {
-      result = f.hunks.map((h) => {
-        const old = tokenizeLines(P, h.lines.filter((l) => l.t !== '+').map((l) => l.s).join('\n'), grammar);
-        const neu = tokenizeLines(P, h.lines.filter((l) => l.t !== '-').map((l) => l.s).join('\n'), grammar);
-        let o = 0;
-        let n = 0;
-        return h.lines.map((l) => {
-          if (l.t === '-') return old[o++];
-          if (l.t === '+') return neu[n++];
-          o++;
-          return neu[n++];
-        });
-      });
-    }
-  }
-  if (cache.size > 500) cache.delete(cache.keys().next().value!);
-  cache.set(key, result);
-  return result;
-}

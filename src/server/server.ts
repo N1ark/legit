@@ -4,8 +4,9 @@ import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
-import { displayDiff } from './diff.ts';
+import { fileContent, summarize } from './diff.ts';
 import { GitError } from './git.ts';
+import type { FileContents } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
 const MIME: Record<string, string> = {
@@ -50,7 +51,7 @@ function send(res: ServerResponse, status: number, body: unknown) {
 
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   const clients = new Set<ServerResponse>();
-  const diffJson = new Map<string, string>();
+  const summaries = new Map<string, string>();
 
   // Tell the UI when refs or in-progress operations change (commits from a terminal, etc).
   let timer: NodeJS.Timeout | undefined;
@@ -81,7 +82,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
 
   let origin = '';
 
-  async function api(req: IncomingMessage, res: ServerResponse, path: string) {
+  async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
     if (path === '/api/events') {
@@ -93,13 +94,23 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     }
     const diff = /^\/api\/diff\/([0-9a-f]{40,64})$/.exec(path);
     if (diff) {
-      let json = diffJson.get(diff[1]);
+      let json = summaries.get(diff[1]);
       if (!json) {
-        json = JSON.stringify(displayDiff(await repo.diff(diff[1])));
-        if (diffJson.size > 100) diffJson.delete(diffJson.keys().next().value!);
-        diffJson.set(diff[1], json);
+        json = JSON.stringify(summarize(await repo.diff(diff[1])));
+        if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
+        summaries.set(diff[1], json);
       }
       return send(res, 200, json);
+    }
+    // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.
+    const files = /^\/api\/diff\/([0-9a-f]{40,64})\/files$/.exec(path);
+    if (files) {
+      const d = await repo.diff(files[1]);
+      const out: FileContents = {};
+      for (const i of (query.get('i') ?? '').split(',').map(Number)) {
+        if (Number.isInteger(i) && d.files[i]) out[i] = fileContent(d.files[i]);
+      }
+      return send(res, 200, out);
     }
     const op = /^\/api\/(\w+)$/.exec(path)?.[1];
     if (op && ops[op] && req.method === 'POST') {
@@ -129,9 +140,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   const server = createServer(async (req, res) => {
     // Only answer requests addressed to us (guards against DNS rebinding).
     if (req.headers.host !== origin) return send(res, 403, { error: 'Forbidden' });
-    const path = new URL(req.url ?? '/', 'http://x').pathname;
+    const url = new URL(req.url ?? '/', 'http://x');
+    const path = url.pathname;
     try {
-      if (path.startsWith('/api/')) await api(req, res, path);
+      if (path.startsWith('/api/')) await api(req, res, path, url.searchParams);
       else if (opts.dev) opts.dev(req, res, () => send(res, 404, { error: 'Not found' }));
       else await staticFile(res, path);
     } catch (e) {

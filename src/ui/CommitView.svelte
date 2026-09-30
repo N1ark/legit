@@ -6,9 +6,9 @@
   import ScissorsIcon from 'phosphor-svelte/lib/ScissorsIcon';
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
   import XIcon from 'phosphor-svelte/lib/XIcon';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { CommitDiff, CommitInfo, Person, Selection } from '../shared/types.ts';
+  import type { CommitInfo, DiffSummary, Person, Selection } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
 
@@ -62,10 +62,16 @@
   }
 
   // Diff + split selection.
-  let diff = $state<CommitDiff | null>(null);
+  let diff = $state.raw<DiffSummary | null>(null);
   let sel = $state<Record<string, SvelteSet<number>>>({});
   let splitMessage = $state('');
   let before = $state(false);
+
+  // A new commit starts at the top.
+  onMount(() => {
+    const scroller = document.querySelector('[data-scroller]');
+    if (scroller) scroller.scrollTop = 0;
+  });
 
   app.diff(init.sha).then(
     (d) => {
@@ -211,7 +217,7 @@
   </datalist>
 
   {#if diff}
-    <DiffView {diff} {sel} {readonly} />
+    <DiffView summary={diff} {sel} {readonly} />
   {:else}
     <p class="dim loading">Loading diff…</p>
   {/if}

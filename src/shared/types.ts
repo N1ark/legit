@@ -51,6 +51,7 @@ export interface Hunk {
   header: string;
   oldStart: number;
   oldCount: number;
+  newStart: number;
   lines: DiffLine[];
 }
 
@@ -73,6 +74,33 @@ export interface CommitDiff {
   sha: string;
   files: FileDiff[];
 }
+
+/** A file of a commit's diff without its content, for layout before anything is loaded. */
+export interface FileSummary extends Omit<FileDiff, 'hunks'> {
+  /** Rows the file renders: one per hunk header and per diff line. */
+  rows: number;
+  /** Widest line, in columns (tabs count as 4). */
+  width: number;
+}
+
+export interface DiffSummary {
+  sha: string;
+  files: FileSummary[];
+}
+
+/** One hunk in compact form: line kinds as a string of ' ', '+', '-' plus the line texts. */
+export interface HunkData {
+  header: string;
+  oldStart: number;
+  newStart: number;
+  types: string;
+  text: string[];
+  /** Indices of lines without a trailing newline. */
+  eof: number[];
+}
+
+/** File contents by file index. */
+export type FileContents = Record<number, HunkData[]>;
 
 /** Per-file selection: 'all' or the indices of the selected changed lines. */
 export type Selection = Record<string, 'all' | number[]>;

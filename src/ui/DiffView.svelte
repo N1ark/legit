@@ -1,176 +1,325 @@
 <script lang="ts">
+  // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
+  // known from the summary alone: the full layout (and scrollbar) exists before any content
+  // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
+  // mounted, and within them only the rows near the viewport. Contents load as files come
+  // into view; highlighting runs in a worker and fills in afterwards.
   import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
-  import { onMount, untrack } from 'svelte';
+  import { onMount } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
-  import type { CommitDiff, DiffLine, FileDiff, Hunk } from '../shared/types.ts';
-  import { type FileTokens, highlight } from './lib/highlight.ts';
+  import type { DiffSummary, FileSummary } from '../shared/types.ts';
+  import { app } from './lib/app.svelte.ts';
+  import { type Tokens, highlight, segments } from './lib/highlighter.ts';
+  import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
 
-  let { diff, sel, readonly }: { diff: CommitDiff; sel: Record<string, SvelteSet<number>>; readonly: boolean } = $props();
+  let {
+    summary,
+    sel,
+    readonly,
+  }: { summary: DiffSummary; sel: Record<string, SvelteSet<number>>; readonly: boolean } = $props();
 
-  const BIG = 1500;
-  const size = (f: FileDiff) => f.hunks.reduce((n, h) => n + h.lines.length, 0);
-  const changes = (f: FileDiff) => f.added + f.removed;
-  // The view is re-created for each commit, so the initial diff is the only one.
-  let collapsed = $state<Record<string, boolean>>(
-    untrack(() => Object.fromEntries(diff.files.map((f) => [f.path, size(f) > BIG]))),
-  );
+  // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
+  const HEAD = 34;
+  const ROW = 19;
+  const NOTE = 38;
+  const PAD = 4;
+  const GAP = 10;
+  const GUTTER = 88;
+  /** How far beyond the viewport to render, so scrolling rarely shows unrendered rows. */
+  const OVERSCAN = 1200;
+  /** Files past the viewport whose contents are fetched ahead of time. */
+  const PREFETCH = 4;
 
-  // Highlighting fills in after the first paint, one file at a time so large diffs never block input.
-  let tokens = $state.raw<Record<string, FileTokens>>({});
+  const files = $derived(summary.files);
+  let collapsed = $state<Record<number, boolean>>({});
+  let contents = $state.raw<Record<number, FileRows>>({});
+  let tokens = $state.raw<Record<number, Tokens>>({});
+  let view = $state({ top: 0, bottom: 1000 });
+  let filesEl: HTMLElement;
+  let scroller: HTMLElement;
+  let alive = true;
+
+  const bodyHeight = (f: FileSummary) => (f.rows ? f.rows * ROW + PAD : NOTE);
+  /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
+  const tops = $derived.by(() => {
+    const t = new Float64Array(files.length + 1);
+    let y = 0;
+    for (let i = 0; i < files.length; i++) {
+      t[i] = y;
+      y += HEAD + (collapsed[i] ? 0 : bodyHeight(files[i])) + GAP;
+    }
+    t[files.length] = y;
+    return t;
+  });
+  const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
+
+  /** [first, end) of the files overlapping the viewport plus overscan. */
+  const range = $derived.by(() => {
+    const top = view.top - OVERSCAN;
+    const bottom = view.bottom + OVERSCAN;
+    let lo = 0;
+    let hi = files.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tops[mid + 1] - GAP <= top) lo = mid + 1;
+      else hi = mid;
+    }
+    let end = lo;
+    while (end < files.length && tops[end] < bottom) end++;
+    return [lo, end] as const;
+  });
+  const visible = $derived(Array.from({ length: range[1] - range[0] }, (_, k) => range[0] + k));
+
+  /** [first, end) of file i's rows near the viewport. */
+  function rowRange(i: number): number[] {
+    const y = tops[i] + HEAD;
+    const a = Math.max(0, Math.floor((view.top - OVERSCAN - y) / ROW));
+    const b = Math.min(files[i].rows, Math.ceil((view.bottom + OVERSCAN - y) / ROW));
+    const out: number[] = [];
+    for (let r = a; r < b; r++) out.push(r);
+    return out;
+  }
+
+  // Scroll position -> view, measured synchronously in the scroll event so the new rows
+  // are in the DOM before the frame paints.
+  function measure() {
+    if (!filesEl || !scroller) return;
+    const top = scroller.getBoundingClientRect().top - filesEl.getBoundingClientRect().top;
+    if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
+      view = { top, bottom: top + scroller.clientHeight };
+    }
+  }
+
   onMount(() => {
-    let alive = true;
-    (async () => {
-      for (const f of diff.files) {
-        const t = await highlight(diff.sha, f).catch(() => null);
-        if (!alive) return;
-        if (t) tokens = { ...tokens, [f.path]: t };
-        await new Promise((r) => setTimeout(r));
-      }
-    })();
-    return () => (alive = false);
+    scroller = filesEl.closest('[data-scroller]') as HTMLElement;
+    scroller.addEventListener('scroll', measure, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    ro.observe(scroller.firstElementChild ?? filesEl);
+    measure();
+    return () => {
+      alive = false;
+      scroller.removeEventListener('scroll', measure);
+      ro.disconnect();
+    };
   });
 
-  const totals = $derived(
-    diff.files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }),
-  );
+  // Fetch the contents of files as they come near the viewport, in one batch per change.
+  const requested = new Set<number>();
+  $effect(() => {
+    const want: number[] = [];
+    for (let i = range[0]; i < Math.min(files.length, range[1] + PREFETCH); i++) {
+      if (files[i].rows && !collapsed[i] && !requested.has(i)) want.push(i);
+    }
+    if (!want.length) return;
+    for (const i of want) requested.add(i);
+    app.fileContents(summary.sha, want).then(
+      (res) => {
+        if (!alive) return;
+        const next = { ...contents };
+        for (const i of want) {
+          next[i] = buildRows(res[i]);
+          queueHighlight(i, next[i]);
+        }
+        contents = next;
+      },
+      (e) => {
+        for (const i of want) requested.delete(i);
+        app.toast(e.message, 'error');
+      },
+    );
+  });
 
-  // Selecting: a file with no line changes (binary, mode-only) uses index 0 as "whole file".
-  function fileState(f: FileDiff): 'none' | 'some' | 'all' {
+  function queueHighlight(i: number, rows: FileRows) {
+    const distance = () => Math.abs(tops[i] - view.top);
+    highlight(`${summary.sha}:${i}`, files[i].path, rows.hunks, distance, () => alive).then((t) => {
+      if (t && alive) tokens = { ...tokens, [i]: t };
+    });
+  }
+
+  const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }));
+
+  // Selection (split). A file with no line changes (binary, mode-only) uses index 0 as "whole file".
+  const changes = (f: FileSummary) => f.added + f.removed;
+  function fileState(f: FileSummary): 'none' | 'some' | 'all' {
     const n = sel[f.path].size;
     return n === 0 ? 'none' : n >= Math.max(1, changes(f)) ? 'all' : 'some';
   }
 
-  function toggleFile(f: FileDiff) {
+  function toggleFile(f: FileSummary) {
     if (readonly) return;
     const s = sel[f.path];
     if (fileState(f) === 'all') s.clear();
-    else for (let i = 0; i < Math.max(1, changes(f)); i++) s.add(i);
+    else for (let k = 0; k < Math.max(1, changes(f)); k++) s.add(k);
   }
 
-  function toggleHunk(f: FileDiff, h: Hunk) {
+  function toggleHunk(i: number, headerRow: number) {
+    const f = files[i];
     if (readonly || !f.partial) return toggleFile(f);
-    const idx = h.lines.filter((l) => l.i !== undefined).map((l) => l.i!);
+    const rows = contents[i];
+    const idx: number[] = [];
+    for (let r = headerRow + 1; r < rows.kind.length && rows.kind[r] !== HUNK; r++) if (rows.ci[r] >= 0) idx.push(rows.ci[r]);
     const s = sel[f.path];
-    const on = !idx.every((i) => s.has(i));
-    for (const i of idx) on ? s.add(i) : s.delete(i);
+    const on = !idx.every((c) => s.has(c));
+    for (const c of idx) on ? s.add(c) : s.delete(c);
   }
 
-  // Line drag-selection: mousedown picks add/remove mode, dragging applies it to every line crossed.
+  function toggleCollapsed(i: number) {
+    const above = view.top - tops[i];
+    collapsed[i] = !collapsed[i];
+    // Keep a stuck header where it is instead of jumping past the file.
+    if (above > 0 && scroller) scroller.scrollTop -= above;
+  }
+
+  // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed.
   let drag: { path: string; on: boolean; last: number } | null = null;
-  let anchor: { path: string; i: number } | null = null;
+  let anchor: { path: string; ci: number } | null = null;
 
   function setRange(path: string, a: number, b: number, on: boolean) {
     const s = sel[path];
-    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) on ? s.add(i) : s.delete(i);
+    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) on ? s.add(k) : s.delete(k);
   }
 
-  function down(e: MouseEvent, f: FileDiff, l: DiffLine) {
-    if (readonly || l.i === undefined || e.button !== 0) return;
+  function rowOf(e: Event): number {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-r]');
+    return el ? Number(el.dataset.r) : -1;
+  }
+
+  function down(e: MouseEvent, i: number) {
+    const r = rowOf(e);
+    const rows = contents[i];
+    if (readonly || r < 0 || !rows || e.button !== 0) return;
+    if (rows.kind[r] === HUNK) return toggleHunk(i, r);
+    const ci = rows.ci[r];
+    if (ci < 0) return;
     e.preventDefault();
+    const f = files[i];
     if (!f.partial) return toggleFile(f);
     const s = sel[f.path];
     if (e.shiftKey && anchor?.path === f.path) {
-      setRange(f.path, anchor.i, l.i, s.has(anchor.i));
+      setRange(f.path, anchor.ci, ci, s.has(anchor.ci));
       return;
     }
-    const on = !s.has(l.i);
-    on ? s.add(l.i) : s.delete(l.i);
-    drag = { path: f.path, on, last: l.i };
-    anchor = { path: f.path, i: l.i };
+    const on = !s.has(ci);
+    on ? s.add(ci) : s.delete(ci);
+    drag = { path: f.path, on, last: ci };
+    anchor = { path: f.path, ci };
   }
 
-  function enter(f: FileDiff, l: DiffLine) {
-    if (!drag || drag.path !== f.path || l.i === undefined) return;
-    setRange(f.path, drag.last, l.i, drag.on);
-    drag.last = l.i;
+  function over(e: MouseEvent, i: number) {
+    const r = rowOf(e);
+    const rows = contents[i];
+    if (!drag || r < 0 || !rows || drag.path !== files[i].path) return;
+    const ci = rows.ci[r];
+    if (ci < 0) return;
+    setRange(drag.path, drag.last, ci, drag.on);
+    drag.last = ci;
   }
 
   const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed' };
+  const MARK = [' ', ' ', '+', '-'];
+  const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
 <svelte:window onmouseup={() => (drag = null)} />
 
 <div class="diff">
   <div class="summary dim">
-    <span>{diff.files.length} {diff.files.length === 1 ? 'file' : 'files'}</span>
+    <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
     <span class="add">+{totals.a}</span>
     <span class="del">−{totals.r}</span>
-    {#if !readonly && diff.files.length}
+    {#if !readonly && files.length}
       <span class="hint">Pick lines to split out: click, drag, or shift-click a range.</span>
     {/if}
   </div>
 
-  {#each diff.files as f (f.path)}
-    {@const state = fileState(f)}
-    <div class="file">
-      <div class="fhead">
-        {#if !readonly}
-          <input
-            type="checkbox"
-            checked={state === 'all'}
-            indeterminate={state === 'some'}
-            onchange={() => toggleFile(f)}
-            title="Select whole file"
-          />
-        {/if}
-        <button class="ghost caret" onclick={() => (collapsed[f.path] = !collapsed[f.path])}>
-          {#if collapsed[f.path]}<CaretRightIcon size={12} />{:else}<CaretDownIcon size={12} />{/if}
-        </button>
-        <span class="path mono">{f.path}</span>
-        {#if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
-        <span class="spacer"></span>
-        <span class="add mono">+{f.added}</span>
-        <span class="del mono">−{f.removed}</span>
-      </div>
+  <div class="files" bind:this={filesEl} style:height="{Math.max(0, tops[files.length] - GAP)}px">
+    {#each visible as i (i)}
+      {@const f = files[i]}
+      {@const state = fileState(f)}
+      {@const rows = contents[i]}
+      {@const tok = tokens[i]}
+      <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
+        <div class="fhead">
+          {#if !readonly}
+            <input
+              type="checkbox"
+              checked={state === 'all'}
+              indeterminate={state === 'some'}
+              onchange={() => toggleFile(f)}
+              title="Select whole file"
+            />
+          {/if}
+          <button class="ghost caret" onclick={() => toggleCollapsed(i)}>
+            {#if collapsed[i]}<CaretRightIcon size={12} />{:else}<CaretDownIcon size={12} />{/if}
+          </button>
+          <span class="path mono" title={f.path}>{f.path}</span>
+          {#if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
+          <span class="spacer"></span>
+          <span class="add mono">+{f.added}</span>
+          <span class="del mono">−{f.removed}</span>
+        </div>
 
-      {#if !collapsed[f.path]}
-        {#if f.binary}
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>Binary file</div>
-        {:else if !f.hunks.length}
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
-            {f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
-          </div>
-        {:else}
-          <div class="scroll">
-            <div class="lines mono" class:readonly>
-              {#each f.hunks as h, hi (hi)}
-                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <div class="hunk" onclick={() => toggleHunk(f, h)}>
-                  <span class="gutter"></span><span class="code">{h.header}</span>
-                </div>
-                {@const hunkTokens = tokens[f.path]?.[hi]}
-                {#each h.lines as l, li (li)}
-                  {@const segs = hunkTokens?.[li]}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div
-                    class="line t{l.t === '+' ? 'a' : l.t === '-' ? 'd' : 'c'}"
-                    class:sel={l.i !== undefined && sel[f.path].has(l.i)}
-                    onmousedown={(e) => down(e, f, l)}
-                    onmouseenter={() => enter(f, l)}
-                  >
-                    <span class="gutter"><span>{l.o ?? ''}</span><span>{l.n ?? ''}</span><span class="mark">{l.t}</span></span>
-                    <span class="code"
-                      >{#if segs}{#each segs as seg}{#if seg.c}<span class={seg.c}>{seg.t}</span>{:else}{seg.t}{/if}{/each}{:else}{l.s}{/if}{#if l.eof}<span class="eof" title="No newline at end of file">⏎̸</span>{/if}</span>
-                  </div>
-                {/each}
-              {/each}
+        {#if !collapsed[i]}
+          {#if !f.rows}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
+              {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
             </div>
-          </div>
+          {:else}
+            <div class="body" class:loading={!rows} style:height="{f.rows * ROW + PAD}px">
+              {#if rows}
+                {@const shown = rowRange(i)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="lines mono"
+                  class:readonly
+                  style:top="{(shown[0] ?? 0) * ROW}px"
+                  style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
+                  onmousedown={(e) => down(e, i)}
+                  onmouseover={(e) => over(e, i)}
+                  onfocus={() => {}}
+                >
+                  {#each shown as r (r)}
+                    {#if rows.kind[r] === HUNK}
+                      <div class="hunk" data-r={r}><span class="gutter"></span><span class="code">{rows.text[r]}</span></div>
+                    {:else}
+                      {@const kind = rows.kind[r]}
+                      {@const ci = rows.ci[r]}
+                      <div
+                        class="line {KIND[kind]}"
+                        class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
+                        data-r={r}
+                      >
+                        <span class="gutter"
+                          ><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
+                            >{MARK[kind]}</span
+                          ></span
+                        ><span class="code"
+                          >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
+                                  >{seg.t}</span
+                                >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
+                              class="eof"
+                              title="No newline at end of file">⏎̸</span
+                            >{/if}</span
+                        >
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
-      {/if}
-    </div>
-  {/each}
+      </div>
+    {/each}
+  </div>
 </div>
 
 <style>
   .diff {
     padding: 12px 16px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
   }
 
   .summary {
@@ -178,7 +327,7 @@
     gap: 10px;
     align-items: baseline;
     font-size: 12px;
-    padding: 0 4px;
+    padding: 0 4px 12px;
   }
 
   .hint {
@@ -194,22 +343,29 @@
     color: var(--del);
   }
 
+  .files {
+    position: relative;
+  }
+
   .file {
+    position: absolute;
+    left: 0;
+    right: 0;
     border-radius: 4px;
     box-shadow: var(--box-shadow);
     background: var(--bg2);
-    content-visibility: auto;
-    contain-intrinsic-size: auto 200px;
+    contain: layout style;
   }
 
   .fhead {
     position: sticky;
     top: 0;
     z-index: 2;
+    height: 34px;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 10px;
+    padding: 0 10px;
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
     border-radius: 4px 4px 0 0;
@@ -256,7 +412,10 @@
   }
 
   .note {
-    padding: 10px 14px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
     color: var(--dim);
     cursor: pointer;
   }
@@ -266,22 +425,45 @@
     color: var(--theme);
   }
 
-  .scroll {
+  .body {
+    position: relative;
     overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    contain: strict;
+  }
+
+  .body::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Placeholder until the file's contents arrive: faint line stripes. */
+  .body.loading {
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0 5px,
+      var(--bg3) 5px 12px,
+      transparent 12px 19px
+    );
+    background-size: 60% 19px;
+    background-repeat: repeat-y;
+    background-position: 100px 0;
+    opacity: 0.6;
   }
 
   .lines {
-    display: grid;
+    position: absolute;
+    left: 0;
     width: max-content;
-    min-width: 100%;
     font-size: 12px;
     line-height: 19px;
-    padding-bottom: 2px;
+    color: var(--code-mono-1);
   }
 
   .line,
   .hunk {
     display: flex;
+    height: 19px;
     white-space: pre;
     tab-size: 4;
   }
@@ -294,7 +476,6 @@
     width: 88px;
     background: var(--bg2);
     color: var(--dim);
-    opacity: 0.8;
     user-select: none;
     font-size: 11px;
     box-shadow: inset -1px 0 0 var(--border);
@@ -336,6 +517,10 @@
     background: var(--add-bg);
   }
 
+  .td {
+    background: var(--del-bg);
+  }
+
   .ta .gutter {
     background: linear-gradient(var(--add-bg), var(--add-bg)), var(--bg2);
   }
@@ -346,10 +531,6 @@
 
   .ta .mark {
     color: var(--add);
-  }
-
-  .td {
-    background: var(--del-bg);
   }
 
   .td .mark {
@@ -369,7 +550,6 @@
   .line.sel .gutter {
     background: var(--theme);
     color: #fff;
-    opacity: 1;
   }
 
   .line.sel .gutter .mark {
@@ -389,10 +569,6 @@
   }
 
   /* Token colours: the same One Light / One Dark mapping as n1ark.com. */
-  .lines {
-    color: var(--code-mono-1);
-  }
-
   .code :global(:is(.t-comment, .t-prolog, .t-cdata, .t-doc-comment)) {
     color: var(--code-mono-3);
     font-style: italic;

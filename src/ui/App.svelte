@@ -90,7 +90,7 @@
         <span><kbd>{mod}</kbd>/<kbd>⇧</kbd>+click select many</span>
       </footer>
     </aside>
-    <section>
+    <section data-scroller>
       {#if app.selection.length > 1}
         <SquashView commits={app.selection} />
       {:else if app.selection.length === 1}

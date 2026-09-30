@@ -1,6 +1,6 @@
 // Commit diffs: parsing git's patch output, and rebuilding files from a subset of changed lines.
 
-import type { CommitDiff, DiffLine, FileDiff, Hunk } from '../shared/types.ts';
+import type { CommitDiff, DiffSummary, FileDiff, HunkData, Hunk } from '../shared/types.ts';
 import { type Git, toUtf8 } from './git.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -47,7 +47,7 @@ export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
       for (const l of lines) {
         const m = HUNK.exec(l);
         if (m) {
-          hunk = { header: l, oldStart: +m[1], oldCount: m[2] === undefined ? 1 : +m[2], lines: [] };
+          hunk = { header: l, oldStart: +m[1], oldCount: m[2] === undefined ? 1 : +m[2], newStart: +m[3], lines: [] };
           o = +m[1];
           n = +m[3];
           f.hunks.push(hunk);
@@ -72,20 +72,39 @@ export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
   return { sha, files };
 }
 
-/** Convert a byte-string diff to utf8 for display. */
-export function displayDiff(d: CommitDiff): CommitDiff {
+/** File list with exact row counts and widths, but no content (utf8 for display). */
+export function summarize(d: CommitDiff): DiffSummary {
   return {
     sha: d.sha,
-    files: d.files.map((f) => ({
-      ...f,
-      path: toUtf8(f.path),
-      hunks: f.hunks.map((h) => ({
-        ...h,
-        header: toUtf8(h.header),
-        lines: h.lines.map((l): DiffLine => ({ ...l, s: toUtf8(l.s) })),
-      })),
-    })),
+    files: d.files.map(({ hunks, ...f }) => {
+      let rows = 0;
+      let width = 0;
+      for (const h of hunks) {
+        rows += h.lines.length + 1;
+        for (const l of h.lines) {
+          let w = l.s.length;
+          for (let k = l.s.indexOf('\t'); k >= 0; k = l.s.indexOf('\t', k + 1)) w += 3;
+          if (w > width) width = w;
+        }
+      }
+      return { ...f, path: toUtf8(f.path), rows, width };
+    }),
   };
+}
+
+/** A file's hunks in compact form, utf8 for display. */
+export function fileContent(f: FileDiff): HunkData[] {
+  return f.hunks.map((h) => {
+    let types = '';
+    const text: string[] = [];
+    const eof: number[] = [];
+    h.lines.forEach((l, k) => {
+      types += l.t;
+      text.push(toUtf8(l.s));
+      if (l.eof) eof.push(k);
+    });
+    return { header: toUtf8(h.header), oldStart: h.oldStart, newStart: h.newStart, types, text, eof };
+  });
 }
 
 /**

@@ -79,6 +79,9 @@ npm run check      # svelte-check + tsc
   built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why
   the app is ~145 MB (almost all of it Node). The window loads the UI from that server. A server exits when its window closes, and only after
   any running operation has finished (or when the app dies, since it holds the server's stdin).
-- `src/ui/` is a Svelte 5 UI with Phosphor icons. `lib/highlight.ts` does syntax highlighting with Prism. Grammars are
-  lazy-loaded per language (add one to `LANGS`/`EXT`), and each side of a hunk is tokenized as a block so multi-line
-  strings and comments come out right. Highlighting fills in after the diff first renders.
+- `src/ui/` is a Svelte 5 UI with Phosphor icons. The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
+  height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
+  loads. Only files and rows near the viewport are mounted, and file contents are fetched in batches as they
+  scroll into view (`/api/diff/<sha>/files?i=…`). Syntax highlighting (Prism) runs in a web worker
+  (`lib/highlight.worker.ts`), nearest file first, and comes back as transferable typed arrays. Grammars are
+  lazy-loaded per language (add one in `lib/languages.ts`). Hovering or moving next to a commit prefetches its diff.
