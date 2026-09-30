@@ -1,0 +1,188 @@
+:root {
+  --bg: #fff;
+  --bg2: #fafafa;
+  --bg3: #f2f2f2;
+  --border: #e4e4e4;
+  --color: #333;
+  --color2: #111;
+  --dim: #8a8a8a;
+  --code-bg: #f6f6f6;
+  --box-shadow: 0 0 0 1px #0000001a, 0 0 4px 4px #0000000a;
+  --theme: #8a2aa2;
+  --theme-2: #b045ab;
+  --theme-soft: #8a2aa21a;
+  --theme-mid: #8a2aa240;
+  --add: #50a14f;
+  --add-bg: #50a14f14;
+  --add-sel: #50a14f3d;
+  --del: #e45649;
+  --del-bg: #e4564914;
+  --del-sel: #e4564942;
+  --warn: #b76b01;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111;
+    --bg2: #161616;
+    --bg3: #1d1d1d;
+    --border: #262626;
+    --color: #d8d8d8;
+    --color2: #f0f0f0;
+    --dim: #7a7a7a;
+    --code-bg: #1a1a1a;
+    --box-shadow: 0 0 0 1px #ffffff14, 0 0 4px 4px #ffffff03;
+    --theme: #b045ab;
+    --theme-2: #8a2aa2;
+    --theme-soft: #b045ab1f;
+    --theme-mid: #b045ab4d;
+    --add: #98c379;
+    --add-bg: #98c37912;
+    --add-sel: #98c37933;
+    --del: #e06c75;
+    --del-bg: #e06c7512;
+    --del-sel: #e06c7538;
+    --warn: #d19a66;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--color);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+::selection {
+  background: var(--theme-mid);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  min-width: 0;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--theme);
+  box-shadow: 0 0 0 3px var(--theme-soft);
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: var(--bg3);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--border);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--theme);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--theme-2);
+}
+
+button.ghost {
+  background: none;
+  padding: 5px;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--bg3);
+}
+
+button.danger:hover:not(:disabled) {
+  color: var(--del);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-ligatures: none;
+}
+
+.dim {
+  color: var(--dim);
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg3);
+  box-shadow: inset 0 -1px 0 var(--border);
+  color: var(--dim);
+}
+
+button.primary kbd {
+  background: #ffffff26;
+  box-shadow: none;
+  color: #fffc;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
