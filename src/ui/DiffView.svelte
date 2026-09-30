@@ -20,7 +20,8 @@
     summary,
     sel,
     readonly,
-  }: { summary: DiffSummary; sel: Record<string, SvelteSet<number>>; readonly: boolean } = $props();
+    hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
+  }: { summary: DiffSummary; sel: Record<string, SvelteSet<number>>; readonly: boolean; hint?: string } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
   const HEAD = 34;
@@ -323,7 +324,7 @@
       <span>· {generatedCount} generated {generatedCount === 1 ? 'file' : 'files'} collapsed</span>
     {/if}
     {#if !readonly && files.length}
-      <span class="hint">Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.</span>
+      <span class="hint">{hint}</span>
     {/if}
   </div>
 
@@ -349,7 +350,8 @@
             {#if collapsed[i]}<CaretRightIcon size={12} />{:else}<CaretDownIcon size={12} />{/if}
           </button>
           <span class="path mono" title={f.path}>{f.path}</span>
-          {#if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
+          {#if f.untracked}<span class="status A">untracked</span>
+          {:else if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
           {#if f.generated}
             <span class="status" title="Generated file: collapsed by default (see README to change the list)">generated</span>
           {/if}

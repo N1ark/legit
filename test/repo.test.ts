@@ -316,3 +316,64 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   await assert.rejects(repo.push({ force: true }), /never integrated/);
   assert.equal(remoteHead(), theirs);
 });
+
+test('stage/unstage lines and files touch only the index; commit runs hooks', async () => {
+  const lines = (edit: (l: string[]) => void) => {
+    const l = 'abcdefghijklmnopqrst'.split('');
+    edit(l);
+    return l.join('\n') + '\n';
+  };
+  commit('base', { f: lines(() => {}), g: 'g\n', gone: 'x\n' });
+  const worktreeF = lines((l) => { l[1] = 'B'; l[15] = 'P'; });
+  write('f', worktreeF);
+  write('g', 'G\n');
+  execFileSync('rm', [join(dir, 'gone')]);
+  write('new.txt', 'one\ntwo\nthree\n');
+  const repo = await Repo.open(dir);
+  const show = (spec: string) => git('show', spec);
+
+  let st = await repo.state();
+  assert.deepEqual(st.work, { staged: 0, unstaged: 3, untracked: 1 });
+  let { unstaged } = await repo.work();
+  const f = unstaged.files.find((x) => x.path === 'f')!;
+  const secondHunk = f.hunks[1].lines.filter((l) => l.i !== undefined).map((l) => l.i!);
+  const n = unstaged.files.find((x) => x.path === 'new.txt')!;
+  assert.equal(n.untracked, true);
+  // Stage: the second hunk of f, all of g and gone, and only "two" of the untracked file.
+  await repo.stage({ key: unstaged.sha, selection: { f: secondHunk, g: 'all', gone: 'all', 'new.txt': [1] } });
+  assert.equal(show(':f') + '\n', lines((l) => { l[15] = 'P'; }));
+  assert.equal(show(':g'), 'G');
+  assert.throws(() => show(':gone'));
+  assert.equal(show(':new.txt'), 'two');
+  // The working tree is untouched.
+  assert.equal(read('f'), worktreeF);
+  assert.equal(read('new.txt'), 'one\ntwo\nthree\n');
+
+  // Unstage the P line change again, and all of g.
+  let { staged } = await repo.work();
+  const sf = staged.files.find((x) => x.path === 'f')!;
+  await repo.unstage({ key: staged.sha, selection: { f: sf.hunks[0].lines.filter((l) => l.i !== undefined).map((l) => l.i!), g: 'all' } });
+  assert.equal(show(':f') + '\n', lines(() => {}));
+  assert.equal(show(':g'), 'g');
+  assert.equal(read('g'), 'G\n');
+
+  // A file that changes after it was shown is refused.
+  ({ unstaged } = await repo.work());
+  write('g', 'G2\n');
+  await assert.rejects(repo.stage({ key: unstaged.sha, selection: { g: 'all' } }), /changed since it was shown/);
+  assert.equal(show(':g'), 'g');
+
+  // Commit what's staged; a failing hook refuses the commit.
+  ({ staged } = await repo.work());
+  assert.deepEqual(staged.files.map((x) => x.path).sort(), ['gone', 'new.txt']);
+  write('.git/hooks/commit-msg', '#!/bin/sh\ngrep -q ok "$1" || { echo "needs ok" >&2; exit 1; }\n');
+  execFileSync('chmod', ['+x', join(dir, '.git/hooks/commit-msg')]);
+  await assert.rejects(repo.commit({ subject: 'nope', body: '', coauthors: [] }), /needs ok/);
+  const r = await repo.commit({ subject: 'ok: partial', body: 'body', coauthors: [{ name: 'Cy', email: 'cy@x.org' }] });
+  assert.equal(git('log', '-1', '--format=%B'), 'ok: partial\n\nbody\n\nCo-authored-by: Cy <cy@x.org>');
+  assert.equal(r.focus[0], git('rev-parse', 'HEAD'));
+  assert.equal(show('HEAD:new.txt'), 'two');
+  await assert.rejects(repo.commit({ subject: 'ok', body: '', coauthors: [] }), /Nothing is staged/);
+  st = r.state;
+  assert.deepEqual(st.work, { staged: 0, unstaged: 3, untracked: 0 });
+});

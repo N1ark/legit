@@ -5,7 +5,8 @@
   import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
   import UsersIcon from 'phosphor-svelte/lib/UsersIcon';
   import ContextMenu from './ContextMenu.svelte';
-  import { ago, app, shortSha } from './lib/app.svelte.ts';
+  import PencilSimpleLineIcon from 'phosphor-svelte/lib/PencilSimpleLineIcon';
+  import { WORK, ago, app, shortSha } from './lib/app.svelte.ts';
 
   const mac = navigator.platform.startsWith('Mac');
 
@@ -79,6 +80,24 @@
 {/if}
 
 <ol class="list" role="listbox" aria-multiselectable="true">
+  {#if app.hasWork && app.repo}
+    {@const w = app.repo.work}
+    <li
+      data-sha={WORK}
+      class="row work"
+      class:selected={app.selected[0] === WORK}
+      role="option"
+      aria-selected={app.selected[0] === WORK}
+      onclick={() => app.selectWork()}
+      onkeydown={() => {}}
+    >
+      <span class="grip"><PencilSimpleLineIcon size={13} /></span>
+      <span class="subject">Uncommitted changes</span>
+      {#if w.staged}<span class="pill staged" title="Files with staged changes">{w.staged} staged</span>{/if}
+      {#if w.unstaged}<span class="pill" title="Files with unstaged changes">{w.unstaged} changed</span>{/if}
+      {#if w.untracked}<span class="pill" title="Untracked files">{w.untracked} new</span>{/if}
+    </li>
+  {/if}
   {#each app.commits as c, i (c.sha)}
     {#if !c.editable && (i === 0 || app.commits[i - 1].editable)}
       <li class="boundary dim">history below a merge can't be rewritten</li>
@@ -218,6 +237,30 @@
 
   .pushed {
     width: 13px;
+  }
+
+  .row.work .subject {
+    font-style: italic;
+    color: var(--color2);
+  }
+
+  .row.work .grip {
+    opacity: 1;
+    color: var(--theme);
+  }
+
+  .pill {
+    font-size: 10.5px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--bg3);
+    color: var(--dim);
+    flex-shrink: 0;
+  }
+
+  .pill.staged {
+    background: var(--add-bg);
+    color: var(--add);
   }
 
   .boundary {

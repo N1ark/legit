@@ -11,7 +11,8 @@
   import PushButton from './PushButton.svelte';
   import CommitView from './CommitView.svelte';
   import SquashView from './SquashView.svelte';
-  import { app } from './lib/app.svelte.ts';
+  import WorkView from './WorkView.svelte';
+  import { WORK, app } from './lib/app.svelte.ts';
 
   const mac = navigator.platform.startsWith('Mac');
   const mod = mac ? '⌘' : 'Ctrl';
@@ -29,7 +30,7 @@
   onMount(() => {
     app.refresh();
     const events = new EventSource('/api/events');
-    events.onmessage = () => app.refresh();
+    events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     const focus = () => app.refresh();
     window.addEventListener('focus', focus);
     return () => {
@@ -97,7 +98,9 @@
       </footer>
     </aside>
     <section data-scroller>
-      {#if app.selection.length > 1}
+      {#if app.selected[0] === WORK}
+        <WorkView />
+      {:else if app.selection.length > 1}
         <SquashView commits={app.selection} />
       {:else if app.selection.length === 1}
         {#key app.selection[0].sha}

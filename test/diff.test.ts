@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { applyLines, commitDiff } from '../src/server/diff.ts';
+import { alignRun, applyLines, commitDiff } from '../src/server/diff.ts';
 import { Git } from '../src/server/git.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'legit-fuzz-'));
@@ -70,4 +70,29 @@ test('rebuilding from all/none/a subset of changed lines', async () => {
     const midCount = mid === '' ? 0 : midLines.length - (mid.endsWith('\n') ? 1 : 0);
     assert.equal(midCount, oldCount + kept - removed, ctx);
   }
+});
+
+test('a kept old line stays in the place of the line it was edited into', () => {
+  const h = (lines: [string, string][]) => [{
+    header: '', oldStart: 1, oldCount: lines.filter(([t]) => t !== '+').length, newStart: 1,
+    lines: (() => {
+      let i = 0;
+      return lines.map(([t, s]) => (t === ' ' ? { t, s } : { t, s, i: i++ })) as any;
+    })(),
+  }];
+  // def greet / -return old / +docstring / +return new: pick only the docstring (index 1).
+  const hunks = h([[' ', 'def greet(name):'], ['-', '    return f"hello {name}"'], ['+', '    """Say hello."""'], ['+', '    return f"hello {name}!"']]);
+  const old = 'def greet(name):\n    return f"hello {name}"\n';
+  assert.equal(applyLines(old, hunks, (i) => i === 1), 'def greet(name):\n    """Say hello."""\n    return f"hello {name}"\n');
+  // Picking the edit of the return line but not the docstring.
+  assert.equal(applyLines(old, hunks, (i) => i !== 1), 'def greet(name):\n    return f"hello {name}!"\n');
+  // Everything / nothing are still exactly new / old.
+  assert.equal(applyLines(old, hunks, () => true), 'def greet(name):\n    """Say hello."""\n    return f"hello {name}!"\n');
+  assert.equal(applyLines(old, hunks, () => false), old);
+
+  // Several edited lines with an insertion between: pairs follow similarity, not position.
+  const dels = ['let a = 1;', 'let b = 2;', 'let c = 3;'];
+  const adds = ['let a = 10;', '// new', 'let b = 20;', 'let c = 30;'];
+  assert.deepEqual(alignRun(dels, adds), [{ del: 0, add: 0 }, { add: 1 }, { del: 1, add: 2 }, { del: 2, add: 3 }]);
+  assert.deepEqual(alignRun(['x'], ['completely different']), [{ del: 0 }, { add: 0 }]);
 });

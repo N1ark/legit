@@ -62,6 +62,7 @@ class App {
   private setRepo(repo: RepoState, focus?: string[]) {
     this.repo = repo;
     const shas = new Set(repo.commits.map((c) => c.sha));
+    if (this.hasWork) shas.add(WORK);
     let sel = (focus ?? this.selected).filter((s) => shas.has(s));
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
     this.selected = sel;
@@ -167,7 +168,17 @@ class App {
   /** Move selection up (-1) or down (+1). */
   step(dir: number, extend = false) {
     const cur = this.anchor ?? this.selected[0];
+    // "Uncommitted changes" sits above the newest commit.
+    if (cur === WORK) {
+      if (dir > 0 && !extend && this.commits[0]) this.select(this.commits[0].sha);
+      return;
+    }
     const i = this.commits.findIndex((c) => c.sha === cur);
+    if (i === 0 && dir < 0 && !extend && this.hasWork) {
+      this.selectWork();
+      document.querySelector('[data-sha="work"]')?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     const next = this.commits[Math.max(0, Math.min(this.commits.length - 1, i + dir))];
     if (!next) return;
     if (extend) {
@@ -229,9 +240,27 @@ class App {
     return this.op('squash', { shas: newestFirst.map((c) => c.sha), subject, body, coauthors });
   }
 
+  /** Anything staged, unstaged or untracked. */
+  hasWork = $derived(!!this.repo && this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0);
+  /** Bumped whenever files or the index change, so the changes view reloads. */
+  workTick = $state(0);
+
+  selectWork() {
+    this.selected = [WORK];
+    this.anchor = WORK;
+  }
+
+  workChanged() {
+    this.workTick++;
+    this.refresh();
+  }
+
   undo = () => this.op('undo');
   redo = () => this.op('redo');
 }
+
+/** Selection key of the "Uncommitted changes" entry. */
+export const WORK = 'work';
 
 export const app = new App();
 

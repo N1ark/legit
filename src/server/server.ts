@@ -8,7 +8,7 @@ import { fileContent, summarize } from './diff.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
-import type { FileContents } from '../shared/types.ts';
+import type { CommitDiff, FileContents } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
 const MIME: Record<string, string> = {
@@ -55,7 +55,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   const clients = new Set<ServerResponse>();
   const summaries = new Map<string, string>();
 
-  // Tell the UI when refs or in-progress operations change (commits from a terminal, etc).
+  // Tell the UI when refs or in-progress operations change (commits from a terminal, etc),
+  // and, separately, when files or the index change (uncommitted changes).
   let timer: NodeJS.Timeout | undefined;
   const notify = () => {
     clearTimeout(timer);
@@ -63,11 +64,28 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       for (const c of clients) c.write('data: change\n\n');
     }, 60);
   };
+  // Throttled rather than debounced, so a file that keeps changing still shows up.
+  let workTimer: NodeJS.Timeout | undefined;
+  const notifyWork = () => {
+    workTimer ??= setTimeout(() => {
+      workTimer = undefined;
+      for (const c of clients) c.write('data: work\n\n');
+    }, 250);
+  };
   const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
   const watchers = dirs.map((d) =>
     watch(d, { recursive: true }, (_, f) => {
-      if (f && relevant.test(f.toString()) && !f.toString().endsWith('.lock')) notify();
+      const name = f?.toString() ?? '';
+      if (name.endsWith('.lock')) return;
+      if (relevant.test(name)) notify();
+      else if (name === 'index') notifyWork();
+    }),
+  );
+  watchers.push(
+    watch(repo.git.root, { recursive: true }, (_, f) => {
+      const name = f?.toString() ?? '';
+      if (name !== '.git' && !name.startsWith('.git/') && !name.startsWith('.git\\')) notifyWork();
     }),
   );
 
@@ -82,9 +100,25 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     restore: (b) => repo.restore(b),
     switch: (b) => repo.switchBranch(b),
     push: (b) => repo.push(b),
+    stage: (b) => repo.stage(b),
+    unstage: (b) => repo.unstage(b),
+    commit: (b) => repo.commit(b),
   };
 
   let origin = '';
+
+  /** A diff's summary as JSON, cached by key (commit SHAs and snapshot keys never change content). */
+  async function summary(d: CommitDiff): Promise<string> {
+    let json = summaries.get(d.sha);
+    if (!json) {
+      const work = /^w\d+$/.test(d.sha);
+      const generated = await generatedPaths(repo.git, work ? null : d.sha, d.files.map((f) => f.path));
+      json = JSON.stringify(summarize(d, generated));
+      if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
+      summaries.set(d.sha, json);
+    }
+    return json;
+  }
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
@@ -97,20 +131,14 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       req.on('close', () => clients.delete(res));
       return;
     }
-    const diff = /^\/api\/diff\/([0-9a-f]{40,64})$/.exec(path);
-    if (diff) {
-      let json = summaries.get(diff[1]);
-      if (!json) {
-        const d = await repo.diff(diff[1]);
-        const generated = await generatedPaths(repo.git, d.sha, d.files.map((f) => f.path));
-        json = JSON.stringify(summarize(d, generated));
-        if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
-        summaries.set(diff[1], json);
-      }
-      return send(res, 200, json);
+    if (path === '/api/work') {
+      const { staged, unstaged } = await repo.work();
+      return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
+    const diff = /^\/api\/diff\/([0-9a-f]{40,64}|w\d+)$/.exec(path);
+    if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.
-    const files = /^\/api\/diff\/([0-9a-f]{40,64})\/files$/.exec(path);
+    const files = /^\/api\/diff\/([0-9a-f]{40,64}|w\d+)\/files$/.exec(path);
     if (files) {
       const d = await repo.diff(files[1]);
       const out: FileContents = {};

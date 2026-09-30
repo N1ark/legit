@@ -23,12 +23,13 @@ export const DEFAULT_HIDDEN = [
 
 const normalize = (p: string) => (p.includes('/') ? p.replace(/^\//, '') : `**/${p}`);
 
-export async function generatedPaths(git: Git, sha: string, paths: string[]): Promise<Set<string>> {
+/** `sha`: the commit whose .gitattributes apply; null for the working tree. */
+export async function generatedPaths(git: Git, sha: string | null, paths: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (!paths.length) return out;
   const [config, attrs] = await Promise.all([
     git.text(['config', '--get-all', 'legit.hide'], { allowFail: true }),
-    git.run(['check-attr', '-z', '--stdin', `--source=${sha}`, 'linguist-generated'], {
+    git.run(['check-attr', '-z', '--stdin', ...(sha ? [`--source=${sha}`] : []), 'linguist-generated'], {
       input: Buffer.from(paths.map((p) => p + '\0').join(''), 'latin1'),
       allowFail: true,
     }),

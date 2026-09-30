@@ -31,6 +31,8 @@ export interface RepoState {
   blocked: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** Uncommitted changes, counted in files. */
+  work: { staged: number; unstaged: number; untracked: number };
   /** Where the current branch pushes to; null when detached or there's no remote. */
   push: PushInfo | null;
 }
@@ -78,6 +80,10 @@ export interface FileDiff {
   binary: boolean;
   /** Individual lines can be selected (regular text file). */
   partial: boolean;
+  /** Untracked file (working-tree changes only). */
+  untracked?: boolean;
+  /** Identifies this exact version of the file's diff (working-tree changes only). */
+  token?: string;
   hunks: Hunk[];
   added: number;
   removed: number;
@@ -182,4 +188,23 @@ export interface BranchInfo {
   /** e.g. "ahead 2, behind 1" or "gone". */
   track: string | null;
   current: boolean;
+}
+
+/** Uncommitted changes. Each summary's `sha` is a snapshot key usable with the diff APIs. */
+export interface WorkState {
+  staged: DiffSummary;
+  /** Unstaged changes to tracked files, then untracked files. */
+  unstaged: DiffSummary;
+}
+
+export interface StageRequest {
+  /** Snapshot key the selection was made on. */
+  key: string;
+  selection: Selection;
+}
+
+export interface CommitRequest {
+  subject: string;
+  body: string;
+  coauthors: Person[];
 }

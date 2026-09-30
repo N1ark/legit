@@ -9,11 +9,12 @@ import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
-  Backup, BranchInfo, CommitDiff, CommitInfo, DropRequest, PushInfo, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, CommitRequest, DropRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { buildMessage, parseMessage } from './message.ts';
+import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
@@ -45,6 +46,10 @@ export class Repo {
   private diffs = new Map<string, CommitDiff>();
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
+  /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
+  private snapshots = new Map<string, CommitDiff>();
+  private snapshotIds = new Map<string, string>();
+  private nextSnapshot = 1;
 
   constructor(git: Git) {
     this.git = git;
@@ -96,6 +101,7 @@ export class Repo {
       canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
       canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
       push: head && branch ? await this.pushInfo(branch) : null,
+      work: await workCounts(this.git),
     };
     if (!head) return state;
 
@@ -143,7 +149,13 @@ export class Repo {
     return i;
   }
 
+  /** A commit's diff, or a working-tree snapshot (`w<n>`, from `work()`). */
   async diff(sha: string): Promise<CommitDiff> {
+    if (/^w\d+$/.test(sha)) {
+      const snap = this.snapshots.get(sha);
+      if (!snap) throw new GitError('Those changes are out of date; refresh.');
+      return snap;
+    }
     let d = this.diffs.get(sha);
     if (!d) {
       d = await commitDiff(this.git, sha);
@@ -511,6 +523,137 @@ export class Repo {
     const h = await this.stacks();
     h.undo.push(move);
     h.redo = [];
+  }
+
+  /** Staged and unstaged changes, as snapshots the UI can page through and select in. */
+  async work(): Promise<{ staged: CommitDiff; unstaged: CommitDiff }> {
+    // Never read a half-applied stage/unstage/commit.
+    await this.idle();
+    const head = await this.head();
+    if (!head) throw new GitError('This branch has no commits yet.');
+    const [staged, unstaged] = await Promise.all([stagedDiff(this.git, ''), unstagedDiff(this.git, '')]);
+    return { staged: this.snapshot('staged', staged), unstaged: this.snapshot('unstaged', unstaged) };
+  }
+
+  /** Give a working-tree diff a key, keeping the previous key if nothing changed. */
+  private snapshot(kind: string, d: CommitDiff): CommitDiff {
+    const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token).join('\0');
+    let key = this.snapshotIds.get(content);
+    if (!key || !this.snapshots.has(key)) {
+      key = `w${this.nextSnapshot++}`;
+      this.snapshotIds.set(content, key);
+      this.snapshots.set(key, d);
+      while (this.snapshots.size > 20) this.snapshots.delete(this.snapshots.keys().next().value!);
+      while (this.snapshotIds.size > 40) this.snapshotIds.delete(this.snapshotIds.keys().next().value!);
+    }
+    d.sha = key;
+    return this.snapshots.get(key)!;
+  }
+
+  /**
+   * Resolve a selection made on snapshot `key` against a fresh diff of the same kind, refusing
+   * if any selected file changed since. Returns the whole files and partial selections.
+   */
+  private async resolve(req: StageRequest, fresh: CommitDiff) {
+    const snap = this.snapshots.get(req.key);
+    if (!snap) throw new GitError('Those changes are out of date; refresh and select again.');
+    const now = new Map(fresh.files.map((f) => [f.path, f]));
+    const whole: FileDiff[] = [];
+    const partial: { f: FileDiff; picked: Set<number> }[] = [];
+    for (const [pathU, sel] of Object.entries(req.selection)) {
+      const path = fromUtf8(pathU);
+      const shown = snap.files.find((f) => f.path === path);
+      const f = now.get(path);
+      if (!shown || !f || shown.token !== f.token) {
+        throw new GitError(`${pathU} changed since it was shown; nothing was changed. Look again and reselect.`);
+      }
+      const n = f.added + f.removed;
+      if (sel === 'all' || n === 0 || sel.length >= n) whole.push(f);
+      else if (sel.length) {
+        if (!f.partial) throw new GitError(`${pathU} can only be staged as a whole file.`);
+        partial.push({ f, picked: new Set(sel) });
+      }
+    }
+    return { whole, partial };
+  }
+
+  /** Paths as NUL-separated pathspecs for --pathspec-from-file. */
+  private static pathspecs(files: FileDiff[]) {
+    return Buffer.from(files.map((f) => f.path + '\0').join(''), 'latin1');
+  }
+
+  /** Stage selected changes. Only the index changes; working-tree files are never touched. */
+  stage(req: StageRequest): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      const { whole, partial } = await this.resolve(req, await unstagedDiff(this.git, ''));
+      const records: string[] = [];
+      const bases = await this.git.readObjects(partial.filter(({ f }) => !f.untracked).map(({ f }) => f.oldSha));
+      for (const { f, picked } of partial) {
+        const base = f.untracked ? '' : bases.get(f.oldSha)!.data.toString('latin1');
+        const sha = this.git.writeObject('blob', Buffer.from(applyLines(base, f.hunks, (i) => picked.has(i)), 'latin1'));
+        records.push(`${f.untracked ? f.newMode : f.oldMode} ${sha}\t${f.path}`);
+      }
+      await this.git.flush();
+      if (whole.length) {
+        await this.git.run(['--literal-pathspecs', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+          input: Repo.pathspecs(whole),
+        });
+      }
+      if (records.length) await this.updateIndex(records);
+      return { state: await this.state(), renamed: {}, focus: [] };
+    });
+  }
+
+  /** Unstage selected changes: the index goes back towards HEAD. The working tree isn't touched. */
+  unstage(req: StageRequest): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      const { whole, partial } = await this.resolve(req, await stagedDiff(this.git, ''));
+      const records: string[] = [];
+      const bases = await this.git.readObjects(partial.filter(({ f }) => f.status !== 'A').map(({ f }) => f.oldSha));
+      for (const { f, picked } of partial) {
+        const base = f.status === 'A' ? '' : bases.get(f.oldSha)!.data.toString('latin1');
+        const sha = this.git.writeObject('blob', Buffer.from(applyLines(base, f.hunks, (i) => !picked.has(i)), 'latin1'));
+        records.push(`${f.status === 'D' ? f.oldMode : f.newMode} ${sha}\t${f.path}`);
+      }
+      await this.git.flush();
+      if (whole.length) {
+        await this.git.run(
+          ['--literal-pathspecs', 'restore', '--staged', '--source=HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'],
+          { input: Repo.pathspecs(whole) },
+        );
+      }
+      if (records.length) await this.updateIndex(records);
+      return { state: await this.state(), renamed: {}, focus: [] };
+    });
+  }
+
+  private async updateIndex(records: string[]) {
+    await this.git.run(['update-index', '-z', '--index-info'], {
+      input: Buffer.from(records.map((r) => r + '\0').join(''), 'latin1'),
+    });
+  }
+
+  /** `git commit` of what's staged (hooks and signing config apply). */
+  commit(req: CommitRequest): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      if (!req.subject?.trim()) throw new GitError('A commit needs a title.');
+      const staged = await this.git.run(['diff', '--cached', '--quiet'], { allowFail: true });
+      if (staged.code === 0) throw new GitError('Nothing is staged.');
+      const r = await this.git.run(['commit', '--cleanup=whitespace', '-F', '-'], {
+        input: buildMessage(req.subject, req.body, req.coauthors),
+        allowFail: true,
+        timeout: 600_000,
+      });
+      if (r.code !== 0) throw new GitError(`Commit failed.\n${(r.err + r.out.toString('utf8')).trim()}`);
+      const head = await this.head();
+      return { state: await this.state(), renamed: {}, focus: head ? [head] : [] };
+    });
   }
 
   /** Upstream of `branch` and how far apart they are, or where publishing it would go. */
