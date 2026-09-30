@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileContent, summarize } from './diff.ts';
+import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
 import type { FileContents } from '../shared/types.ts';
@@ -116,6 +117,13 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
         if (Number.isInteger(i) && d.files[i]) out[i] = fileContent(d.files[i]);
       }
       return send(res, 200, out);
+    }
+    if (path === '/api/open' && req.method === 'POST') {
+      if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
+      const { path: file, line } = await readBody(req);
+      if (typeof file !== 'string') return send(res, 400, { error: 'Missing path' });
+      await openInZed(repo.git.root, file, typeof line === 'number' ? line : undefined);
+      return send(res, 200, {});
     }
     const op = /^\/api\/(\w+)$/.exec(path)?.[1];
     if (op && ops[op] && req.method === 'POST') {

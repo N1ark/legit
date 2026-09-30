@@ -201,6 +201,22 @@ class App {
     });
   }
 
+  /** Open a file of the working tree (path relative to the repo root) in Zed. */
+  async openInZed(path: string, line?: number) {
+    try {
+      await request('/api/open', { path, line });
+    } catch (e) {
+      this.toast((e as Error).message, 'error');
+    }
+  }
+
+  copy(text: string, what = text) {
+    navigator.clipboard.writeText(text).then(
+      () => this.toast(`Copied ${what}`),
+      () => this.toast("Couldn't access the clipboard", 'error'),
+    );
+  }
+
   undo = () => this.op('undo');
   redo = () => this.op('redo');
 }
