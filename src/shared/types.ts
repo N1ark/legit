@@ -31,6 +31,19 @@ export interface RepoState {
   blocked: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** Where the current branch pushes to; null when detached or there's no remote. */
+  push: PushInfo | null;
+}
+
+export interface PushInfo {
+  remote: string;
+  /** Branch on the remote. */
+  branch: string;
+  /** No upstream yet (or it was deleted): pushing publishes the branch. */
+  publish: boolean;
+  /** Commits only here / only on the remote, as of the last fetch. */
+  ahead: number;
+  behind: number;
 }
 
 export type LineKind = ' ' | '+' | '-';

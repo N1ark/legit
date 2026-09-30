@@ -263,3 +263,56 @@ test('generated files: built-in patterns, linguist-generated as of the commit, l
   assert.deepEqual([...hidden].sort(), ['app.min.js', 'docs/index.html', 'gen/api.ts', 'package-lock.json', 'sub/Cargo.lock']);
   void sha;
 });
+
+test('push: publish, fast-forward, and force push only with consent and never over unseen work', async () => {
+  const remote = mkdtempSync(join(tmpdir(), 'legit-remote-'));
+  dirs.push(remote);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { env });
+  commit('base', { f: '1\n' });
+  const a = commit('a', { f: '2\n' });
+  git('remote', 'add', 'origin', remote);
+  const repo = await Repo.open(dir);
+  const remoteHead = () => execFileSync('git', ['rev-parse', 'main'], { cwd: remote, env, encoding: 'utf8' }).trim();
+
+  // Publish a branch with no upstream.
+  let st = await repo.state();
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: true, ahead: 2, behind: 0 });
+  st = (await repo.push({})).state;
+  assert.equal(remoteHead(), a);
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: false, ahead: 0, behind: 0 });
+  await assert.rejects(repo.push({}), /up to date/);
+
+  // Fast-forward.
+  const b = commit('b', { g: '1\n' });
+  assert.equal((await repo.state()).push?.ahead, 1);
+  await repo.push({});
+  assert.equal(remoteHead(), b);
+
+  // Rewriting pushed history needs an explicit force.
+  await repo.edit({ sha: a, subject: 'A', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
+  st = await repo.state();
+  assert.deepEqual([st.push?.ahead, st.push?.behind], [2, 2]);
+  await assert.rejects(repo.push({}), /needs a force push/);
+  assert.equal(remoteHead(), b);
+  await repo.push({ force: true });
+  assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
+
+  // Someone else pushes; we rewrite without fetching: the lease refuses.
+  const other = mkdtempSync(join(tmpdir(), 'legit-other-'));
+  dirs.push(other);
+  const og = (...args: string[]) => execFileSync('git', args, { cwd: other, env, encoding: 'utf8' }).trim();
+  execFileSync('git', ['clone', '-q', remote, other], { env });
+  writeFileSync(join(other, 'theirs'), 'precious\n');
+  og('add', 'theirs');
+  og('commit', '-qm', 'their work');
+  og('push', '-q', 'origin', 'main');
+  const theirs = og('rev-parse', 'HEAD');
+  await repo.edit({ sha: git('rev-parse', 'HEAD'), subject: 'B2', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
+  await assert.rejects(repo.push({ force: true }), /haven't fetched/);
+  assert.equal(remoteHead(), theirs);
+
+  // Fetching (without integrating) isn't enough either: --force-if-includes refuses.
+  git('fetch', '-q', 'origin');
+  await assert.rejects(repo.push({ force: true }), /never integrated/);
+  assert.equal(remoteHead(), theirs);
+});

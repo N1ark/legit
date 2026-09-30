@@ -26,6 +26,8 @@ export interface RunOpts {
   env?: Record<string, string>;
   /** Don't throw on a non-zero exit code. */
   allowFail?: boolean;
+  /** Kill the process after this many ms (for network operations). */
+  timeout?: number;
 }
 
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
@@ -39,8 +41,10 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
     p.stdout.on('data', (d: Buffer) => out.push(d));
     p.stderr.on('data', (d: Buffer) => err.push(d));
     p.stdin.on('error', () => {});
+    const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
     p.on('error', fail);
     p.on('close', (code) => {
+      clearTimeout(timer);
       const res = { code: code ?? -1, out: Buffer.concat(out), err: Buffer.concat(err).toString('utf8') };
       if (res.code !== 0 && !opts.allowFail) {
         fail(new GitError(`git ${args[0]} failed: ${res.err.trim() || `exit ${res.code}`}`));

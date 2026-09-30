@@ -81,6 +81,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     redo: () => repo.redo(),
     restore: (b) => repo.restore(b),
     switch: (b) => repo.switchBranch(b),
+    push: (b) => repo.push(b),
   };
 
   let origin = '';

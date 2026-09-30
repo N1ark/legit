@@ -8,6 +8,7 @@
   import Backups from './Backups.svelte';
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
+  import PushButton from './PushButton.svelte';
   import CommitView from './CommitView.svelte';
   import SquashView from './SquashView.svelte';
   import { app } from './lib/app.svelte.ts';
@@ -72,6 +73,7 @@
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<span class="spinner" aria-label="Working"></span>{/if}
+    <PushButton />
     <button class="ghost" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo} title="Undo ({mod}Z)">
       <ArrowUUpLeftIcon size={16} />
     </button>

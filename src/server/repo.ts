@@ -9,7 +9,7 @@ import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
-  Backup, BranchInfo, CommitDiff, CommitInfo, DropRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, DropRequest, PushInfo, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
@@ -95,6 +95,7 @@ export class Repo {
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
       canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
       canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
+      push: head && branch ? await this.pushInfo(branch) : null,
     };
     if (!head) return state;
 
@@ -510,6 +511,64 @@ export class Repo {
     const h = await this.stacks();
     h.undo.push(move);
     h.redo = [];
+  }
+
+  /** Upstream of `branch` and how far apart they are, or where publishing it would go. */
+  private async pushInfo(branch: string): Promise<PushInfo | null> {
+    const [info, remotes] = await Promise.all([
+      this.git.text([
+        'for-each-ref',
+        '--format=%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track,nobracket)',
+        `refs/heads/${branch}`,
+      ]),
+      this.git.text(['remote']),
+    ]);
+    const [upstream, remote, remoteRef, track] = info.split('\0');
+    if (upstream && remote && remoteRef && track !== 'gone') {
+      const n = (k: string) => Number(new RegExp(`${k} (\\d+)`).exec(track)?.[1] ?? 0);
+      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead: n('ahead'), behind: n('behind') };
+    }
+    const names = remotes.split('\n').filter(Boolean);
+    const target = remote || (names.includes('origin') ? 'origin' : names[0]);
+    if (!target) return null;
+    const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
+    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0 };
+  }
+
+  /**
+   * Push the current branch. A branch whose pushed commits were rewritten needs a force push,
+   * which only happens when `force` is set, and then with --force-with-lease and
+   * --force-if-includes: git refuses if the remote has commits this repo hasn't seen.
+   */
+  push(req: { force?: boolean }): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      const branch = await this.currentBranch();
+      if (!branch) throw new GitError("HEAD is detached; switch to a branch to push.");
+      const info = await this.pushInfo(branch);
+      if (!info) throw new GitError('This repository has no remote to push to.');
+      const refspec = `refs/heads/${branch}:refs/heads/${info.branch}`;
+      let args: string[];
+      if (info.publish) args = ['push', '--set-upstream', info.remote, refspec];
+      else if (info.ahead === 0) throw new GitError(info.behind ? 'Nothing to push: the remote is ahead of you.' : 'Already up to date.');
+      else if (info.behind === 0) args = ['push', info.remote, refspec];
+      else if (!req.force) throw new GitError('Your history differs from the remote; this needs a force push.');
+      else args = ['push', '--force-with-lease', '--force-if-includes', info.remote, refspec];
+      const r = await this.git.run(args, { allowFail: true, timeout: 120_000 });
+      if (r.code !== 0) {
+        const notFetched = /stale info|fetch first|non-fast-forward/i.test(r.err);
+        const notIntegrated = /updated since checkout/i.test(r.err);
+        throw new GitError(
+          notIntegrated
+            ? `The remote has commits that aren't in your branch (fetched, but never integrated), so nothing was pushed.\n${r.err.trim()}`
+            : notFetched
+              ? `The remote has commits you haven't fetched, so nothing was pushed. Fetch and look at them first.\n${r.err.trim()}`
+              : `Push failed.\n${r.err.trim()}`,
+        );
+      }
+      return { state: await this.state(), renamed: {}, focus: [] };
+    });
   }
 
   /** Local branches, most recently committed first. */

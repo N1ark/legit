@@ -28,6 +28,7 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Drop** | Trash button on a commit (click twice). |
 | **Undo** | <kbd>⌘Z</kbd>/<kbd>⌘⇧Z</kbd> (per branch), plus the backups panel (clock icon) for anything older. |
 | **Files** | Right-click a file name or a diff line: **Open in Zed** (the repo as the project, at that line or the file's first change), **Copy path**, **Copy relative path**. |
+| **Push** | One button in the header: **Publish** a branch with no upstream, **Push ↑N** when ahead, or, after rewriting commits that were already pushed, **Force push ↑N ↓M** (click twice). Force pushes use `--force-with-lease --force-if-includes`, so git refuses if the remote has commits you haven't fetched *and* integrated. |
 | **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Uses `git switch`, so uncommitted changes come along and it refuses if they'd be overwritten. |
 
 Generated files (lockfiles, minified bundles, source maps, snapshots, protobuf output… see `src/server/generated.ts`)
@@ -58,6 +59,9 @@ Losing work is the one failure that matters, so every operation is built to be r
 - **Atomic.** HEAD is moved with a compare-and-swap (`git update-ref HEAD new old`), so if anything else changed the
   branch in the meantime the operation fails instead of clobbering it. Every move also lands in the reflog as
   `legit: <op>`.
+- **Force pushes can't clobber other people's work**: they only happen after an explicit confirmation, and use
+  `--force-with-lease --force-if-includes`, so they fail if the remote has commits this repo hasn't fetched and
+  integrated.
 - **Refuses to run** during a rebase, merge, cherry-pick, revert or bisect.
 
 Rewritten commits get you as committer (like `git rebase`); authors and dates are kept. Signatures are dropped from
