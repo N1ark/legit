@@ -4,6 +4,7 @@
   import GitMergeIcon from 'phosphor-svelte/lib/GitMergeIcon';
   import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
   import UsersIcon from 'phosphor-svelte/lib/UsersIcon';
+  import Avatar from './Avatar.svelte';
   import ContextMenu from './ContextMenu.svelte';
   import PencilSimpleLineIcon from 'phosphor-svelte/lib/PencilSimpleLineIcon';
   import { WORK, ago, app, shortSha } from './lib/app.svelte.ts';
@@ -128,6 +129,7 @@
         {#if c.merge}<GitMergeIcon size={13} />{:else if c.editable}<DotsSixVerticalIcon size={13} weight="bold" />{/if}
       </span>
       <span class="sha mono">{shortSha(c)}</span>
+      <Avatar email={c.author.email} name={c.author.name} size={16} />
       <span class="subject" class:dim={!c.subject}>{c.subject || '(no message)'}</span>
       {#if c.coauthors.length}
         <span class="meta" title={c.coauthors.map((p) => p.name).join(', ')}><UsersIcon size={12} /></span>

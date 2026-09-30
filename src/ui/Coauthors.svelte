@@ -2,6 +2,7 @@
   // Editable list of co-authors, one `Name <email>` per line, with suggestions from history.
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
   import XIcon from 'phosphor-svelte/lib/XIcon';
+  import Avatar from './Avatar.svelte';
   import { app } from './lib/app.svelte.ts';
   import { formatPerson, parsePerson } from './lib/people.ts';
 
@@ -24,7 +25,9 @@
 
 <div class="coauthors" bind:this={list}>
   {#each value as _, i (i)}
+    {@const who = parsePerson(value[i])}
     <div class="coauthor">
+      <Avatar email={who?.email ?? ''} name={who?.name ?? '?'} size={22} />
       <input
         bind:value={value[i]}
         {oninput}
@@ -57,7 +60,8 @@
 
   .coauthor {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
   }
 
   .coauthor input {

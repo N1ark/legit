@@ -48,7 +48,7 @@
 
 {#if info && mode}
   <button
-    class="push {mode}"
+    class="push m-{mode}"
     class:confirm
     onclick={push}
     disabled={mode === 'behind' || mode === 'done' || app.busy || !!app.repo?.blocked}
@@ -74,30 +74,30 @@
     padding: 4px 10px;
   }
 
-  .push.done {
+  .push.m-done {
     background: none;
     color: var(--dim);
   }
 
-  .push.push,
-  .push.publish {
+  .push.m-push,
+  .push.m-publish {
     background: var(--theme);
     color: #fff;
   }
 
-  .push.push:hover:not(:disabled),
-  .push.publish:hover:not(:disabled) {
+  .push.m-push:hover:not(:disabled),
+  .push.m-publish:hover:not(:disabled) {
     background: var(--theme-2);
   }
 
-  .push.force {
+  .push.m-force {
     background: none;
     color: var(--warn);
     box-shadow: inset 0 0 0 1px var(--warn);
   }
 
-  .push.force.confirm,
-  .push.force:hover:not(:disabled) {
+  .push.m-force.confirm,
+  .push.m-force:hover:not(:disabled) {
     background: var(--warn);
     color: var(--bg);
   }

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileContent, summarize } from './diff.ts';
+import { avatars } from './avatars.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -130,6 +131,11 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       clients.add(res);
       req.on('close', () => clients.delete(res));
       return;
+    }
+    if (path === '/api/avatars' && req.method === 'POST') {
+      if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
+      const { emails } = await readBody(req);
+      return send(res, 200, await avatars(repo.git, Array.isArray(emails) ? emails.slice(0, 2000) : []));
     }
     if (path === '/api/work') {
       const { staged, unstaged } = await repo.work();

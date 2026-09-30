@@ -8,6 +8,7 @@
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
+  import Avatar from './Avatar.svelte';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
   import { formatPerson, parsePeople } from './lib/people.ts';
@@ -171,6 +172,7 @@
     <div class="people">
       <label for="author-name" class="dim">Author</label>
       <div class="person">
+        <Avatar email={authorEmail} name={authorName} size={22} />
         <input id="author-name" bind:value={authorName} placeholder="Name" disabled={readonly} />
         <input bind:value={authorEmail} placeholder="email@example.com" disabled={readonly} class="mono" />
       </div>
@@ -303,7 +305,8 @@
 
   .person {
     display: grid;
-    grid-template-columns: 1fr 1.2fr;
+    grid-template-columns: auto 1fr 1.2fr;
+    align-items: center;
     gap: 6px;
   }
 

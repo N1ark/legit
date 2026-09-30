@@ -40,6 +40,12 @@ start collapsed with a *generated* badge. Anything marked `linguist-generated` i
 git config --add legit.hide 'docs/*.html'     # this repo; use --global for all repos
 ```
 
+Authors show their GitHub avatar (initials otherwise). GitHub no-reply emails map to one directly. For other
+emails, if the repo has a github.com remote, legit asks GitHub's API for a commit by that email in that repo, which
+returns the linked account. Emails are only sent to `api.github.com`, and only for repos hosted there. It uses
+`GITHUB_TOKEN`/`GH_TOKEN` or the `gh` CLI's login when available (read-only), and results are cached in
+`~/Library/Caches/legit/avatars.json`.
+
 <kbd>j</kbd>/<kbd>k</kbd> move the selection. The list follows the first-parent history of `HEAD` down to the first
 merge commit; the history below a merge is shown but can't be rewritten.
 

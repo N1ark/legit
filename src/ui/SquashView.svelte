@@ -3,6 +3,7 @@
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
   import { untrack } from 'svelte';
   import type { CommitInfo } from '../shared/types.ts';
+  import Avatar from './Avatar.svelte';
   import Coauthors from './Coauthors.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
@@ -71,7 +72,11 @@
 
   <ol class="picked">
     {#each commits.toReversed() as c (c.sha)}
-      <li><span class="mono sha">{shortSha(c)}</span> {c.subject} <span class="dim">· {c.author.name}</span></li>
+      <li>
+        <span class="mono sha">{shortSha(c)}</span>
+        {c.subject}
+        <span class="dim who"><Avatar email={c.author.email} name={c.author.name} size={14} /> {c.author.name}</span>
+      </li>
     {/each}
   </ol>
 
@@ -130,6 +135,13 @@
 
   .sha {
     color: var(--theme);
+  }
+
+  .who {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
   }
 
   .picked {

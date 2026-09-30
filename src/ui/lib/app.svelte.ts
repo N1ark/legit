@@ -61,6 +61,7 @@ class App {
 
   private setRepo(repo: RepoState, focus?: string[]) {
     this.repo = repo;
+    this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(repo.commits.map((c) => c.sha));
     if (this.hasWork) shas.add(WORK);
     let sel = (focus ?? this.selected).filter((s) => shas.has(s));
@@ -242,6 +243,22 @@ class App {
 
   /** Anything staged, unstaged or untracked. */
   hasWork = $derived(!!this.repo && this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0);
+  /** Avatar URL by lowercased email; null when there's none (initials are shown instead). */
+  avatars = $state<Record<string, string | null>>({});
+  private avatarsPending = new Set<string>();
+
+  loadAvatars(emails: string[]) {
+    const need = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
+      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e),
+    );
+    if (!need.length) return;
+    for (const e of need) this.avatarsPending.add(e);
+    request<Record<string, string | null>>('/api/avatars', { emails: need })
+      .then((r) => (this.avatars = { ...this.avatars, ...r }))
+      .catch(() => {})
+      .finally(() => need.forEach((e) => this.avatarsPending.delete(e)));
+  }
+
   /** Bumped whenever files or the index change, so the changes view reloads. */
   workTick = $state(0);
 
