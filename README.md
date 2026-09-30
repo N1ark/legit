@@ -46,7 +46,7 @@ returns the linked account. Emails are only sent to `api.github.com`, and only f
 `GITHUB_TOKEN`/`GH_TOKEN` or the `gh` CLI's login when available (read-only), and results are cached in
 `~/Library/Caches/legit/avatars.json`.
 
-<kbd>j</kbd>/<kbd>k</kbd> move the selection. The list follows the first-parent history of `HEAD` down to the first
+<kbd>j</kbd>/<kbd>k</kbd> move the selection, and <kbd>?</kbd> lists every shortcut. The list follows the first-parent history of `HEAD` down to the first
 merge commit; the history below a merge is shown but can't be rewritten.
 
 ## How it stays safe

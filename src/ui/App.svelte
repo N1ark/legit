@@ -5,10 +5,12 @@
     IconButton,
     Kbd,
     MOD,
+    ShortcutsOverlay,
     Spinner,
     ToastHost,
-    isMac,
+    createKeymap,
     isTyping,
+    type Binding,
   } from 'purr';
   import { ArrowUUpLeft, ArrowUUpRight, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
@@ -22,6 +24,7 @@
   import { WORK, app } from './lib/app.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
+  let help = $state(false);
 
   // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
   const typing = () => isTyping(document.activeElement);
@@ -42,31 +45,50 @@
     };
   });
 
-  function onkeydown(e: KeyboardEvent) {
-    const typing = isTyping(e.target);
-    const cmd = isMac ? e.metaKey : e.ctrlKey;
-    if (cmd && e.key.toLowerCase() === 'z' && !typing) {
-      e.preventDefault();
-      if (e.shiftKey) app.redo();
-      else app.undo();
-      return;
-    }
-    if (typing || cmd || e.defaultPrevented) return;
-    if (e.key === 'b' && !e.altKey) {
-      e.preventDefault();
-      branchPicker?.show();
-      return;
-    }
-    const down = e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J';
-    const up = e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K';
-    if (!down && !up) return;
-    e.preventDefault();
-    if (e.altKey || e.key === 'J' || e.key === 'K') app.move(down ? 1 : -1);
-    else app.step(down ? 1 : -1, e.shiftKey);
+  type Action = 'undo' | 'redo' | 'branch' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp';
+  const C = 'Commits';
+  const bindings: Binding<Action>[] = [
+    { keys: 'j', action: 'down', label: 'Next commit', group: C },
+    { keys: '↓', action: 'down', label: 'Next commit', group: C },
+    { keys: 'k', action: 'up', label: 'Previous commit', group: C },
+    { keys: '↑', action: 'up', label: 'Previous commit', group: C },
+    { keys: '⇧↓', action: 'addDown', label: 'Select the next one too', group: C },
+    { keys: '⇧↑', action: 'addUp', label: 'Select the previous one too', group: C },
+    { keys: '⌥↓', action: 'moveDown', label: 'Move down', group: C },
+    { keys: '⇧J', action: 'moveDown', label: 'Move down', group: C },
+    { keys: '⌥j', action: 'moveDown', label: 'Move down', group: C, hidden: true },
+    { keys: '⌥↑', action: 'moveUp', label: 'Move up', group: C },
+    { keys: '⇧K', action: 'moveUp', label: 'Move up', group: C },
+    { keys: '⌥k', action: 'moveUp', label: 'Move up', group: C, hidden: true },
+    // In a field, ⌘Z is the field's own undo.
+    { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
+    { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
+    { keys: 'b', action: 'branch', label: 'Switch branch' },
+    { keys: '?', action: 'help', label: 'Show shortcuts' },
+  ];
+  const keymap = createKeymap(bindings);
+  const shortcuts = keymap.help({
+    groups: ['General', C],
+    extra: [
+      { label: 'Select several (click)', hints: [MOD, '⇧'], group: C },
+      { label: 'Save, commit or squash', hints: ['⌘↩'] },
+      { label: 'Stage / unstage picked changes', hints: ['s', 'u'] },
+      { label: 'Revert edits, clear picked changes', hints: ['Esc'] },
+    ],
+  });
+
+  function run(action: Action) {
+    if (action === 'undo') app.undo();
+    else if (action === 'redo') app.redo();
+    else if (action === 'branch') branchPicker?.show();
+    else if (action === 'help') help = true;
+    else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
+    else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
+    else app.move(action === 'moveDown' ? 1 : -1);
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window onkeydown={(e) => keymap.handle(e, run)} />
 
 <div class="shell">
   <header class:desktop={IS_TAURI} data-tauri-drag-region>
@@ -98,6 +120,7 @@
         <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
         <span><Kbd hint="⌥↑" /><Kbd hint="⌥↓" /> reorder</span>
         <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select many</span>
+        <span><Kbd hint="?" /> more</span>
       </footer>
     </aside>
     <section data-scroller>
@@ -118,6 +141,9 @@
 
 <ContextMenuHost />
 <ToastHost position="bottom-end" />
+{#if help}
+  <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
+{/if}
 
 <style>
   .shell {
