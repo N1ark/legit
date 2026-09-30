@@ -2,9 +2,8 @@
   // One push button that does the appropriate thing: publish a new branch, push when ahead,
   // or (after rewriting pushed commits, with a confirming second click) force push with a
   // lease, which git refuses if the remote has commits this repo hasn't seen.
-  import CloudArrowUpIcon from 'phosphor-svelte/lib/CloudArrowUpIcon';
-  import CloudCheckIcon from 'phosphor-svelte/lib/CloudCheckIcon';
-  import WarningIcon from 'phosphor-svelte/lib/WarningIcon';
+  import { Button, ConfirmButton, toast } from 'purr';
+  import { CloudArrowUp, CloudCheck, Warning } from 'purr/icons';
   import { app } from './lib/app.svelte.ts';
 
   const info = $derived(app.repo?.push ?? null);
@@ -16,21 +15,12 @@
     : info.behind ? 'behind'
     : 'done',
   );
-  let confirm = $state(false);
-  let timer: ReturnType<typeof setTimeout>;
 
   async function push() {
     if (!info) return;
-    if (mode === 'force' && !confirm) {
-      confirm = true;
-      timer = setTimeout(() => (confirm = false), 4000);
-      return;
-    }
-    clearTimeout(timer);
-    confirm = false;
     const where = `${info.remote}/${info.branch}`;
     if (await app.op('push', { force: mode === 'force' })) {
-      app.toast(mode === 'publish' ? `Published to ${where}` : mode === 'force' ? `Force pushed to ${where}` : `Pushed to ${where}`);
+      toast(mode === 'publish' ? `Published to ${where}` : mode === 'force' ? `Force pushed to ${where}` : `Pushed to ${where}`);
     }
   }
 
@@ -44,67 +34,39 @@
     : mode === 'behind' ? `${info.remote}/${info.branch} has ${info.behind} commit${info.behind === 1 ? '' : 's'} you don't (as of the last fetch)`
     : `Up to date with ${info.remote}/${info.branch} (as of the last fetch)`,
   );
+  const disabled = $derived(app.busy || !!app.repo?.blocked);
 </script>
 
-{#if info && mode}
-  <button
-    class="push m-{mode}"
-    class:confirm
+{#snippet counts()}
+  {#if info?.ahead && mode !== 'publish'}<span class="count">↑{info.ahead}</span>{/if}
+  {#if info?.behind}<span class="count">↓{info.behind}</span>{/if}
+{/snippet}
+
+{#if info && mode === 'force'}
+  <ConfirmButton confirmLabel="Click to force push" onconfirm={push} {disabled} {title}>
+    <Warning weight="bold" /> Force push {@render counts()}
+  </ConfirmButton>
+{:else if info && mode}
+  <Button
+    variant={mode === 'push' || mode === 'publish' ? 'primary' : 'ghost'}
     onclick={push}
-    disabled={mode === 'behind' || mode === 'done' || app.busy || !!app.repo?.blocked}
+    disabled={mode === 'behind' || mode === 'done' || disabled}
     {title}
   >
-    {#if mode === 'force'}
-      <WarningIcon size={14} weight="bold" />
-      {confirm ? 'Click to force push' : 'Force push'}
-    {:else if mode === 'done'}
-      <CloudCheckIcon size={14} /> Pushed
+    {#if mode === 'done'}
+      <CloudCheck /> Pushed
     {:else}
-      <CloudArrowUpIcon size={14} />
+      <CloudArrowUp />
       {mode === 'publish' ? 'Publish' : mode === 'behind' ? 'Behind' : 'Push'}
     {/if}
-    {#if info.ahead && mode !== 'publish'}<span class="count">↑{info.ahead}</span>{/if}
-    {#if info.behind}<span class="count">↓{info.behind}</span>{/if}
-  </button>
+    {@render counts()}
+  </Button>
 {/if}
 
 <style>
-  .push {
-    font-size: 12px;
-    padding: 4px 10px;
-  }
-
-  .push.m-done {
-    background: none;
-    color: var(--dim);
-  }
-
-  .push.m-push,
-  .push.m-publish {
-    background: var(--theme);
-    color: #fff;
-  }
-
-  .push.m-push:hover:not(:disabled),
-  .push.m-publish:hover:not(:disabled) {
-    background: var(--theme-2);
-  }
-
-  .push.m-force {
-    background: none;
-    color: var(--warn);
-    box-shadow: inset 0 0 0 1px var(--warn);
-  }
-
-  .push.m-force.confirm,
-  .push.m-force:hover:not(:disabled) {
-    background: var(--warn);
-    color: var(--bg);
-  }
-
   .count {
-    font-family: var(--font-mono);
-    font-size: 11px;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
     opacity: 0.85;
   }
 </style>

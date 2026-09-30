@@ -1,9 +1,16 @@
 <script lang="ts">
-  import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
-  import ArrowUUpRightIcon from 'phosphor-svelte/lib/ArrowUUpRightIcon';
-  import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon';
-  import WarningIcon from 'phosphor-svelte/lib/WarningIcon';
-  import XIcon from 'phosphor-svelte/lib/XIcon';
+  import {
+    ContextMenuHost,
+    IS_TAURI,
+    IconButton,
+    Kbd,
+    MOD,
+    Spinner,
+    ToastHost,
+    isMac,
+    isTyping,
+  } from 'purr';
+  import { ArrowUUpLeft, ArrowUUpRight, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
   import Backups from './Backups.svelte';
   import BranchPicker from './BranchPicker.svelte';
@@ -14,14 +21,10 @@
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
 
-  const mac = navigator.platform.startsWith('Mac');
-  const mod = mac ? '⌘' : 'Ctrl';
-  // Running inside the desktop app: the header is the title bar.
-  const desktop = '__TAURI_INTERNALS__' in window;
   let branchPicker = $state<BranchPicker>();
 
   // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
-  const typing = () => !!document.activeElement?.closest('input, textarea, [contenteditable]');
+  const typing = () => isTyping(document.activeElement);
   (window as any).__legit = {
     undo: () => (typing() ? document.execCommand('undo') : app.undo()),
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
@@ -40,8 +43,8 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
-    const typing = (e.target as HTMLElement).closest('input, textarea, [contenteditable]');
-    const cmd = mac ? e.metaKey : e.ctrlKey;
+    const typing = isTyping(e.target);
+    const cmd = isMac ? e.metaKey : e.ctrlKey;
     if (cmd && e.key.toLowerCase() === 'z' && !typing) {
       e.preventDefault();
       if (e.shiftKey) app.redo();
@@ -66,35 +69,35 @@
 <svelte:window {onkeydown} />
 
 <div class="shell">
-  <header class:desktop data-tauri-drag-region>
+  <header class:desktop={IS_TAURI} data-tauri-drag-region>
     <span class="brand" data-tauri-drag-region>legit</span>
     {#if app.repo}
       <span class="repo" title={app.repo.root} data-tauri-drag-region>{app.repo.name}</span>
       <BranchPicker bind:this={branchPicker} />
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
-    {#if app.busy}<span class="spinner" aria-label="Working"></span>{/if}
+    {#if app.busy}<Spinner label="Working" />{/if}
     <PushButton />
-    <button class="ghost" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo} title="Undo ({mod}Z)">
-      <ArrowUUpLeftIcon size={16} />
-    </button>
-    <button class="ghost" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo} title="Redo ({mod}⇧Z)">
-      <ArrowUUpRightIcon size={16} />
-    </button>
+    <IconButton label="Undo" shortcut="⌘Z" size="lg" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo}>
+      <ArrowUUpLeft />
+    </IconButton>
+    <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
+      <ArrowUUpRight />
+    </IconButton>
     <Backups />
   </header>
 
   {#if app.repo?.blocked}
-    <div class="blocked"><WarningIcon size={14} weight="bold" /> {app.repo.blocked} History is read-only.</div>
+    <div class="blocked"><Warning weight="bold" /> {app.repo.blocked} History is read-only.</div>
   {/if}
 
   <main>
     <aside>
       <CommitList />
-      <footer class="dim">
-        <span><kbd>j</kbd><kbd>k</kbd> move</span>
-        <span><kbd>⌥↑</kbd><kbd>⌥↓</kbd> reorder</span>
-        <span><kbd>{mod}</kbd>/<kbd>⇧</kbd>+click select many</span>
+      <footer class="muted">
+        <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
+        <span><Kbd hint="⌥↑" /><Kbd hint="⌥↓" /> reorder</span>
+        <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select many</span>
       </footer>
     </aside>
     <section data-scroller>
@@ -107,22 +110,14 @@
           <CommitView commit={app.selection[0]} />
         {/key}
       {:else if app.repo}
-        <p class="empty dim">{app.repo.blocked ?? 'No commit selected.'}</p>
+        <p class="empty muted">{app.repo.blocked ?? 'No commit selected.'}</p>
       {/if}
     </section>
   </main>
-
-  <div class="toasts">
-    {#each app.toasts as t (t.id)}
-      <div class="toast {t.kind}">
-        <span>{t.text}</span>
-        <button class="ghost" onclick={() => (app.toasts = app.toasts.filter((x) => x.id !== t.id))}>
-          <XIcon size={12} />
-        </button>
-      </div>
-    {/each}
-  </div>
 </div>
+
+<ContextMenuHost />
+<ToastHost position="bottom-end" />
 
 <style>
   .shell {
@@ -134,8 +129,8 @@
   header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 12px 8px 16px;
+    gap: var(--sp-4);
+    padding: var(--gap-4) var(--sp-4) var(--gap-4) var(--sp-5);
     border-bottom: 1px solid var(--border);
     background:
       linear-gradient(90deg, var(--theme-soft), transparent 60%),
@@ -146,8 +141,6 @@
   header.desktop {
     height: 50px;
     padding-left: 88px;
-    user-select: none;
-    -webkit-user-select: none;
   }
 
   header.desktop .brand {
@@ -156,8 +149,8 @@
 
   .brand {
     font-weight: 700;
-    font-size: 15px;
-    color: var(--theme);
+    font-size: var(--fs-xl);
+    color: var(--theme2);
     letter-spacing: -0.02em;
   }
 
@@ -166,39 +159,15 @@
     color: var(--color2);
   }
 
-  .branch {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--dim);
-    font-family: var(--font-mono);
-    font-size: 12px;
-  }
-
   .spacer {
     flex: 1;
-  }
-
-  .spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--theme-mid);
-    border-top-color: var(--theme);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   .blocked {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 16px;
+    gap: var(--gap-3);
+    padding: var(--gap-3) var(--sp-5);
     background: var(--del-bg);
     color: var(--warn);
     border-bottom: 1px solid var(--border);
@@ -222,10 +191,16 @@
   aside footer {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 12px;
-    padding: 6px 12px;
+    gap: var(--gap-2) var(--sp-4);
+    padding: var(--gap-3) var(--sp-4);
     border-top: 1px solid var(--border);
-    font-size: 11px;
+    font-size: var(--fs-xs);
+  }
+
+  footer span {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--gap-1);
   }
 
   section {
@@ -236,47 +211,5 @@
   .empty {
     padding: 40px;
     text-align: center;
-  }
-
-  .toasts {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 100;
-    max-width: min(480px, calc(100vw - 32px));
-  }
-
-  .toast {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 8px 8px 8px 12px;
-    border-radius: 4px;
-    background: var(--bg2);
-    box-shadow: var(--box-shadow), 0 8px 24px #0003;
-    white-space: pre-wrap;
-    animation: pop 0.15s ease-out;
-  }
-
-  .toast span {
-    flex: 1;
-  }
-
-  .toast.error {
-    border-left: 3px solid var(--del);
-  }
-
-  .toast.info {
-    border-left: 3px solid var(--theme);
-  }
-
-  @keyframes pop {
-    from {
-      transform: translateY(6px);
-      opacity: 0;
-    }
   }
 </style>

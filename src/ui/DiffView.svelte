@@ -4,14 +4,11 @@
   // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
-  import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
-  import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
-  import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
-  import FileArrowUpIcon from 'phosphor-svelte/lib/FileArrowUpIcon';
+  import { Tag, Twisty, fixedRange, menu, offsets, toast, variableRange } from 'purr';
+  import { Copy, FileArrowUp } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary } from '../shared/types.ts';
-  import ContextMenu from './ContextMenu.svelte';
   import { app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
@@ -51,40 +48,17 @@
 
   const bodyHeight = (f: FileSummary) => (f.rows ? f.rows * ROW + PAD : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
-  const tops = $derived.by(() => {
-    const t = new Float64Array(files.length + 1);
-    let y = 0;
-    for (let i = 0; i < files.length; i++) {
-      t[i] = y;
-      y += HEAD + (collapsed[i] ? 0 : bodyHeight(files[i])) + GAP;
-    }
-    t[files.length] = y;
-    return t;
-  });
+  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(files[i])) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
 
   /** [first, end) of the files overlapping the viewport plus overscan. */
-  const range = $derived.by(() => {
-    const top = view.top - OVERSCAN;
-    const bottom = view.bottom + OVERSCAN;
-    let lo = 0;
-    let hi = files.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (tops[mid + 1] - GAP <= top) lo = mid + 1;
-      else hi = mid;
-    }
-    let end = lo;
-    while (end < files.length && tops[end] < bottom) end++;
-    return [lo, end] as const;
-  });
+  const range = $derived(variableRange(tops, view.top, view.bottom - view.top, OVERSCAN));
   const visible = $derived(Array.from({ length: range[1] - range[0] }, (_, k) => range[0] + k));
 
-  /** [first, end) of file i's rows near the viewport. */
+  /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD;
-    const a = Math.max(0, Math.floor((view.top - OVERSCAN - y) / ROW));
-    const b = Math.min(files[i].rows, Math.ceil((view.bottom + OVERSCAN - y) / ROW));
+    const [a, b] = fixedRange(files[i].rows, ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
     return out;
@@ -135,7 +109,7 @@
       },
       (e) => {
         for (const i of want) requested.delete(i);
-        app.toast(e.message, 'error');
+        toast.error(e);
       },
     );
   });
@@ -261,8 +235,6 @@
   }
 
   // Context menu (right-click a file header or a line): open in Zed, copy paths.
-  let menu = $state<{ x: number; y: number; i: number; line?: number } | null>(null);
-
   /** New-side line number to open at for row r: its own, or the nearest one after/before it. */
   function lineFor(rows: FileRows, r: number): number | undefined {
     for (let k = r; k < rows.n.length && rows.kind[k] !== HUNK; k++) if (rows.n[k]) return rows.n[k];
@@ -281,42 +253,31 @@
     const r = rowOf(e);
     const rows = contents[i];
     const line = rows && r >= 0 && rows.kind[r] !== HUNK ? lineFor(rows, r) : firstChange(i);
-    menu = { x: e.clientX, y: e.clientY, i, line };
-  }
-
-  function menuAction(fn: (f: FileSummary) => void) {
-    if (!menu) return;
-    const f = files[menu.i];
-    menu = null;
-    fn(f);
+    const f = files[i];
+    menu.show(e, [
+      {
+        label: 'Open in Zed',
+        icon: FileArrowUp,
+        disabled: f.status === 'D',
+        note: line ? `At line ${line}` : undefined,
+        run: () => app.openInZed(f.path, line),
+      },
+      'separator',
+      { label: 'Copy path', icon: Copy, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
+      { label: 'Copy relative path', icon: Copy, run: () => app.copy(f.path, 'relative path') },
+    ]);
   }
 
   const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed' };
+  const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined };
   const MARK = [' ', ' ', '+', '-'];
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
 <svelte:window onmouseup={() => (drag = null)} />
 
-{#if menu}
-  {@const f = files[menu.i]}
-  <ContextMenu x={menu.x} y={menu.y} onclose={() => (menu = null)}>
-    <button role="menuitem" disabled={f.status === 'D'} onclick={() => menuAction((f) => app.openInZed(f.path, menu?.line))}>
-      <FileArrowUpIcon size={14} /> Open in Zed
-      {#if menu.line}<span class="dim">:{menu.line}</span>{/if}
-    </button>
-    <hr />
-    <button role="menuitem" onclick={() => menuAction((f) => app.copy(`${app.repo?.root}/${f.path}`, 'path'))}>
-      <CopyIcon size={14} /> Copy path
-    </button>
-    <button role="menuitem" onclick={() => menuAction((f) => app.copy(f.path, 'relative path'))}>
-      <CopyIcon size={14} /> Copy relative path
-    </button>
-  </ContextMenu>
-{/if}
-
 <div class="diff">
-  <div class="summary dim">
+  <div class="summary muted">
     <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
     <span class="add">+{totals.a}</span>
     <span class="del">−{totals.r}</span>
@@ -340,20 +301,26 @@
           {#if !readonly}
             <input
               type="checkbox"
+              class="checkbox"
               checked={state === 'all'}
               indeterminate={state === 'some'}
               onchange={() => toggleFile(f)}
               title="Select whole file"
             />
           {/if}
-          <button class="ghost caret" onclick={() => toggleCollapsed(i)}>
-            {#if collapsed[i]}<CaretRightIcon size={12} />{:else}<CaretDownIcon size={12} />{/if}
+          <button
+            class="btn btn--ghost btn--icon btn--sm"
+            aria-label={collapsed[i] ? 'Expand' : 'Collapse'}
+            aria-expanded={!collapsed[i]}
+            onclick={() => toggleCollapsed(i)}
+          >
+            <Twisty open={!collapsed[i]} size={10} />
           </button>
           <span class="path mono" title={f.path}>{f.path}</span>
-          {#if f.untracked}<span class="status A">untracked</span>
-          {:else if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
+          {#if f.untracked}<Tag color="var(--add)" label="untracked" />
+          {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
           {#if f.generated}
-            <span class="status" title="Generated file: collapsed by default (see README to change the list)">generated</span>
+            <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
           {/if}
           <span class="spacer"></span>
           <span class="add mono">+{f.added}</span>
@@ -422,20 +389,20 @@
 
 <style>
   .diff {
-    padding: 12px 16px 24px;
+    padding: var(--sp-4) var(--sp-5) calc(var(--sp-5) + var(--sp-4));
   }
 
   .summary {
     display: flex;
-    gap: 10px;
+    gap: var(--sp-4);
     align-items: baseline;
-    font-size: 12px;
-    padding: 0 4px 12px;
+    font-size: var(--fs-sm);
+    padding: 0 var(--gap-2) var(--sp-4);
   }
 
   .hint {
     margin-left: auto;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
   }
 
   .add {
@@ -454,7 +421,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    border-radius: 4px;
+    border-radius: var(--radius);
     box-shadow: var(--box-shadow);
     background: var(--bg2);
     contain: layout style;
@@ -463,26 +430,16 @@
   .fhead {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: var(--z-sticky);
     height: 34px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    gap: var(--gap-3);
+    padding: 0 var(--sp-4);
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
-    border-radius: 4px 4px 0 0;
-    font-size: 12px;
-  }
-
-  .fhead input {
-    accent-color: var(--theme);
-    margin: 0;
-  }
-
-  .caret {
-    padding: 3px;
-    color: var(--dim);
+    border-radius: var(--radius) var(--radius) 0 0;
+    font-size: var(--fs-sm);
   }
 
   .path {
@@ -490,24 +447,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .status {
-    font-size: 10.5px;
-    padding: 0 5px;
-    border-radius: 3px;
-    background: var(--bg3);
-    color: var(--dim);
-  }
-
-  .status.A {
-    color: var(--add);
-    background: var(--add-bg);
-  }
-
-  .status.D {
-    color: var(--del);
-    background: var(--del-bg);
   }
 
   .spacer {
@@ -518,20 +457,20 @@
     height: 38px;
     display: flex;
     align-items: center;
-    padding: 0 14px;
-    color: var(--dim);
+    padding: 0 var(--sp-5);
+    color: var(--muted);
     cursor: pointer;
   }
 
   .note.sel {
     background: var(--theme-soft);
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   .body {
     position: relative;
     background: var(--code-bg);
-    border-radius: 0 0 4px 4px;
+    border-radius: 0 0 var(--radius) var(--radius);
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -560,9 +499,9 @@
     position: absolute;
     left: 0;
     width: max-content;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 19px;
-    color: var(--code-mono-1);
+    color: var(--color);
   }
 
   .line,
@@ -580,9 +519,9 @@
     flex-shrink: 0;
     width: 98px;
     background: var(--code-bg);
-    color: var(--dim);
+    color: var(--muted);
     user-select: none;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     box-shadow: inset -1px 0 0 var(--border);
   }
 
@@ -606,12 +545,12 @@
   .lines:not(.readonly) :is(.ta, .td) .blk {
     cursor: pointer;
     box-shadow: inset 3px 0 0 transparent;
-    transition: box-shadow 0.08s;
+    transition: box-shadow var(--dur);
   }
 
   .lines:not(.readonly) :is(.ta, .td) .blk:hover,
   .line.blkhover .blk {
-    box-shadow: inset 4px 0 0 var(--theme);
+    box-shadow: inset 4px 0 0 var(--theme2);
   }
 
   .line.blkhover .gutter {
@@ -628,14 +567,14 @@
   }
 
   .hunk {
-    color: var(--dim);
+    color: var(--muted);
     background: var(--bg3);
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 
   .hunk:hover .code {
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   .readonly .hunk {
@@ -678,11 +617,11 @@
 
   .line.sel .gutter {
     background: var(--theme);
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .line.sel .gutter .mark {
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .line.ta.sel {
@@ -694,58 +633,12 @@
   }
 
   .line.sel .code {
-    box-shadow: inset 2px 0 0 var(--theme);
-  }
-
-  /* Token colours: the same One Light / One Dark mapping as n1ark.com. */
-  .code :global(:is(.t-comment, .t-prolog, .t-cdata, .t-doc-comment)) {
-    color: var(--code-mono-3);
-    font-style: italic;
-  }
-
-  .code :global(:is(.t-doctype, .t-punctuation, .t-entity)) {
-    color: var(--code-mono-1);
-  }
-
-  .code :global(:is(.t-attr-name, .t-class-name, .t-boolean, .t-constant, .t-number, .t-atrule, .t-type, .t-builtin-type)) {
-    color: var(--code-hue-6);
-  }
-
-  .code :global(:is(.t-keyword, .t-important, .t-directive)) {
-    color: var(--code-hue-3);
-  }
-
-  .code :global(:is(.t-property, .t-tag, .t-symbol, .t-deleted, .t-title, .t-lifetime-annotation)) {
-    color: var(--code-hue-5);
-  }
-
-  .code :global(:is(.t-selector, .t-string, .t-char, .t-builtin, .t-inserted, .t-regex, .t-attr-value, .t-template-string)) {
-    color: var(--code-hue-4);
-  }
-
-  .code :global(:is(.t-variable, .t-operator, .t-function, .t-function-definition, .t-macro)) {
-    color: var(--code-hue-2);
-  }
-
-  .code :global(.t-url) {
-    color: var(--code-hue-1);
-  }
-
-  .code :global(.t-attr-value .t-punctuation) {
-    color: var(--code-hue-4);
-  }
-
-  .code :global(.t-bold) {
-    font-weight: 600;
-  }
-
-  .code :global(.t-italic) {
-    font-style: italic;
+    box-shadow: inset 2px 0 0 var(--theme2);
   }
 
   .eof {
     color: var(--del);
     opacity: 0.7;
-    margin-left: 4px;
+    margin-left: var(--gap-2);
   }
 </style>

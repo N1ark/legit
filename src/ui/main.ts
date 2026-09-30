@@ -1,7 +1,9 @@
-import '@fontsource-variable/inter';
-import '@fontsource/fira-code/400.css';
+import 'purr/fonts.css';
+import 'purr/styles.css';
 import './app.css';
+import { applyTheme } from 'purr';
 import { mount } from 'svelte';
 import App from './App.svelte';
 
+applyTheme({ mode: 'system' });
 mount(App, { target: document.getElementById('app')! });

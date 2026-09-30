@@ -1,17 +1,17 @@
 <script lang="ts">
-  import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
-  import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
-  import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon';
+  import { Highlight, Popover, formatRelative, rank, toast } from 'purr';
+  import { CaretDown, Check, GitBranch } from 'purr/icons';
   import type { BranchInfo } from '../shared/types.ts';
-  import { ago, app, shortSha } from './lib/app.svelte.ts';
+  import { app, shortSha } from './lib/app.svelte.ts';
 
   let open = $state(false);
   let list = $state<BranchInfo[] | null>(null);
   let filter = $state('');
   let active = $state(0);
-  let input = $state<HTMLInputElement>();
+  let button = $state<HTMLButtonElement>();
+  let listEl = $state<HTMLElement>();
 
-  const shown = $derived((list ?? []).filter((b) => b.name.toLowerCase().includes(filter.trim().toLowerCase())));
+  const shown = $derived(rank(list ?? [], filter, { keys: [(b) => b.name] }));
   const disabled = $derived(!!app.repo?.blocked || app.busy);
 
   export async function show() {
@@ -19,7 +19,6 @@
     open = true;
     filter = '';
     active = 0;
-    requestAnimationFrame(() => input?.focus());
     list = await fetch('/api/branches').then((r) => r.json());
   }
 
@@ -31,7 +30,7 @@
     }
     if (await app.op('switch', { branch: b.name })) {
       open = false;
-      app.toast(`Switched to ${b.name}`);
+      toast(`Switched to ${b.name}`);
     }
   }
 
@@ -40,104 +39,89 @@
       e.preventDefault();
       const n = shown.length;
       if (n) active = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-      document.querySelector(`.branches li:nth-child(${active + 1})`)?.scrollIntoView({ block: 'nearest' });
+      listEl?.children[active]?.scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      choose(shown[active]);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      open = false;
+      choose(shown[active]?.item);
     }
   }
 </script>
 
-<div class="wrap">
-  <button class="ghost branch" onclick={() => (open ? (open = false) : show())} {disabled} title="Switch branch (b)">
-    <GitBranchIcon size={14} />
-    <span>{app.repo?.branch ?? `detached @ ${app.repo?.head ? shortSha(app.repo.head) : '?'}`}</span>
-    <CaretDownIcon size={10} />
-  </button>
-  {#if open}
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="backdrop" onclick={() => (open = false)}></div>
+<button
+  bind:this={button}
+  class="btn btn--ghost branch"
+  onclick={() => (open ? (open = false) : show())}
+  {disabled}
+  aria-expanded={open}
+  title="Switch branch (b)"
+>
+  <GitBranch />
+  <span>{app.repo?.branch ?? `detached @ ${app.repo?.head ? shortSha(app.repo.head) : '?'}`}</span>
+  <CaretDown />
+</button>
+{#if open && button}
+  <Popover
+    anchor={button}
+    label="Switch branch"
+    onclose={() => (open = false)}
+    width="min(560px, calc(100vw - 32px))"
+    padding="var(--gap-4)"
+    autofocus
+  >
     <div class="panel">
       <input
-        bind:this={input}
         bind:value={filter}
         oninput={() => (active = 0)}
         {onkeydown}
         placeholder="Switch to branch…"
         spellcheck="false"
-        class="mono"
+        class="field-input mono"
       />
       {#if list === null}
-        <p class="dim">Loading…</p>
+        <p class="muted">Loading…</p>
       {:else if !shown.length}
-        <p class="dim">No matching branch.</p>
+        <p class="muted">No matching branch.</p>
       {:else}
-        <ol class="branches">
-          {#each shown as b, k (b.name)}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-            <li class:active={k === active} class:current={b.current} onclick={() => choose(b)} onmousemove={() => (active = k)}>
-              <span class="check">{#if b.current}<CheckIcon size={12} weight="bold" />{/if}</span>
-              <span class="name mono">{b.name}</span>
-              <span class="subject dim" title={b.subject}>{b.subject}</span>
+        <ol bind:this={listEl} role="listbox" aria-label="Branches">
+          {#each shown as { item: b, indices }, k (b.name)}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <li
+              class="row-item"
+              class:is-cursor={k === active}
+              class:current={b.current}
+              role="option"
+              aria-selected={k === active}
+              onclick={() => choose(b)}
+              onmousemove={() => (active = k)}
+            >
+              <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
+              <span class="name mono"><Highlight text={b.name} {indices} /></span>
+              <span class="subject muted" title={b.subject}>{b.subject}</span>
               {#if b.track}<span class="track">{b.track}</span>{/if}
-              <span class="when dim">{ago(b.time)}</span>
+              <span class="when muted">{formatRelative(b.time * 1000)}</span>
             </li>
           {/each}
         </ol>
       {/if}
-      <p class="foot dim">Uses <code>git switch</code>: uncommitted changes come along, and it refuses if they'd be overwritten.</p>
+      <p class="foot muted">Uses <code>git switch</code>: uncommitted changes come along, and it refuses if they'd be overwritten.</p>
     </div>
-  {/if}
-</div>
+  </Popover>
+{/if}
 
 <style>
-  .wrap {
-    position: relative;
-  }
-
   .branch {
-    gap: 5px;
-    color: var(--dim);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 3px 6px;
-  }
-
-  .branch:hover:not(:disabled) {
-    color: var(--color2);
-  }
-
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 19;
+    font-family: var(--mono);
+    font-weight: 400;
   }
 
   .panel {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 6px);
-    z-index: 20;
-    width: min(560px, calc(100vw - 32px));
-    background: var(--bg2);
-    border-radius: 6px;
-    box-shadow: var(--box-shadow), 0 12px 40px #0004;
-    padding: 8px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-  }
-
-  input {
-    width: 100%;
-    font-size: 12.5px;
+    gap: var(--gap-3);
   }
 
   p {
-    margin: 4px 6px;
+    margin: var(--gap-2) var(--gap-3);
   }
 
   ol {
@@ -149,22 +133,15 @@
   }
 
   li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 6px;
-    border-radius: 4px;
     cursor: pointer;
-  }
-
-  li.active {
-    background: var(--theme-soft);
+    font-size: var(--fs-base);
   }
 
   .check {
     width: 12px;
     display: flex;
-    color: var(--theme);
+    font-size: var(--icon-sm);
+    color: var(--theme2);
   }
 
   .name {
@@ -177,7 +154,7 @@
   }
 
   li.current .name {
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   .subject {
@@ -185,26 +162,26 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   .track {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--warn);
     flex-shrink: 0;
   }
 
   .when {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
 
   .foot {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 
   code {
-    font-family: var(--font-mono);
-    font-size: 11px;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
   }
 </style>

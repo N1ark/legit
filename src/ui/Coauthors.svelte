@@ -1,9 +1,8 @@
 <script lang="ts">
   // Editable list of co-authors, one `Name <email>` per line, with suggestions from history.
-  import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
-  import XIcon from 'phosphor-svelte/lib/XIcon';
-  import Avatar from './Avatar.svelte';
-  import { app } from './lib/app.svelte.ts';
+  import { Avatar, Button, IconButton } from 'purr';
+  import { Plus, X } from 'purr/icons';
+  import { app, avatarUrl } from './lib/app.svelte.ts';
   import { formatPerson, parsePerson } from './lib/people.ts';
 
   let { value = $bindable(), readonly = false, oninput }: { value: string[]; readonly?: boolean; oninput?: () => void } =
@@ -26,23 +25,25 @@
 <div class="coauthors" bind:this={list}>
   {#each value as _, i (i)}
     {@const who = parsePerson(value[i])}
+    {@const email = who?.email ?? ''}
     <div class="coauthor">
-      <Avatar email={who?.email ?? ''} name={who?.name ?? '?'} size={22} />
+      <Avatar name={who?.name || '?'} src={avatarUrl(email, 22)} seed={email.toLowerCase()} size={22} round />
       <input
+        class="field-input"
         bind:value={value[i]}
         {oninput}
         list="people"
         placeholder="Name <email@example.com>"
-        class:invalid={value[i].trim() && !parsePerson(value[i])}
+        aria-invalid={!!value[i].trim() && !parsePerson(value[i])}
         disabled={readonly}
       />
       {#if !readonly}
-        <button class="ghost" onclick={() => remove(i)} title="Remove"><XIcon size={13} /></button>
+        <IconButton label="Remove" onclick={() => remove(i)}><X /></IconButton>
       {/if}
     </div>
   {/each}
   {#if !readonly}
-    <button class="ghost add" onclick={add}><PlusIcon size={13} /> Add co-author</button>
+    <span class="add"><Button variant="ghost" onclick={add}><Plus /> Add co-author</Button></span>
   {/if}
 </div>
 
@@ -54,35 +55,23 @@
   .coauthors {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--gap-2);
     align-items: stretch;
   }
 
   .coauthor {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--gap-3);
   }
 
-  .coauthor input {
-    flex: 1;
-  }
-
-  input:disabled {
+  .field-input:disabled {
     background: transparent;
     border-color: transparent;
-    color: inherit;
     opacity: 1;
-  }
-
-  .invalid {
-    border-color: var(--del);
   }
 
   .add {
     align-self: flex-start;
-    color: var(--dim);
-    font-size: 12px;
-    padding: 4px 6px;
   }
 </style>

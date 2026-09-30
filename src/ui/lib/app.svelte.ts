@@ -1,3 +1,4 @@
+import { copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState } from '../../shared/types.ts';
 
@@ -13,21 +14,12 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return data;
 }
 
-export interface Toast {
-  id: number;
-  text: string;
-  kind: 'error' | 'info';
-}
-
-let toastId = 0;
-
 class App {
   repo = $state<RepoState | null>(null);
   /** Selected commit SHAs, in click order. */
   selected = $state<string[]>([]);
   anchor: string | null = null;
   busy = $state(false);
-  toasts = $state<Toast[]>([]);
 
   private diffs = new Map<string, Promise<DiffSummary>>();
   private contents = new Map<string, Promise<HunkData[]>>();
@@ -55,7 +47,7 @@ class App {
       const repo = await request<RepoState>('/api/state');
       if (gen === this.gen) this.setRepo(repo);
     } catch (e) {
-      this.toast(String((e as Error).message), 'error');
+      toast.error(e);
     }
   }
 
@@ -129,18 +121,12 @@ class App {
       return true;
     } catch (e) {
       if (optimistic) this.repo = before;
-      this.toast((e as Error).message, 'error');
+      toast.error(e);
       this.refresh();
       return false;
     } finally {
       this.busy = false;
     }
-  }
-
-  toast(text: string, kind: Toast['kind'] = 'info') {
-    const id = ++toastId;
-    this.toasts.push({ id, text, kind });
-    setTimeout(() => (this.toasts = this.toasts.filter((t) => t.id !== id)), kind === 'error' ? 8000 : 3000);
   }
 
   /** Click on a commit: plain, toggle (cmd/ctrl) or range (shift). */
@@ -219,15 +205,13 @@ class App {
     try {
       await request('/api/open', { path, line });
     } catch (e) {
-      this.toast((e as Error).message, 'error');
+      toast.error(e);
     }
   }
 
-  copy(text: string, what = text) {
-    navigator.clipboard.writeText(text).then(
-      () => this.toast(`Copied ${what}`),
-      () => this.toast("Couldn't access the clipboard", 'error'),
-    );
+  async copy(text: string, what = text) {
+    if (await copyText(text)) toast(`Copied ${what}`);
+    else toast.error("Couldn't access the clipboard");
   }
 
   /** Message the squash panel is showing, if the user edited it (keyed by the selected SHAs). */
@@ -271,7 +255,7 @@ class App {
     if (!c || !(await this.op('uncommit'))) return;
     this.workDraft = { subject: c.subject, body: c.body, coauthors: c.coauthors };
     this.selectWork();
-    this.toast(`Undid "${c.subject}"; its changes are staged.`);
+    toast(`Undid "${c.subject}"; its changes are staged.`);
   }
 
   selectWork() {
@@ -297,13 +281,9 @@ export function shortSha(c: CommitInfo | string) {
   return (typeof c === 'string' ? c : c.sha).slice(0, 7);
 }
 
-const units: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60],
-];
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto', style: 'narrow' });
-
-export function ago(time: number) {
-  const s = time - Date.now() / 1000;
-  for (const [u, n] of units) if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), u);
-  return 'just now';
+/** A person's avatar at `size` px (doubled for retina), or null for initials. */
+export function avatarUrl(email: string, size: number): string | null {
+  const url = app.avatars[email.trim().toLowerCase()];
+  if (!url) return null;
+  return url.includes('avatars.githubusercontent.com') ? `${url}&s=${size * 2}` : `${url}?size=${size * 2}`;
 }

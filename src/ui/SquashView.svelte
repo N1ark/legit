@@ -1,18 +1,16 @@
 <script lang="ts">
-  import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
-  import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+  import { Avatar, Button, ConfirmButton, Kbd, matches } from 'purr';
+  import { ArrowsMerge, Trash } from 'purr/icons';
   import { untrack } from 'svelte';
   import type { CommitInfo } from '../shared/types.ts';
-  import Avatar from './Avatar.svelte';
   import Coauthors from './Coauthors.svelte';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { squashFields } from './lib/squash.ts';
 
   /** Newest first. */
   let { commits }: { commits: CommitInfo[] } = $props();
 
-  const mod = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
   const editable = $derived(commits.every((c) => c.editable) && !app.repo?.blocked);
   const oldest = $derived(commits[commits.length - 1]);
 
@@ -47,16 +45,8 @@
     app.squash(commits);
   }
 
-  let confirmDrop = $state(false);
-  function drop() {
-    if (!confirmDrop) {
-      confirmDrop = true;
-      setTimeout(() => (confirmDrop = false), 3000);
-    } else app.op('drop', { shas: commits.map((c) => c.sha) });
-  }
-
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (matches('⌘↩', e)) {
       e.preventDefault();
       squash();
     }
@@ -64,8 +54,8 @@
 </script>
 
 <div class="view">
-  <h2><ArrowsMergeIcon size={18} /> Squash {commits.length} commits</h2>
-  <p class="dim">
+  <h2><ArrowsMerge /> Squash {commits.length} commits</h2>
+  <p class="muted">
     Changes are combined into <span class="mono sha">{shortSha(oldest)}</span>, the oldest selected commit, keeping its
     author and date. Commits in between are replayed on top.
   </p>
@@ -75,7 +65,10 @@
       <li>
         <span class="mono sha">{shortSha(c)}</span>
         {c.subject}
-        <span class="dim who"><Avatar email={c.author.email} name={c.author.name} size={14} /> {c.author.name}</span>
+        <span class="muted who">
+          <Avatar name={c.author.name} src={avatarUrl(c.author.email, 14)} seed={c.author.email.toLowerCase()} size={14} round />
+          {c.author.name}
+        </span>
       </li>
     {/each}
   </ol>
@@ -83,50 +76,57 @@
   {#if editable}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="form" {onkeydown} oninput={() => (edited = true)}>
-      <input class="subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
-      <textarea class="body" bind:value={body} placeholder="Description" rows="6" spellcheck="true"></textarea>
+      <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
+      <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true"></textarea>
       <div class="people">
-        <span class="dim label">Co-authors</span>
+        <span class="muted label">Co-authors</span>
         <Coauthors bind:value={coauthors} oninput={() => (edited = true)} />
       </div>
     </div>
     <div class="actions">
-      <button class="primary" onclick={squash} disabled={!valid || app.busy}>
-        <ArrowsMergeIcon size={14} /> Squash <kbd>{mod}↵</kbd>
-      </button>
+      <Button variant="primary" onclick={squash} disabled={!valid || app.busy}>
+        <ArrowsMerge /> Squash <Kbd hint="⌘↩" />
+      </Button>
       {#if edited}
-        <button onclick={reset}>Reset message</button>
+        <Button onclick={reset}>Reset message</Button>
       {/if}
       <span class="spacer"></span>
-      <button class="ghost danger" class:confirm={confirmDrop} onclick={drop} disabled={app.busy}>
-        <TrashIcon size={15} />{confirmDrop ? `Click again to drop ${commits.length} commits` : 'Drop all'}
-      </button>
+      <ConfirmButton
+        variant="ghost"
+        class="btn--danger"
+        timeout={3000}
+        confirmLabel="Click again to drop {commits.length} commits"
+        onconfirm={() => app.op('drop', { shas: commits.map((c) => c.sha) })}
+        disabled={app.busy}
+      >
+        <Trash /> Drop all
+      </ConfirmButton>
     </div>
   {:else}
-    <p class="dim">Some of the selected commits can't be rewritten.</p>
+    <p class="muted">Some of the selected commits can't be rewritten.</p>
   {/if}
 </div>
 
 <style>
   .view {
-    padding: 20px 24px;
+    padding: var(--sp-5) calc(var(--sp-5) + var(--sp-4));
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--sp-4);
     max-width: 820px;
   }
 
   h2 {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--gap-4);
     margin: 0;
-    font-size: 16px;
+    font-size: var(--fs-xl);
     color: var(--color2);
   }
 
   h2 :global(svg) {
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   p {
@@ -134,72 +134,67 @@
   }
 
   .sha {
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   .who {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    margin-left: 4px;
+    gap: var(--gap-2);
+    margin-left: var(--gap-2);
   }
 
   .picked {
     margin: 0;
-    padding: 8px 12px 8px 32px;
+    padding: var(--gap-4) var(--sp-4) var(--gap-4) 32px;
     background: var(--bg2);
-    border-radius: 4px;
+    border-radius: var(--radius);
     box-shadow: var(--box-shadow);
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--gap-1);
   }
 
   .form {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--gap-4);
   }
 
   .subject {
-    font-size: 16px;
+    font-size: var(--fs-xl);
     font-weight: 600;
-    color: var(--color2);
-    padding: 7px 10px;
+    padding: var(--sp-3) var(--sp-4);
   }
 
   .body {
     field-sizing: content;
     min-height: 110px;
     max-height: 50vh;
+    font-size: var(--fs-base);
     line-height: 1.5;
-    padding: 7px 10px;
+    padding: var(--sp-3) var(--sp-4);
   }
 
   .people {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 6px 12px;
+    gap: var(--gap-3) var(--sp-4);
     align-items: start;
   }
 
   .label {
-    padding-top: 6px;
-    font-size: 12px;
+    padding-top: var(--gap-3);
+    font-size: var(--fs-sm);
   }
 
   .actions {
     display: flex;
-    gap: 6px;
+    gap: var(--gap-3);
     align-items: center;
   }
 
   .spacer {
     flex: 1;
-  }
-
-  .confirm {
-    color: var(--del);
-    background: var(--del-bg);
   }
 </style>

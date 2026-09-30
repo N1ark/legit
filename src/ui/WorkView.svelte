@@ -1,10 +1,8 @@
 <script lang="ts">
   // Uncommitted changes: a commit form, what's staged, and what isn't (untracked files
   // included). Select lines like in a commit and stage/unstage them; only the index changes.
-  import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon';
-  import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon';
-  import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
-  import XIcon from 'phosphor-svelte/lib/XIcon';
+  import { Button, Checkbox, ConfirmButton, IconButton, Kbd, hasOverlay, isTyping, matches } from 'purr';
+  import { ArrowDown, ArrowUp, Check, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, Selection, WorkState } from '../shared/types.ts';
@@ -12,8 +10,6 @@
   import DiffView from './DiffView.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
-
-  const mod = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
   type Sel = Record<string, SvelteSet<number>>;
   let work = $state.raw<WorkState | null>(null);
@@ -141,34 +137,25 @@
     }
   }
 
-  let confirmUndo = $state(false);
-  function undoLast() {
-    if (head?.pushed && !confirmUndo) {
-      confirmUndo = true;
-      setTimeout(() => (confirmUndo = false), 4000);
-      return;
-    }
-    confirmUndo = false;
-    app.uncommit();
-  }
-
   function onFormKey(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (matches('⌘↩', e)) {
       e.preventDefault();
       commit();
     }
   }
 
+  const clear = () => [...Object.values(staged), ...Object.values(unstaged)].forEach((s) => s.clear());
+
   function onWindowKey(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 's' && selUnstaged) {
+    if (isTyping(e.target) || hasOverlay()) return;
+    if (matches('s', e) && selUnstaged) {
       e.preventDefault();
       run('stage');
-    } else if (e.key === 'u' && selStaged) {
+    } else if (matches('u', e) && selStaged) {
       e.preventDefault();
       run('unstage');
     } else if (e.key === 'Escape' && (selStaged || selUnstaged)) {
-      [...Object.values(staged), ...Object.values(unstaged)].forEach((s) => s.clear());
+      clear();
     }
   }
 
@@ -181,7 +168,7 @@
   <div class="top">
     <h2>Uncommitted changes</h2>
     {#if app.repo}
-      <span class="dim">
+      <span class="muted">
         {app.repo.work.staged} staged · {app.repo.work.unstaged} unstaged · {app.repo.work.untracked} untracked
       </span>
     {/if}
@@ -189,53 +176,59 @@
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="meta" onkeydown={onFormKey}>
-    <input class="subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
-    <textarea class="body" bind:value={body} placeholder="Description" rows="2" spellcheck="true"></textarea>
+    <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
+    <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true"></textarea>
     <div class="people">
-      <span class="dim label">Co-authors</span>
+      <span class="muted label">Co-authors</span>
       <Coauthors bind:value={coauthors} />
     </div>
     <div class="actions">
-      <button class="primary" onclick={commit} disabled={!canCommit || app.busy}>
-        <CheckIcon size={14} weight="bold" />
+      <Button variant="primary" onclick={commit} disabled={!canCommit || app.busy}>
+        <Check weight="bold" />
         {#if amend && head}
           Amend {shortSha(head)}
         {:else}
           Commit {work?.staged.files.length ? plural(work.staged.files.length, 'file') : ''}
         {/if}
-        <kbd>{mod}↵</kbd>
-      </button>
-      <label class="amend" title="Fold what's staged into the last commit and replace its message">
-        <input type="checkbox" checked={amend} onchange={toggleAmend} disabled={!head?.editable} />
-        Amend last commit
-      </label>
+        <Kbd hint="⌘↩" />
+      </Button>
+      <span title="Fold what's staged into the last commit and replace its message">
+        <Checkbox label="Amend last commit" checked={amend} onchange={toggleAmend} disabled={!head?.editable} />
+      </span>
       {#if amend && head?.pushed}
         <span class="warn">Already pushed: amending it means force pushing.</span>
       {:else if !amend && work && !work.staged.files.length}
-        <span class="dim">Stage some changes first.</span>
+        <span class="muted">Stage some changes first.</span>
       {/if}
     </div>
     {#if head?.editable && !head.merge && !amend}
-      <div class="last dim">
+      <div class="last muted">
         Last commit <span class="mono sha">{shortSha(head)}</span>
         <span class="last-subject">{head.subject}</span> ·
-        <button class="link" class:warn={confirmUndo} onclick={undoLast} disabled={app.busy}>
-          {confirmUndo ? 'It was pushed. Click again to undo it' : 'Undo (keep changes)'}
-        </button>
+        {#if head.pushed}
+          <ConfirmButton
+            variant="link"
+            confirmLabel="It was pushed. Click again to undo it"
+            onconfirm={() => app.uncommit()}
+            disabled={app.busy}>Undo (keep changes)</ConfirmButton
+          >
+        {:else}
+          <Button variant="link" onclick={() => app.uncommit()} disabled={app.busy}>Undo (keep changes)</Button>
+        {/if}
       </div>
     {/if}
   </div>
 
   {#if error}
-    <p class="dim empty">{error}</p>
+    <p class="muted empty">{error}</p>
   {:else if work}
     <section>
       <div class="shead">
         <h3>Staged</h3>
-        <span class="dim">{plural(work.staged.files.length, 'file')}</span>
+        <span class="muted">{plural(work.staged.files.length, 'file')}</span>
         <span class="spacer"></span>
         {#if work.staged.files.length}
-          <button onclick={() => run('unstage', true)} disabled={app.busy}><ArrowDownIcon size={13} /> Unstage all</button>
+          <Button onclick={() => run('unstage', true)} disabled={app.busy}><ArrowDown /> Unstage all</Button>
         {/if}
       </div>
       {#if work.staged.files.length}
@@ -243,17 +236,17 @@
           <DiffView summary={work.staged} sel={staged} readonly={false} hint="Pick changes to unstage (u)." />
         {/key}
       {:else}
-        <p class="dim empty">Nothing staged. Pick changes below and stage them (s).</p>
+        <p class="muted empty">Nothing staged. Pick changes below and stage them (s).</p>
       {/if}
     </section>
 
     <section>
       <div class="shead">
         <h3>Unstaged</h3>
-        <span class="dim">{plural(work.unstaged.files.length, 'file')}</span>
+        <span class="muted">{plural(work.unstaged.files.length, 'file')}</span>
         <span class="spacer"></span>
         {#if work.unstaged.files.length}
-          <button onclick={() => run('stage', true)} disabled={app.busy}><ArrowUpIcon size={13} /> Stage all</button>
+          <Button onclick={() => run('stage', true)} disabled={app.busy}><ArrowUp /> Stage all</Button>
         {/if}
       </div>
       {#if work.unstaged.files.length}
@@ -261,33 +254,27 @@
           <DiffView summary={work.unstaged} sel={unstaged} readonly={false} hint="Pick changes to stage (s)." />
         {/key}
       {:else}
-        <p class="dim empty">No unstaged changes.</p>
+        <p class="muted empty">No unstaged changes.</p>
       {/if}
     </section>
   {:else}
-    <p class="dim empty">Loading changes…</p>
+    <p class="muted empty">Loading changes…</p>
   {/if}
 
   {#if selStaged || selUnstaged}
     <div class="bar">
       {#if selUnstaged}
-        <button class="primary" onclick={() => run('stage')} disabled={app.busy}>
-          <ArrowUpIcon size={14} /> Stage {plural(selUnstaged, 'change')} <kbd>s</kbd>
-        </button>
+        <Button variant="primary" onclick={() => run('stage')} disabled={app.busy}>
+          <ArrowUp /> Stage {plural(selUnstaged, 'change')} <Kbd hint="s" />
+        </Button>
       {/if}
       {#if selStaged}
-        <button onclick={() => run('unstage')} disabled={app.busy}>
-          <ArrowDownIcon size={14} /> Unstage {plural(selStaged, 'change')} <kbd>u</kbd>
-        </button>
+        <Button onclick={() => run('unstage')} disabled={app.busy}>
+          <ArrowDown /> Unstage {plural(selStaged, 'change')} <Kbd hint="u" />
+        </Button>
       {/if}
       <span class="spacer"></span>
-      <button
-        class="ghost"
-        onclick={() => [...Object.values(staged), ...Object.values(unstaged)].forEach((s) => s.clear())}
-        title="Clear selection (esc)"
-      >
-        <XIcon size={14} />
-      </button>
+      <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><X /></IconButton>
     </div>
   {/if}
 </div>
@@ -302,86 +289,72 @@
   .top {
     display: flex;
     align-items: baseline;
-    gap: 12px;
-    padding: 16px 20px 0;
+    gap: var(--sp-4);
+    padding: var(--sp-5) var(--sp-5) 0;
   }
 
   h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: var(--fs-xl);
     color: var(--color2);
   }
 
   .meta {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px 20px 16px;
+    gap: var(--gap-4);
+    padding: var(--sp-4) var(--sp-5) var(--sp-5);
     border-bottom: 1px solid var(--border);
   }
 
   .subject {
-    font-size: 15px;
+    font-size: var(--fs-xl);
     font-weight: 600;
-    color: var(--color2);
-    padding: 7px 10px;
+    padding: var(--sp-3) var(--sp-4);
   }
 
   .body {
     field-sizing: content;
     min-height: 52px;
     max-height: 40vh;
+    font-size: var(--fs-base);
     line-height: 1.5;
-    padding: 7px 10px;
+    padding: var(--sp-3) var(--sp-4);
   }
 
   .people {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 6px 12px;
+    gap: var(--gap-3) var(--sp-4);
     align-items: start;
   }
 
   .label {
-    padding-top: 6px;
-    font-size: 12px;
+    padding-top: var(--gap-3);
+    font-size: var(--fs-sm);
   }
 
   .actions {
     display: flex;
     align-items: center;
-    gap: 10px;
-  }
-
-  .amend {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12.5px;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .amend input {
-    accent-color: var(--theme);
-    margin: 0;
+    gap: var(--sp-4);
   }
 
   .warn {
     color: var(--warn);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   .last {
     display: flex;
     align-items: baseline;
-    gap: 6px;
-    font-size: 12px;
+    gap: var(--gap-3);
+    font-size: var(--fs-sm);
     min-width: 0;
   }
 
   .last .sha {
-    color: var(--theme);
+    color: var(--theme2);
   }
 
   .last-subject {
@@ -391,18 +364,6 @@
     max-width: 50%;
   }
 
-  .link {
-    background: none;
-    padding: 0;
-    color: var(--theme);
-    font-size: 12px;
-  }
-
-  .link:hover:not(:disabled) {
-    background: none;
-    text-decoration: underline;
-  }
-
   section {
     border-bottom: 1px solid var(--border);
   }
@@ -410,19 +371,14 @@
   .shead {
     display: flex;
     align-items: baseline;
-    gap: 10px;
-    padding: 14px 20px 0;
+    gap: var(--sp-4);
+    padding: var(--sp-5) var(--sp-5) 0;
   }
 
   h3 {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--fs-base);
     color: var(--color2);
-  }
-
-  .shead button {
-    font-size: 12px;
-    padding: 3px 8px;
   }
 
   .spacer {
@@ -430,24 +386,24 @@
   }
 
   .empty {
-    padding: 8px 20px 18px;
+    padding: var(--gap-4) var(--sp-5) var(--sp-5);
     margin: 0;
   }
 
   .bar {
     position: sticky;
-    bottom: 12px;
-    margin: auto 16px 12px;
+    bottom: var(--sp-4);
+    margin: auto var(--sp-5) var(--sp-4);
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px;
-    border-radius: 6px;
-    background: var(--bg2);
-    box-shadow: var(--box-shadow), 0 8px 30px #0000002e;
+    gap: var(--gap-4);
+    padding: var(--gap-4);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
     border: 1px solid var(--theme-mid);
-    z-index: 5;
-    animation: rise 0.12s ease-out;
+    z-index: var(--z-sticky);
+    animation: rise var(--dur) var(--ease);
   }
 
   @keyframes rise {
