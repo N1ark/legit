@@ -475,6 +475,8 @@
 
   .body {
     position: relative;
+    background: var(--code-bg);
+    border-radius: 0 0 4px 4px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -522,7 +524,7 @@
     display: flex;
     flex-shrink: 0;
     width: 98px;
-    background: var(--bg2);
+    background: var(--code-bg);
     color: var(--dim);
     user-select: none;
     font-size: 11px;
@@ -594,11 +596,11 @@
   }
 
   .ta .gutter {
-    background: linear-gradient(var(--add-bg), var(--add-bg)), var(--bg2);
+    background: linear-gradient(var(--add-bg), var(--add-bg)), var(--code-bg);
   }
 
   .td .gutter {
-    background: linear-gradient(var(--del-bg), var(--del-bg)), var(--bg2);
+    background: linear-gradient(var(--del-bg), var(--del-bg)), var(--code-bg);
   }
 
   .ta .mark {
