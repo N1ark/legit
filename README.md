@@ -68,4 +68,6 @@ npm run check  # svelte-check + tsc
 - `src/server/git.ts` handles git access: `cat-file --batch` for reading, direct loose-object writes (so no process per
   commit), and a persistent `merge-tree --stdin` for cherry-picks.
 - `src/server/repo.ts` holds the operations, backups and safety checks. `diff.ts` parses diffs and rebuilds files from a subset of lines.
-- `src/ui/` is a Svelte 5 UI with Phosphor icons.
+- `src/ui/` is a Svelte 5 UI with Phosphor icons. `lib/highlight.ts` does syntax highlighting with Prism. Grammars are
+  lazy-loaded per language (add one to `LANGS`/`EXT`), and each side of a hunk is tokenized as a block so multi-line
+  strings and comments come out right. Highlighting fills in after the diff first renders.

@@ -1,9 +1,10 @@
 <script lang="ts">
   import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import type { CommitDiff, DiffLine, FileDiff, Hunk } from '../shared/types.ts';
+  import { type FileTokens, highlight } from './lib/highlight.ts';
 
   let { diff, sel, readonly }: { diff: CommitDiff; sel: Record<string, SvelteSet<number>>; readonly: boolean } = $props();
 
@@ -14,6 +15,21 @@
   let collapsed = $state<Record<string, boolean>>(
     untrack(() => Object.fromEntries(diff.files.map((f) => [f.path, size(f) > BIG]))),
   );
+
+  // Highlighting fills in after the first paint, one file at a time so large diffs never block input.
+  let tokens = $state.raw<Record<string, FileTokens>>({});
+  onMount(() => {
+    let alive = true;
+    (async () => {
+      for (const f of diff.files) {
+        const t = await highlight(diff.sha, f).catch(() => null);
+        if (!alive) return;
+        if (t) tokens = { ...tokens, [f.path]: t };
+        await new Promise((r) => setTimeout(r));
+      }
+    })();
+    return () => (alive = false);
+  });
 
   const totals = $derived(
     diff.files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }),
@@ -125,7 +141,9 @@
                 <div class="hunk" onclick={() => toggleHunk(f, h)}>
                   <span class="gutter"></span><span class="code">{h.header}</span>
                 </div>
+                {@const hunkTokens = tokens[f.path]?.[hi]}
                 {#each h.lines as l, li (li)}
+                  {@const segs = hunkTokens?.[li]}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="line t{l.t === '+' ? 'a' : l.t === '-' ? 'd' : 'c'}"
@@ -134,7 +152,8 @@
                     onmouseenter={() => enter(f, l)}
                   >
                     <span class="gutter"><span>{l.o ?? ''}</span><span>{l.n ?? ''}</span><span class="mark">{l.t}</span></span>
-                    <span class="code">{l.s}{#if l.eof}<span class="eof" title="No newline at end of file">⏎̸</span>{/if}</span>
+                    <span class="code"
+                      >{#if segs}{#each segs as seg}{#if seg.c}<span class={seg.c}>{seg.t}</span>{:else}{seg.t}{/if}{/each}{:else}{l.s}{/if}{#if l.eof}<span class="eof" title="No newline at end of file">⏎̸</span>{/if}</span>
                   </div>
                 {/each}
               {/each}
@@ -342,8 +361,8 @@
     cursor: pointer;
   }
 
-  .lines:not(.readonly) .ta:hover .gutter,
-  .lines:not(.readonly) .td:hover .gutter {
+  .lines:not(.readonly) .ta:not(.sel):hover .gutter,
+  .lines:not(.readonly) .td:not(.sel):hover .gutter {
     background: var(--theme-soft);
   }
 
@@ -367,6 +386,56 @@
 
   .line.sel .code {
     box-shadow: inset 2px 0 0 var(--theme);
+  }
+
+  /* Token colours: the same One Light / One Dark mapping as n1ark.com. */
+  .lines {
+    color: var(--code-mono-1);
+  }
+
+  .code :global(:is(.t-comment, .t-prolog, .t-cdata, .t-doc-comment)) {
+    color: var(--code-mono-3);
+    font-style: italic;
+  }
+
+  .code :global(:is(.t-doctype, .t-punctuation, .t-entity)) {
+    color: var(--code-mono-1);
+  }
+
+  .code :global(:is(.t-attr-name, .t-class-name, .t-boolean, .t-constant, .t-number, .t-atrule, .t-type, .t-builtin-type)) {
+    color: var(--code-hue-6);
+  }
+
+  .code :global(:is(.t-keyword, .t-important, .t-directive)) {
+    color: var(--code-hue-3);
+  }
+
+  .code :global(:is(.t-property, .t-tag, .t-symbol, .t-deleted, .t-title, .t-lifetime-annotation)) {
+    color: var(--code-hue-5);
+  }
+
+  .code :global(:is(.t-selector, .t-string, .t-char, .t-builtin, .t-inserted, .t-regex, .t-attr-value, .t-template-string)) {
+    color: var(--code-hue-4);
+  }
+
+  .code :global(:is(.t-variable, .t-operator, .t-function, .t-function-definition, .t-macro)) {
+    color: var(--code-hue-2);
+  }
+
+  .code :global(.t-url) {
+    color: var(--code-hue-1);
+  }
+
+  .code :global(.t-attr-value .t-punctuation) {
+    color: var(--code-hue-4);
+  }
+
+  .code :global(.t-bold) {
+    font-weight: 600;
+  }
+
+  .code :global(.t-italic) {
+    font-style: italic;
   }
 
   .eof {

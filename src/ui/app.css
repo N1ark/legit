@@ -19,6 +19,15 @@
   --del-bg: #e4564914;
   --del-sel: #e4564942;
   --warn: #b76b01;
+  --code-mono-1: #383a42;
+  --code-mono-2: #696c77;
+  --code-mono-3: #a0a1a7;
+  --code-hue-1: #0184bc;
+  --code-hue-2: #4078f2;
+  --code-hue-3: #a626a4;
+  --code-hue-4: #50a14f;
+  --code-hue-5: #e45649;
+  --code-hue-6: #b76b01;
   --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
   color-scheme: light dark;
@@ -46,6 +55,15 @@
     --del-bg: #e06c7512;
     --del-sel: #e06c7538;
     --warn: #d19a66;
+    --code-mono-1: #abb2bf;
+    --code-mono-2: #7e8395;
+    --code-mono-3: #6b7280;
+    --code-hue-1: #56b6c2;
+    --code-hue-2: #61afef;
+    --code-hue-3: #c678dd;
+    --code-hue-4: #98c379;
+    --code-hue-5: #e06c75;
+    --code-hue-6: #d19a66;
   }
 }
 
