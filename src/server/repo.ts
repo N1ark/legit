@@ -9,7 +9,7 @@ import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
-  Backup, CommitDiff, CommitInfo, DropRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, DropRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
@@ -40,8 +40,8 @@ interface Move {
 
 export class Repo {
   readonly git: Git;
-  private undoStack: Move[] = [];
-  private redoStack: Move[] = [];
+  /** Undo/redo history per branch (or detached HEAD). */
+  private history = new Map<string, { undo: Move[]; redo: Move[] }>();
   private diffs = new Map<string, CommitDiff>();
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
@@ -93,8 +93,8 @@ export class Repo {
       head,
       commits: [],
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
-      canUndo: this.undoStack.at(-1)?.after === head,
-      canRedo: this.redoStack.at(-1)?.before === head,
+      canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
+      canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
     };
     if (!head) return state;
 
@@ -205,8 +205,7 @@ export class Repo {
     }
     await this.verify(base, tip, out);
     await this.moveHead(chain[0].sha, tip, label);
-    this.undoStack.push({ label, before: chain[0].sha, after: tip });
-    this.redoStack = [];
+    await this.record({ label, before: chain[0].sha, after: tip });
     return out.reverse();
   }
 
@@ -310,8 +309,7 @@ export class Repo {
       const head = await this.head();
       if (!head) throw new GitError('This branch has no commits yet.');
       await this.moveHead(head, sha, 'restore');
-      this.undoStack.push({ label: 'restore', before: head, after: sha });
-      this.redoStack = [];
+      await this.record({ label: 'restore', before: head, after: sha });
       return { state: await this.state(), renamed: {}, focus: [] };
     });
   }
@@ -459,8 +457,7 @@ export class Repo {
         if (!chain[k].parents[0]) throw new GitError("Can't drop every commit of the branch.");
         const base = chain[k].parents[0];
         await this.moveHead(chain[0].sha, base, 'drop');
-        this.undoStack.push({ label: 'drop', before: chain[0].sha, after: base });
-        this.redoStack = [];
+        await this.record({ label: 'drop', before: chain[0].sha, after: base });
         return this.result(await this.state(), [], []);
       }
       const shas = await this.rewrite('drop', chain, k, kept.map((src) => ({ src })), false);
@@ -470,22 +467,78 @@ export class Repo {
 
   undo(): Promise<OpResult> {
     return this.exclusive(async () => {
-      const m = this.undoStack.at(-1);
+      const h = await this.stacks();
+      const m = h.undo.at(-1);
       const head = await this.head();
       if (!m || m.after !== head) throw new GitError('Nothing to undo.');
       await this.moveHead(m.after, m.before, `undo ${m.label}`);
-      this.redoStack.push(this.undoStack.pop()!);
+      h.redo.push(h.undo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
     });
   }
 
   redo(): Promise<OpResult> {
     return this.exclusive(async () => {
-      const m = this.redoStack.at(-1);
+      const h = await this.stacks();
+      const m = h.redo.at(-1);
       const head = await this.head();
       if (!m || m.before !== head) throw new GitError('Nothing to redo.');
       await this.moveHead(m.before, m.after, `redo ${m.label}`);
-      this.undoStack.push(this.redoStack.pop()!);
+      h.undo.push(h.redo.pop()!);
+      return { state: await this.state(), renamed: {}, focus: [] };
+    });
+  }
+
+  private async currentBranch(): Promise<string | null> {
+    return (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
+  }
+
+  private stacksFor(branch: string | null) {
+    const key = branch ?? '';
+    let h = this.history.get(key);
+    if (!h) this.history.set(key, (h = { undo: [], redo: [] }));
+    return h;
+  }
+
+  private async stacks() {
+    return this.stacksFor(await this.currentBranch());
+  }
+
+  private async record(move: Move) {
+    const h = await this.stacks();
+    h.undo.push(move);
+    h.redo = [];
+  }
+
+  /** Local branches, most recently committed first. */
+  async branches(): Promise<BranchInfo[]> {
+    const [out, current] = await Promise.all([
+      this.git.text([
+        'for-each-ref', '--sort=-committerdate',
+        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)',
+        'refs/heads',
+      ]),
+      this.currentBranch(),
+    ]);
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [name, sha, subject, time, upstream, track] = line.split('\0');
+        return { name, sha, subject, time: Number(time), upstream: upstream || null, track: track || null, current: name === current };
+      });
+  }
+
+  /** `git switch`: refuses (rather than overwriting anything) if local changes are in the way. */
+  switchBranch(req: { branch: string }): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      const ref = `refs/heads/${req.branch}`;
+      const exists = await this.git.run(['show-ref', '--verify', '--quiet', ref], { allowFail: true });
+      if (exists.code !== 0) throw new GitError(`No local branch named ${req.branch}.`);
+      const r = await this.git.run(['switch', '--no-guess', req.branch], { allowFail: true });
+      if (r.code !== 0) throw new GitError(`Couldn't switch to ${req.branch}; nothing was changed.\n${r.err.trim()}`);
       return { state: await this.state(), renamed: {}, focus: [] };
     });
   }

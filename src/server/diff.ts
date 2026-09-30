@@ -73,7 +73,7 @@ export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
 }
 
 /** File list with exact row counts and widths, but no content (utf8 for display). */
-export function summarize(d: CommitDiff): DiffSummary {
+export function summarize(d: CommitDiff, generated: Set<string>): DiffSummary {
   return {
     sha: d.sha,
     files: d.files.map(({ hunks, ...f }) => {
@@ -87,7 +87,7 @@ export function summarize(d: CommitDiff): DiffSummary {
           if (w > width) width = w;
         }
       }
-      return { ...f, path: toUtf8(f.path), rows, width };
+      return { ...f, path: toUtf8(f.path), rows, width, generated: generated.has(f.path) };
     }),
   };
 }

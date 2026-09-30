@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileContent, summarize } from './diff.ts';
+import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
 import type { FileContents } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
@@ -78,6 +79,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     undo: () => repo.undo(),
     redo: () => repo.redo(),
     restore: (b) => repo.restore(b),
+    switch: (b) => repo.switchBranch(b),
   };
 
   let origin = '';
@@ -85,6 +87,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
+    if (path === '/api/branches') return send(res, 200, await repo.branches());
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write(': hi\n\n');
@@ -96,7 +99,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (diff) {
       let json = summaries.get(diff[1]);
       if (!json) {
-        json = JSON.stringify(summarize(await repo.diff(diff[1])));
+        const d = await repo.diff(diff[1]);
+        const generated = await generatedPaths(repo.git, d.sha, d.files.map((f) => f.path));
+        json = JSON.stringify(summarize(d, generated));
         if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
         summaries.set(diff[1], json);
       }

@@ -6,7 +6,7 @@
   // into view; highlighting runs in a worker and fills in afterwards.
   import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary } from '../shared/types.ts';
   import { app } from './lib/app.svelte.ts';
@@ -25,14 +25,19 @@
   const NOTE = 38;
   const PAD = 4;
   const GAP = 10;
-  const GUTTER = 88;
+  /** Block strip + old/new line numbers + marker; keep in sync with .gutter's CSS width. */
+  const GUTTER = 98;
   /** How far beyond the viewport to render, so scrolling rarely shows unrendered rows. */
   const OVERSCAN = 1200;
   /** Files past the viewport whose contents are fetched ahead of time. */
   const PREFETCH = 4;
 
   const files = $derived(summary.files);
-  let collapsed = $state<Record<number, boolean>>({});
+  // Generated files (lockfiles etc.) start collapsed. The view is re-created per commit.
+  let collapsed = $state<Record<number, boolean>>(
+    untrack(() => Object.fromEntries(summary.files.flatMap((f, i) => (f.generated ? [[i, true]] : [])))),
+  );
+  const generatedCount = $derived(files.filter((f) => f.generated).length);
   let contents = $state.raw<Record<number, FileRows>>({});
   let tokens = $state.raw<Record<number, Tokens>>({});
   let view = $state({ top: 0, bottom: 1000 });
@@ -173,7 +178,21 @@
   }
 
   // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed.
-  let drag: { path: string; on: boolean; last: number } | null = null;
+  // Starting on the block strip (left of the line numbers) works in whole blocks: runs of
+  // consecutive changed lines.
+  let drag: { path: string; on: boolean; last: number; block: boolean } | null = null;
+  let hoverBlock = $state<{ i: number; a: number; b: number } | null>(null);
+
+  /** Rows [a, b] of the run of consecutive changed lines around row r. */
+  function blockAt(rows: FileRows, r: number): [number, number] {
+    let a = r;
+    let b = r;
+    while (a > 0 && rows.ci[a - 1] >= 0) a--;
+    while (b + 1 < rows.ci.length && rows.ci[b + 1] >= 0) b++;
+    return [a, b];
+  }
+
+  const onStrip = (e: Event) => !!(e.target as HTMLElement).closest('.blk');
   let anchor: { path: string; ci: number } | null = null;
 
   function setRange(path: string, a: number, b: number, on: boolean) {
@@ -197,23 +216,43 @@
     const f = files[i];
     if (!f.partial) return toggleFile(f);
     const s = sel[f.path];
+    if (onStrip(e)) {
+      const [a, b] = blockAt(rows, r);
+      const [lo, hi] = [rows.ci[a], rows.ci[b]];
+      let all = true;
+      for (let c = lo; c <= hi; c++) if (!s.has(c)) all = false;
+      setRange(f.path, lo, hi, !all);
+      drag = { path: f.path, on: !all, last: ci, block: true };
+      anchor = { path: f.path, ci };
+      return;
+    }
     if (e.shiftKey && anchor?.path === f.path) {
       setRange(f.path, anchor.ci, ci, s.has(anchor.ci));
       return;
     }
     const on = !s.has(ci);
     on ? s.add(ci) : s.delete(ci);
-    drag = { path: f.path, on, last: ci };
+    drag = { path: f.path, on, last: ci, block: false };
     anchor = { path: f.path, ci };
   }
 
   function over(e: MouseEvent, i: number) {
     const r = rowOf(e);
     const rows = contents[i];
-    if (!drag || r < 0 || !rows || drag.path !== files[i].path) return;
+    if (!rows || r < 0) return;
     const ci = rows.ci[r];
-    if (ci < 0) return;
+    // Preview the block the strip would toggle.
+    const strip = !readonly && ci >= 0 && onStrip(e);
+    if (strip) {
+      const [a, b] = blockAt(rows, r);
+      if (hoverBlock?.i !== i || hoverBlock.a !== a) hoverBlock = { i, a, b };
+    } else if (hoverBlock) hoverBlock = null;
+    if (!drag || drag.path !== files[i].path || ci < 0) return;
     setRange(drag.path, drag.last, ci, drag.on);
+    if (drag.block) {
+      const [a, b] = blockAt(rows, r);
+      setRange(drag.path, rows.ci[a], rows.ci[b], drag.on);
+    }
     drag.last = ci;
   }
 
@@ -229,8 +268,11 @@
     <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
     <span class="add">+{totals.a}</span>
     <span class="del">−{totals.r}</span>
+    {#if generatedCount}
+      <span>· {generatedCount} generated {generatedCount === 1 ? 'file' : 'files'} collapsed</span>
+    {/if}
     {#if !readonly && files.length}
-      <span class="hint">Pick lines to split out: click, drag, or shift-click a range.</span>
+      <span class="hint">Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.</span>
     {/if}
   </div>
 
@@ -256,6 +298,9 @@
           </button>
           <span class="path mono" title={f.path}>{f.path}</span>
           {#if statusLabel[f.status]}<span class="status {f.status}">{statusLabel[f.status]}</span>{/if}
+          {#if f.generated}
+            <span class="status" title="Generated file: collapsed by default (see README to change the list)">generated</span>
+          {/if}
           <span class="spacer"></span>
           <span class="add mono">+{f.added}</span>
           <span class="del mono">−{f.removed}</span>
@@ -279,6 +324,7 @@
                   style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
                   onmousedown={(e) => down(e, i)}
                   onmouseover={(e) => over(e, i)}
+                  onmouseleave={() => (hoverBlock = null)}
                   onfocus={() => {}}
                 >
                   {#each shown as r (r)}
@@ -290,10 +336,12 @@
                       <div
                         class="line {KIND[kind]}"
                         class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
+                        class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                         data-r={r}
                       >
                         <span class="gutter"
-                          ><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
+                          ><span class="blk" title={ci >= 0 && !readonly ? 'Select this block of changes' : undefined}
+                          ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
                             >{MARK[kind]}</span
                           ></span
                         ><span class="code"
@@ -473,7 +521,7 @@
     left: 0;
     display: flex;
     flex-shrink: 0;
-    width: 88px;
+    width: 98px;
     background: var(--bg2);
     color: var(--dim);
     user-select: none;
@@ -491,6 +539,30 @@
     width: 12px;
     text-align: center;
     padding: 0;
+  }
+
+  .gutter > .blk {
+    width: 10px;
+    padding: 0;
+  }
+
+  .lines:not(.readonly) :is(.ta, .td) .blk {
+    cursor: pointer;
+    box-shadow: inset 3px 0 0 transparent;
+    transition: box-shadow 0.08s;
+  }
+
+  .lines:not(.readonly) :is(.ta, .td) .blk:hover,
+  .line.blkhover .blk {
+    box-shadow: inset 4px 0 0 var(--theme);
+  }
+
+  .line.blkhover .gutter {
+    background: var(--theme-soft);
+  }
+
+  .line.sel.blkhover .gutter {
+    background: var(--theme);
   }
 
   .code {

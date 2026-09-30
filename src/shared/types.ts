@@ -77,6 +77,8 @@ export interface CommitDiff {
 
 /** A file of a commit's diff without its content, for layout before anything is loaded. */
 export interface FileSummary extends Omit<FileDiff, 'hunks'> {
+  /** Generated (lockfile, minified, `linguist-generated`...): collapsed by default. */
+  generated: boolean;
   /** Rows the file renders: one per hunk header and per diff line. */
   rows: number;
   /** Widest line, in columns (tabs count as 4). */
@@ -154,4 +156,15 @@ export interface Backup {
   time: number;
   /** Operation the backup was taken before. */
   label: string;
+}
+
+export interface BranchInfo {
+  name: string;
+  sha: string;
+  subject: string;
+  time: number;
+  upstream: string | null;
+  /** e.g. "ahead 2, behind 1" or "gone". */
+  track: string | null;
+  current: boolean;
 }

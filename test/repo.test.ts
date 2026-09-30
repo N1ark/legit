@@ -222,3 +222,43 @@ test('refuses to rewrite past a merge and keeps the merge intact', async () => {
   await repo.edit({ sha: c, subject: 'After', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
   assert.equal(git('rev-list', '--merges', '--count', 'HEAD'), '1');
 });
+
+test('switching branches refuses to clobber local changes; undo history is per branch', async () => {
+  commit('base', { f: '1\n' });
+  git('branch', 'other');
+  const a = commit('a', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  assert.deepEqual((await repo.branches()).map((b) => [b.name, b.current]).sort(), [['main', true], ['other', false]]);
+  await repo.edit({ sha: a, subject: 'A', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
+
+  write('f', 'dirty\n');
+  await assert.rejects(repo.switchBranch({ branch: 'other' }), /Couldn't switch/);
+  assert.equal(read('f'), 'dirty\n');
+  assert.equal(git('branch', '--show-current'), 'main');
+  git('checkout', '-q', '--', 'f');
+
+  let st = (await repo.switchBranch({ branch: 'other' })).state;
+  assert.equal(st.branch, 'other');
+  assert.equal(st.canUndo, false);
+  await repo.edit({ sha: git('rev-parse', 'HEAD'), subject: 'Base', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
+  st = (await repo.switchBranch({ branch: 'main' })).state;
+  assert.equal(st.canUndo, true);
+  await repo.undo();
+  assert.deepEqual(log(), ['a', 'base']);
+  assert.equal(git('log', '-1', '--format=%s', 'other'), 'Base');
+  await assert.rejects(repo.switchBranch({ branch: 'nope' }), /No local branch/);
+});
+
+test('generated files: built-in patterns, linguist-generated as of the commit, legit.hide', async () => {
+  const { generatedPaths } = await import('../src/server/generated.ts');
+  write('.gitattributes', 'gen/** linguist-generated\nyarn.lock -linguist-generated\n');
+  git('config', '--add', 'legit.hide', 'docs/*.html');
+  const sha = commit('files', { 'package-lock.json': '{}\n', 'yarn.lock': 'x\n', 'app.min.js': 'x\n', 'app.js': 'x\n' });
+  execFileSync('mkdir', ['-p', join(dir, 'gen'), join(dir, 'docs'), join(dir, 'sub')]);
+  const sha2 = commit('more', { 'gen/api.ts': 'x\n', 'docs/index.html': 'x\n', 'sub/Cargo.lock': 'x\n', 'src.ts': 'x\n' });
+  const repo = await Repo.open(dir);
+  const paths = ['package-lock.json', 'yarn.lock', 'app.min.js', 'app.js', 'gen/api.ts', 'docs/index.html', 'sub/Cargo.lock', 'src.ts'];
+  const hidden = await generatedPaths(repo.git, sha2, paths);
+  assert.deepEqual([...hidden].sort(), ['app.min.js', 'docs/index.html', 'gen/api.ts', 'package-lock.json', 'sub/Cargo.lock']);
+  void sha;
+});

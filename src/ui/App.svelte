@@ -6,15 +6,17 @@
   import XIcon from 'phosphor-svelte/lib/XIcon';
   import { onMount } from 'svelte';
   import Backups from './Backups.svelte';
+  import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
   import CommitView from './CommitView.svelte';
   import SquashView from './SquashView.svelte';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app } from './lib/app.svelte.ts';
 
   const mac = navigator.platform.startsWith('Mac');
   const mod = mac ? '⌘' : 'Ctrl';
   // Running inside the desktop app: the header is the title bar.
   const desktop = '__TAURI_INTERNALS__' in window;
+  let branchPicker = $state<BranchPicker>();
 
   // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
   const typing = () => !!document.activeElement?.closest('input, textarea, [contenteditable]');
@@ -45,6 +47,11 @@
       return;
     }
     if (typing || cmd || e.defaultPrevented) return;
+    if (e.key === 'b' && !e.altKey) {
+      e.preventDefault();
+      branchPicker?.show();
+      return;
+    }
     const down = e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J';
     const up = e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K';
     if (!down && !up) return;
@@ -61,10 +68,7 @@
     <span class="brand" data-tauri-drag-region>legit</span>
     {#if app.repo}
       <span class="repo" title={app.repo.root} data-tauri-drag-region>{app.repo.name}</span>
-      <span class="branch" data-tauri-drag-region>
-        <GitBranchIcon size={14} />
-        {app.repo.branch ?? `detached @ ${app.repo.head ? shortSha(app.repo.head) : '?'}`}
-      </span>
+      <BranchPicker bind:this={branchPicker} />
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<span class="spinner" aria-label="Working"></span>{/if}

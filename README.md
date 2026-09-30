@@ -22,11 +22,20 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | | |
 |---|---|
 | **Edit** | Title, description, author and co-authors (`Co-authored-by` trailers) of any commit. <kbd>⌘↵</kbd> saves, <kbd>esc</kbd> reverts. |
-| **Split** | Click, drag or shift-click lines (or whole files/hunks) in a commit's diff, then split them into a new commit placed *after* (or *before*) the original. |
+| **Split** | Click, drag or shift-click lines in a commit's diff, or use the strip left of the line numbers to pick whole blocks of consecutive changes (hunk headers and file checkboxes pick more). Then split them into a new commit placed *after* (or *before*) the original. |
 | **Squash** | <kbd>⌘</kbd>/<kbd>⇧</kbd>-click several commits; they're folded into the oldest one, with a combined message you can edit. Other authors become co-authors. |
 | **Reorder** | Drag commits, or <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> (<kbd>K</kbd>/<kbd>J</kbd>). |
 | **Drop** | Trash button on a commit (click twice). |
-| **Undo** | <kbd>⌘Z</kbd>/<kbd>⌘⇧Z</kbd>, plus the backups panel (clock icon) for anything older. |
+| **Undo** | <kbd>⌘Z</kbd>/<kbd>⌘⇧Z</kbd> (per branch), plus the backups panel (clock icon) for anything older. |
+| **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Uses `git switch`, so uncommitted changes come along and it refuses if they'd be overwritten. |
+
+Generated files (lockfiles, minified bundles, source maps, snapshots, protobuf output… see `src/server/generated.ts`)
+start collapsed with a *generated* badge. Anything marked `linguist-generated` in `.gitattributes` counts too (and
+`-linguist-generated` opts a file back in). You can add your own patterns:
+
+```sh
+git config --add legit.hide 'docs/*.html'     # this repo; use --global for all repos
+```
 
 <kbd>j</kbd>/<kbd>k</kbd> move the selection. The list follows the first-parent history of `HEAD` down to the first
 merge commit; the history below a merge is shown but can't be rewritten.
