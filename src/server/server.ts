@@ -104,6 +104,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     stage: (b) => repo.stage(b),
     unstage: (b) => repo.unstage(b),
     commit: (b) => repo.commit(b),
+    uncommit: () => repo.uncommit(),
   };
 
   let origin = '';

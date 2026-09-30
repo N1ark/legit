@@ -1,5 +1,6 @@
 <script lang="ts">
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
+  import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
   import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
   import CloudCheckIcon from 'phosphor-svelte/lib/CloudCheckIcon';
   import ScissorsIcon from 'phosphor-svelte/lib/ScissorsIcon';
@@ -115,6 +116,18 @@
     app.op('drop', { shas: [commit.sha] });
   }
 
+  const isHead = $derived(commit.sha === app.repo?.head);
+  let confirmUndo = $state(false);
+  function undoCommit() {
+    if (commit.pushed && !confirmUndo) {
+      confirmUndo = true;
+      setTimeout(() => (confirmUndo = false), 4000);
+      return;
+    }
+    confirmUndo = false;
+    app.uncommit();
+  }
+
   function copySha() {
     navigator.clipboard.writeText(commit.sha).then(() => app.toast(`Copied ${shortSha(commit)}`));
   }
@@ -157,6 +170,12 @@
       </span>
     {/if}
     <span class="spacer"></span>
+    {#if !readonly && isHead && !commit.merge}
+      <button class="ghost undo" class:confirm={confirmUndo} onclick={undoCommit} disabled={app.busy} title="Undo this commit; its changes stay staged">
+        <ArrowUUpLeftIcon size={15} />
+        <span>{confirmUndo ? 'It was pushed. Click again' : 'Undo commit'}</span>
+      </button>
+    {/if}
     {#if !readonly}
       <button class="ghost danger" class:confirm={confirmDrop} onclick={dropCommit} disabled={app.busy} title="Drop this commit">
         <TrashIcon size={15} />{#if confirmDrop}<span>Click again to drop</span>{/if}
@@ -252,6 +271,15 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .undo {
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  .undo:hover:not(:disabled) {
+    color: var(--color2);
   }
 
   .confirm {

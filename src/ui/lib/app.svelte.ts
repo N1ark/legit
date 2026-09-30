@@ -1,5 +1,5 @@
 import { type SquashFields, squashFields } from './squash.ts';
-import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, RepoState } from '../../shared/types.ts';
+import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState } from '../../shared/types.ts';
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(
@@ -261,6 +261,18 @@ class App {
 
   /** Bumped whenever files or the index change, so the changes view reloads. */
   workTick = $state(0);
+
+  /** Message to put in the commit form (e.g. of a commit that was just undone). */
+  workDraft = $state<{ subject: string; body: string; coauthors: Person[] } | null>(null);
+
+  /** Undo the last commit, keeping its changes staged and its message in the commit form. */
+  async uncommit() {
+    const c = this.commits.find((x) => x.sha === this.repo?.head);
+    if (!c || !(await this.op('uncommit'))) return;
+    this.workDraft = { subject: c.subject, body: c.body, coauthors: c.coauthors };
+    this.selectWork();
+    this.toast(`Undid "${c.subject}"; its changes are staged.`);
+  }
 
   selectWork() {
     this.selected = [WORK];

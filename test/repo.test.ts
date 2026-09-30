@@ -377,3 +377,51 @@ test('stage/unstage lines and files touch only the index; commit runs hooks', as
   st = r.state;
   assert.deepEqual(st.work, { staged: 0, unstaged: 3, untracked: 0 });
 });
+
+test('commit, amend and uncommit are undoable and never touch the index or working tree', async () => {
+  commit('base', { f: '1\n' });
+  const a = commit('a', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  const staged = () => git('diff', '--cached', '--name-only');
+
+  // Commit, then undo it: the change is staged again; redo brings the commit back.
+  write('g', 'g\n');
+  git('add', 'g');
+  write('f', 'dirty\n');
+  await repo.commit({ subject: 'add g', body: '', coauthors: [] });
+  const c = git('rev-parse', 'HEAD');
+  assert.equal(staged(), '');
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), a);
+  assert.equal(staged(), 'g');
+  assert.equal(read('f'), 'dirty\n');
+  await repo.redo();
+  assert.equal(git('rev-parse', 'HEAD'), c);
+
+  // Amend: what's staged goes into HEAD with the new message; undo restores the old HEAD.
+  write('h', 'h\n');
+  git('add', 'h');
+  await repo.commit({ subject: 'add g and h', body: '', coauthors: [], amend: true });
+  assert.deepEqual(log(), ['add g and h', 'a', 'base']);
+  assert.equal(git('show', 'HEAD:h'), 'h');
+  assert.equal(git('rev-parse', 'HEAD~1'), a);
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), c);
+  assert.equal(staged(), 'h');
+  assert.equal(read('f'), 'dirty\n');
+  assert.ok((await repo.backups()).some((b) => b.label === 'amend'));
+
+  // Uncommit: the commit's changes (and what was already staged) end up staged.
+  await repo.uncommit();
+  assert.equal(git('rev-parse', 'HEAD'), a);
+  assert.deepEqual(staged().split('\n').sort(), ['g', 'h']);
+  assert.equal(read('f'), 'dirty\n');
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), c);
+
+  // Refusals: the first commit, and merges.
+  git('checkout', '-q', '--orphan', 'lonely');
+  git('commit', '-qm', 'only');
+  await assert.rejects(repo.uncommit(), /first commit/);
+  assert.equal(git('log', '--format=%s'), 'only');
+});

@@ -2,6 +2,7 @@
   import CloudCheckIcon from 'phosphor-svelte/lib/CloudCheckIcon';
   import DotsSixVerticalIcon from 'phosphor-svelte/lib/DotsSixVerticalIcon';
   import GitMergeIcon from 'phosphor-svelte/lib/GitMergeIcon';
+  import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
   import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
   import UsersIcon from 'phosphor-svelte/lib/UsersIcon';
   import Avatar from './Avatar.svelte';
@@ -19,15 +20,22 @@
   }
 
   // Right-click inside a multi-selection offers to squash it; elsewhere it just selects the row.
-  let menu = $state<{ x: number; y: number } | null>(null);
+  let menu = $state<{ x: number; y: number; head: boolean } | null>(null);
   const canSquash = $derived(
     app.selection.length > 1 && app.selection.every((c) => c.editable) && !app.repo?.blocked,
   );
 
   function oncontextmenu(e: MouseEvent, sha: string) {
     e.preventDefault();
-    if (app.selected.includes(sha) && app.selected.length > 1) menu = { x: e.clientX, y: e.clientY };
-    else app.select(sha);
+    if (app.selected.includes(sha) && app.selected.length > 1) menu = { x: e.clientX, y: e.clientY, head: false };
+    else {
+      app.select(sha);
+      const c = app.bySha.get(sha);
+      // The newest commit can be undone (its changes stay staged).
+      if (sha === app.repo?.head && c?.editable && !c.merge && !app.repo?.blocked) {
+        menu = { x: e.clientX, y: e.clientY, head: true };
+      }
+    }
   }
 
   function ondragstart(e: DragEvent, sha: string) {
@@ -62,6 +70,19 @@
 
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} onclose={() => (menu = null)}>
+    {#if menu.head}
+      <button
+        role="menuitem"
+        disabled={app.busy}
+        onclick={() => {
+          menu = null;
+          app.uncommit();
+        }}
+      >
+        <ArrowUUpLeftIcon size={14} /> Undo commit (keep changes)
+      </button>
+      {#if app.selection[0]?.pushed}<p class="note">It was pushed: you'll need to force push afterwards.</p>{/if}
+    {:else}
     <button
       role="menuitem"
       disabled={!canSquash || app.busy}
@@ -77,6 +98,7 @@
         ? `Into ${app.selection.at(-1)!.sha.slice(0, 7)}, with the message shown on the right.`
         : "Some of these commits can't be rewritten."}
     </p>
+    {/if}
   </ContextMenu>
 {/if}
 

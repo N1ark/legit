@@ -37,6 +37,8 @@ interface Move {
   label: string;
   before: string;
   after: string;
+  /** Only HEAD moves; the index and working tree are left as they are (commit, amend, uncommit). */
+  soft?: boolean;
 }
 
 export class Repo {
@@ -486,7 +488,8 @@ export class Repo {
       const m = h.undo.at(-1);
       const head = await this.head();
       if (!m || m.after !== head) throw new GitError('Nothing to undo.');
-      await this.moveHead(m.after, m.before, `undo ${m.label}`);
+      if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
+      else await this.moveHead(m.after, m.before, `undo ${m.label}`);
       h.redo.push(h.undo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
     });
@@ -498,7 +501,8 @@ export class Repo {
       const m = h.redo.at(-1);
       const head = await this.head();
       if (!m || m.before !== head) throw new GitError('Nothing to redo.');
-      await this.moveHead(m.before, m.after, `redo ${m.label}`);
+      if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
+      else await this.moveHead(m.before, m.after, `redo ${m.label}`);
       h.undo.push(h.redo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
     });
@@ -638,22 +642,65 @@ export class Repo {
   }
 
   /** `git commit` of what's staged (hooks and signing config apply). */
+  /**
+   * `git commit` of what's staged (hooks and signing config apply), or with `amend`, `git commit
+   * --amend` (what's staged is folded into HEAD, which gets the new message). Both can be
+   * undone: HEAD goes back, and the index and working tree stay as they are.
+   */
   commit(req: CommitRequest): Promise<OpResult> {
     return this.exclusive(async () => {
       const why = this.blocked();
       if (why) throw new GitError(why);
       if (!req.subject?.trim()) throw new GitError('A commit needs a title.');
-      const staged = await this.git.run(['diff', '--cached', '--quiet'], { allowFail: true });
-      if (staged.code === 0) throw new GitError('Nothing is staged.');
-      const r = await this.git.run(['commit', '--cleanup=whitespace', '-F', '-'], {
+      const before = await this.head();
+      if (req.amend) {
+        if (!before) throw new GitError('There is no commit to amend yet.');
+        await this.backup(before, 'amend');
+      } else {
+        const staged = await this.git.run(['diff', '--cached', '--quiet'], { allowFail: true });
+        if (staged.code === 0) throw new GitError('Nothing is staged.');
+      }
+      const r = await this.git.run(['commit', ...(req.amend ? ['--amend'] : []), '--cleanup=whitespace', '-F', '-'], {
         input: buildMessage(req.subject, req.body, req.coauthors),
         allowFail: true,
         timeout: 600_000,
       });
-      if (r.code !== 0) throw new GitError(`Commit failed.\n${(r.err + r.out.toString('utf8')).trim()}`);
+      if (r.code !== 0) {
+        throw new GitError(`${req.amend ? 'Amend' : 'Commit'} failed.\n${(r.err + r.out.toString('utf8')).trim()}`);
+      }
       const head = await this.head();
+      if (before && head && head !== before) {
+        await this.record({ label: req.amend ? 'amend' : 'commit', before, after: head, soft: true });
+      }
       return { state: await this.state(), renamed: {}, focus: head ? [head] : [] };
     });
+  }
+
+  /**
+   * Undo the last commit, keeping its changes: HEAD moves to its parent, and the index and
+   * working tree stay as they are, so the commit's changes show up as staged.
+   */
+  uncommit(): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const why = this.blocked();
+      if (why) throw new GitError(why);
+      const head = await this.head();
+      if (!head) throw new GitError('There is no commit to undo.');
+      const c = await this.git.commit(head);
+      if (c.parents.length === 0) throw new GitError("This is the branch's first commit, so it can't be undone this way.");
+      if (c.parents.length > 1) throw new GitError("The last commit is a merge; it can't be undone this way.");
+      await this.moveHeadSoft(head, c.parents[0], 'uncommit');
+      await this.record({ label: 'uncommit', before: head, after: c.parents[0], soft: true });
+      return { state: await this.state(), renamed: {}, focus: [] };
+    });
+  }
+
+  /** Point HEAD at `to` without touching the index or working tree (after a backup of `from`). */
+  private async moveHeadSoft(from: string, to: string, label: string) {
+    if (from === to) return;
+    await this.backup(from, label);
+    const r = await this.git.run(['update-ref', '-m', `legit: ${label}`, 'HEAD', to, from], { allowFail: true });
+    if (r.code !== 0) throw new GitError(`HEAD moved in the meantime; nothing was changed. ${r.err.trim()}`);
   }
 
   /** Upstream of `branch` and how far apart they are, or where publishing it would go. */

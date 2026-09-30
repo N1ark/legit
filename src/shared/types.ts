@@ -207,4 +207,6 @@ export interface CommitRequest {
   subject: string;
   body: string;
   coauthors: Person[];
+  /** Fold what's staged into HEAD and replace its message. */
+  amend?: boolean;
 }

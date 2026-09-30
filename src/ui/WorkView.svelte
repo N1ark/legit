@@ -5,13 +5,13 @@
   import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon';
   import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
   import XIcon from 'phosphor-svelte/lib/XIcon';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
-  import { app } from './lib/app.svelte.ts';
-  import { parsePeople } from './lib/people.ts';
+  import { app, shortSha } from './lib/app.svelte.ts';
+  import { formatPerson, parsePeople } from './lib/people.ts';
 
   const mod = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
@@ -91,17 +91,65 @@
   let body = $state('');
   let coauthors = $state<string[]>([]);
   const people = $derived(parsePeople(coauthors));
-  const canCommit = $derived(!!work?.staged.files.length && subject.trim() !== '' && people !== null && !app.repo?.blocked);
+  const head = $derived(app.commits.find((c) => c.sha === app.repo?.head) ?? null);
+  let amend = $state(false);
+  const canCommit = $derived(
+    subject.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : !!work?.staged.files.length),
+  );
+
+  // Amending starts from the last commit's message; turning it off brings back what was typed.
+  let typed: { subject: string; body: string; coauthors: string[] } | null = null;
+  function toggleAmend() {
+    if (!head) return;
+    amend = !amend;
+    if (amend) {
+      typed = { subject, body, coauthors: [...coauthors] };
+      subject = head.subject;
+      body = head.body;
+      coauthors = head.coauthors.map(formatPerson);
+    } else if (typed) {
+      ({ subject, body } = typed);
+      coauthors = typed.coauthors;
+      typed = null;
+    }
+  }
+
+  // A message handed over by the app (the commit that was just undone).
+  $effect(() => {
+    const d = app.workDraft;
+    if (!d) return;
+    untrack(() => {
+      subject = d.subject;
+      body = d.body;
+      coauthors = d.coauthors.map(formatPerson);
+      amend = false;
+      typed = null;
+      app.workDraft = null;
+    });
+  });
 
   async function commit() {
     if (!canCommit || app.busy) return;
-    if (await app.op('commit', { subject, body, coauthors: people })) {
+    if (await app.op('commit', { subject, body, coauthors: people, amend })) {
       subject = '';
       body = '';
       coauthors = [];
+      amend = false;
+      typed = null;
       // Stay here while there's more to commit; otherwise show the new commit.
       if (!app.hasWork && app.repo?.head) app.select(app.repo.head);
     }
+  }
+
+  let confirmUndo = $state(false);
+  function undoLast() {
+    if (head?.pushed && !confirmUndo) {
+      confirmUndo = true;
+      setTimeout(() => (confirmUndo = false), 4000);
+      return;
+    }
+    confirmUndo = false;
+    app.uncommit();
   }
 
   function onFormKey(e: KeyboardEvent) {
@@ -150,11 +198,32 @@
     <div class="actions">
       <button class="primary" onclick={commit} disabled={!canCommit || app.busy}>
         <CheckIcon size={14} weight="bold" />
-        Commit {work?.staged.files.length ? plural(work.staged.files.length, 'file') : ''}
+        {#if amend && head}
+          Amend {shortSha(head)}
+        {:else}
+          Commit {work?.staged.files.length ? plural(work.staged.files.length, 'file') : ''}
+        {/if}
         <kbd>{mod}↵</kbd>
       </button>
-      {#if work && !work.staged.files.length}<span class="dim">Stage some changes first.</span>{/if}
+      <label class="amend" title="Fold what's staged into the last commit and replace its message">
+        <input type="checkbox" checked={amend} onchange={toggleAmend} disabled={!head?.editable} />
+        Amend last commit
+      </label>
+      {#if amend && head?.pushed}
+        <span class="warn">Already pushed: amending it means force pushing.</span>
+      {:else if !amend && work && !work.staged.files.length}
+        <span class="dim">Stage some changes first.</span>
+      {/if}
     </div>
+    {#if head?.editable && !head.merge && !amend}
+      <div class="last dim">
+        Last commit <span class="mono sha">{shortSha(head)}</span>
+        <span class="last-subject">{head.subject}</span> ·
+        <button class="link" class:warn={confirmUndo} onclick={undoLast} disabled={app.busy}>
+          {confirmUndo ? 'It was pushed. Click again to undo it' : 'Undo (keep changes)'}
+        </button>
+      </div>
+    {/if}
   </div>
 
   {#if error}
@@ -282,6 +351,56 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  .amend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .amend input {
+    accent-color: var(--theme);
+    margin: 0;
+  }
+
+  .warn {
+    color: var(--warn);
+    font-size: 12px;
+  }
+
+  .last {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 12px;
+    min-width: 0;
+  }
+
+  .last .sha {
+    color: var(--theme);
+  }
+
+  .last-subject {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50%;
+  }
+
+  .link {
+    background: none;
+    padding: 0;
+    color: var(--theme);
+    font-size: 12px;
+  }
+
+  .link:hover:not(:disabled) {
+    background: none;
+    text-decoration: underline;
   }
 
   section {
