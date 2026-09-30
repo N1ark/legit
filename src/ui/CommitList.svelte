@@ -2,7 +2,9 @@
   import CloudCheckIcon from 'phosphor-svelte/lib/CloudCheckIcon';
   import DotsSixVerticalIcon from 'phosphor-svelte/lib/DotsSixVerticalIcon';
   import GitMergeIcon from 'phosphor-svelte/lib/GitMergeIcon';
+  import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
   import UsersIcon from 'phosphor-svelte/lib/UsersIcon';
+  import ContextMenu from './ContextMenu.svelte';
   import { ago, app, shortSha } from './lib/app.svelte.ts';
 
   const mac = navigator.platform.startsWith('Mac');
@@ -12,6 +14,18 @@
 
   function onclick(e: MouseEvent, sha: string) {
     app.select(sha, e.shiftKey ? 'range' : (mac ? e.metaKey : e.ctrlKey) ? 'toggle' : 'set');
+  }
+
+  // Right-click inside a multi-selection offers to squash it; elsewhere it just selects the row.
+  let menu = $state<{ x: number; y: number } | null>(null);
+  const canSquash = $derived(
+    app.selection.length > 1 && app.selection.every((c) => c.editable) && !app.repo?.blocked,
+  );
+
+  function oncontextmenu(e: MouseEvent, sha: string) {
+    e.preventDefault();
+    if (app.selected.includes(sha) && app.selected.length > 1) menu = { x: e.clientX, y: e.clientY };
+    else app.select(sha);
   }
 
   function ondragstart(e: DragEvent, sha: string) {
@@ -44,6 +58,26 @@
   }
 </script>
 
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} onclose={() => (menu = null)}>
+    <button
+      role="menuitem"
+      disabled={!canSquash || app.busy}
+      onclick={() => {
+        menu = null;
+        app.squash(app.selection);
+      }}
+    >
+      <ArrowsMergeIcon size={14} /> Squash {app.selection.length} commits
+    </button>
+    <p class="note">
+      {canSquash
+        ? `Into ${app.selection.at(-1)!.sha.slice(0, 7)}, with the message shown on the right.`
+        : "Some of these commits can't be rewritten."}
+    </p>
+  </ContextMenu>
+{/if}
+
 <ol class="list" role="listbox" aria-multiselectable="true">
   {#each app.commits as c, i (c.sha)}
     {#if !c.editable && (i === 0 || app.commits[i - 1].editable)}
@@ -62,6 +96,7 @@
       draggable={c.editable && !app.repo?.blocked}
       onclick={(e) => onclick(e, c.sha)}
       onmouseenter={() => app.prefetch(c.sha)}
+      oncontextmenu={(e) => oncontextmenu(e, c.sha)}
       onkeydown={() => {}}
       ondragstart={(e) => ondragstart(e, c.sha)}
       ondragover={(e) => c.editable && ondragover(e, c.sha)}

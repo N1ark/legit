@@ -2,7 +2,8 @@
   import ArrowsMergeIcon from 'phosphor-svelte/lib/ArrowsMergeIcon';
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
   import { untrack } from 'svelte';
-  import type { CommitInfo, Person } from '../shared/types.ts';
+  import type { CommitInfo } from '../shared/types.ts';
+  import { combinedMessage } from './lib/squash.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
 
   /** Newest first. */
@@ -12,33 +13,22 @@
   const editable = $derived(commits.every((c) => c.editable) && !app.repo?.blocked);
   const oldest = $derived(commits[commits.length - 1]);
 
-  /** Oldest commit's message, the others' messages appended, all authors kept as co-authors. */
-  function combined(list: CommitInfo[]): string {
-    const chrono = list.toReversed();
-    const [first, ...rest] = chrono;
-    const parts = [first.subject, first.body, ...rest.map((c) => [c.subject, c.body].filter(Boolean).join('\n\n'))];
-    const people = new Map<string, Person>();
-    for (const c of chrono) {
-      for (const p of [c.author, ...c.coauthors]) {
-        const key = p.email.toLowerCase();
-        if (key !== first.author.email.toLowerCase() && !people.has(key)) people.set(key, p);
-      }
-    }
-    const trailers = [...people.values()].map((p) => `Co-authored-by: ${p.name} <${p.email}>`).join('\n');
-    return [...parts.filter(Boolean), trailers].filter(Boolean).join('\n\n');
-  }
-
   let message = $state('');
   let edited = $state(false);
+  const key = $derived(commits.map((c) => c.sha).join(' '));
+  // The commit list's context menu squashes with this message too.
+  $effect(() => {
+    app.squashDraft = edited ? { key, message } : null;
+  });
   // Keep the proposed message in sync with the selection until the user edits it.
   $effect(() => {
-    const m = combined(commits);
+    const m = combinedMessage(commits);
     if (!untrack(() => edited)) message = m;
   });
 
   function squash() {
     if (!editable || !message.trim()) return;
-    app.op('squash', { shas: commits.map((c) => c.sha), message });
+    app.squash(commits);
   }
 
   let confirmDrop = $state(false);
@@ -77,7 +67,7 @@
         <ArrowsMergeIcon size={14} /> Squash <kbd>{mod}↵</kbd>
       </button>
       {#if edited}
-        <button onclick={() => { edited = false; message = combined(commits); }}>Reset message</button>
+        <button onclick={() => { edited = false; message = combinedMessage(commits); }}>Reset message</button>
       {/if}
       <span class="spacer"></span>
       <button class="ghost danger" class:confirm={confirmDrop} onclick={drop} disabled={app.busy}>

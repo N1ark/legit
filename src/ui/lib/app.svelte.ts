@@ -1,3 +1,4 @@
+import { combinedMessage } from './squash.ts';
 import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, RepoState } from '../../shared/types.ts';
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -215,6 +216,17 @@ class App {
       () => this.toast(`Copied ${what}`),
       () => this.toast("Couldn't access the clipboard", 'error'),
     );
+  }
+
+  /** Message the squash panel is showing, if the user edited it (keyed by the selected SHAs). */
+  squashDraft = $state<{ key: string; message: string } | null>(null);
+
+  /** Squash commits (any order) into the oldest, with the edited draft or the combined message. */
+  squash(commits: CommitInfo[]) {
+    const newestFirst = this.commits.filter((c) => commits.some((x) => x.sha === c.sha));
+    const key = newestFirst.map((c) => c.sha).join(' ');
+    const message = this.squashDraft?.key === key ? this.squashDraft.message : combinedMessage(newestFirst);
+    return this.op('squash', { shas: newestFirst.map((c) => c.sha), message });
   }
 
   undo = () => this.op('undo');

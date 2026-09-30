@@ -11,6 +11,7 @@
   import { onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary } from '../shared/types.ts';
+  import ContextMenu from './ContextMenu.svelte';
   import { app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
@@ -279,8 +280,7 @@
     const r = rowOf(e);
     const rows = contents[i];
     const line = rows && r >= 0 && rows.kind[r] !== HUNK ? lineFor(rows, r) : firstChange(i);
-    // Keep the menu on screen.
-    menu = { x: Math.min(e.clientX, innerWidth - 240), y: Math.min(e.clientY, innerHeight - 120), i, line };
+    menu = { x: e.clientX, y: e.clientY, i, line };
   }
 
   function menuAction(fn: (f: FileSummary) => void) {
@@ -295,17 +295,11 @@
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
-<svelte:window
-  onmouseup={() => (drag = null)}
-  onkeydown={(e) => e.key === 'Escape' && menu && (menu = null)}
-  onblur={() => (menu = null)}
-/>
+<svelte:window onmouseup={() => (drag = null)} />
 
 {#if menu}
   {@const f = files[menu.i]}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="menu-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => (e.preventDefault(), (menu = null))}></div>
-  <div class="menu" role="menu" style:left="{menu.x}px" style:top="{menu.y}px">
+  <ContextMenu x={menu.x} y={menu.y} onclose={() => (menu = null)}>
     <button role="menuitem" disabled={f.status === 'D'} onclick={() => menuAction((f) => app.openInZed(f.path, menu?.line))}>
       <FileArrowUpIcon size={14} /> Open in Zed
       {#if menu.line}<span class="dim">:{menu.line}</span>{/if}
@@ -317,7 +311,7 @@
     <button role="menuitem" onclick={() => menuAction((f) => app.copy(f.path, 'relative path'))}>
       <CopyIcon size={14} /> Copy relative path
     </button>
-  </div>
+  </ContextMenu>
 {/if}
 
 <div class="diff">
@@ -745,54 +739,6 @@
 
   .code :global(.t-italic) {
     font-style: italic;
-  }
-
-  .menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 49;
-  }
-
-  .menu {
-    position: fixed;
-    z-index: 50;
-    min-width: 200px;
-    padding: 4px;
-    border-radius: 6px;
-    background: var(--bg2);
-    box-shadow: var(--box-shadow), 0 10px 30px #0005;
-    display: flex;
-    flex-direction: column;
-    animation: menu-in 0.08s ease-out;
-  }
-
-  @keyframes menu-in {
-    from {
-      opacity: 0;
-      transform: scale(0.97);
-    }
-  }
-
-  .menu button {
-    background: none;
-    justify-content: flex-start;
-    padding: 5px 8px;
-    font-size: 12.5px;
-  }
-
-  .menu button:hover:not(:disabled) {
-    background: var(--theme);
-    color: #fff;
-  }
-
-  .menu button:hover:not(:disabled) .dim {
-    color: #fffc;
-  }
-
-  .menu hr {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 4px 2px;
   }
 
   .eof {
