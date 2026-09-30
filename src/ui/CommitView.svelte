@@ -2,21 +2,21 @@
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
   import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
   import CloudCheckIcon from 'phosphor-svelte/lib/CloudCheckIcon';
-  import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
   import ScissorsIcon from 'phosphor-svelte/lib/ScissorsIcon';
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
   import XIcon from 'phosphor-svelte/lib/XIcon';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { CommitInfo, DiffSummary, Person, Selection } from '../shared/types.ts';
+  import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
+  import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
+  import { formatPerson, parsePeople } from './lib/people.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
   const mod = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
-  const PERSON = /^\s*(.*?)\s*<([^>]*)>\s*$/;
-  const fmt = (p: Person) => `${p.name} <${p.email}>`;
+  const fmt = formatPerson;
 
   // Metadata form, initialised from the commit (the view is re-created when the commit changes).
   const init = untrack(() => commit);
@@ -27,8 +27,8 @@
   let coauthors = $state(init.coauthors.map(fmt));
 
   const readonly = $derived(!commit.editable || !!app.repo?.blocked);
-  const parsedCo = $derived(coauthors.map((s) => PERSON.exec(s)));
-  const valid = $derived(subject.trim() !== '' && parsedCo.every((m, i) => m || !coauthors[i].trim()));
+  const parsedCo = $derived(parsePeople(coauthors));
+  const valid = $derived(subject.trim() !== '' && parsedCo !== null);
   const dirty = $derived(
     subject !== commit.subject ||
       body !== commit.body ||
@@ -44,7 +44,7 @@
       subject,
       body,
       author: { name: authorName, email: authorEmail },
-      coauthors: parsedCo.filter((m) => m).map((m) => ({ name: m![1], email: m![2] })),
+      coauthors: parsedCo ?? [],
     });
   }
 
@@ -54,11 +54,6 @@
     authorName = commit.author.name;
     authorEmail = commit.author.email;
     coauthors = commit.coauthors.map(fmt);
-  }
-
-  function addCoauthor() {
-    coauthors.push('');
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.coauthor:last-of-type input')?.focus());
   }
 
   // Diff + split selection.
@@ -181,25 +176,7 @@
       </div>
 
       <span class="dim label">Co-authors</span>
-      <div class="coauthors">
-        {#each coauthors as _, i (i)}
-          <div class="coauthor">
-            <input
-              bind:value={coauthors[i]}
-              list="people"
-              placeholder="Name <email@example.com>"
-              class:invalid={coauthors[i].trim() && !parsedCo[i]}
-              disabled={readonly}
-            />
-            {#if !readonly}
-              <button class="ghost" onclick={() => coauthors.splice(i, 1)} title="Remove"><XIcon size={13} /></button>
-            {/if}
-          </div>
-        {/each}
-        {#if !readonly}
-          <button class="ghost add" onclick={addCoauthor}><PlusIcon size={13} /> Add co-author</button>
-        {/if}
-      </div>
+      <Coauthors bind:value={coauthors} {readonly} />
     </div>
 
     {#if dirty && !readonly}
@@ -211,10 +188,6 @@
       </div>
     {/if}
   </div>
-
-  <datalist id="people">
-    {#each app.people as p (p.email)}<option value={fmt(p)}></option>{/each}
-  </datalist>
 
   {#if diff}
     <DiffView summary={diff} {sel} {readonly} />
@@ -332,33 +305,6 @@
     display: grid;
     grid-template-columns: 1fr 1.2fr;
     gap: 6px;
-  }
-
-  .coauthors {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    align-items: stretch;
-  }
-
-  .coauthor {
-    display: flex;
-    gap: 4px;
-  }
-
-  .coauthor input {
-    flex: 1;
-  }
-
-  .invalid {
-    border-color: var(--del);
-  }
-
-  .add {
-    align-self: flex-start;
-    color: var(--dim);
-    font-size: 12px;
-    padding: 4px 6px;
   }
 
   .actions {

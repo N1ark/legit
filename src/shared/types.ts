@@ -127,7 +127,9 @@ export interface SplitRequest {
 export interface SquashRequest {
   /** Commits to squash, any order; they're folded into the oldest one. */
   shas: string[];
-  message: string;
+  subject: string;
+  body: string;
+  coauthors: Person[];
 }
 
 export interface ReorderRequest {

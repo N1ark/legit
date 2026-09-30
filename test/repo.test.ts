@@ -114,7 +114,8 @@ test('squash non-adjacent commits, then undo and redo', async () => {
   const b = commit('b', { a: '1\n2\n' });
   const head = git('rev-parse', 'HEAD');
   const repo = await Repo.open(dir);
-  await repo.squash({ shas: [b, a], message: 'a+b' });
+  await repo.squash({ shas: [b, a], subject: 'a+b', body: 'both', coauthors: [{ name: 'Cy', email: 'cy@x.org' }] });
+  assert.equal(git('log', '-1', '--format=%B', 'HEAD~1'), 'a+b\n\nboth\n\nCo-authored-by: Cy <cy@x.org>');
   assert.deepEqual(log(), ['mid', 'a+b', 'base']);
   assert.equal(show('HEAD~1', 'a'), '1\n2');
   const undone = await repo.undo();

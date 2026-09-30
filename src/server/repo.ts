@@ -324,6 +324,7 @@ export class Repo {
 
   edit(req: EditRequest): Promise<OpResult> {
     return this.exclusive(async () => {
+      if (!req.subject?.trim()) throw new GitError('A commit needs a title.');
       const chain = await this.chain();
       const k = Repo.indexOf(chain, req.sha);
       const orig = parseIdent(chain[k].author);
@@ -414,6 +415,7 @@ export class Repo {
 
   squash(req: SquashRequest): Promise<OpResult> {
     return this.exclusive(async () => {
+      if (!req.subject?.trim()) throw new GitError('The squashed commit needs a title.');
       const chain = await this.chain();
       const idx = [...new Set(req.shas)].map((s) => Repo.indexOf(chain, s)).sort((a, b) => b - a);
       if (idx.length < 2) throw new GitError('Select at least two commits to squash.');
@@ -421,7 +423,7 @@ export class Repo {
       const target: Item = {
         src: chain[k],
         squash: rest.map((i) => chain[i]),
-        message: fromUtf8(req.message.trimEnd() + '\n'),
+        message: fromUtf8(buildMessage(req.subject, req.body, req.coauthors)),
       };
       const kept = chain.slice(0, k).filter((_, i) => !rest.includes(i));
       const shas = await this.rewrite('squash', chain, k, [...kept.map((src) => ({ src })), target], true);

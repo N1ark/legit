@@ -1,20 +1,27 @@
 import type { CommitInfo, Person } from '../../shared/types.ts';
 
+export interface SquashFields {
+  subject: string;
+  body: string;
+  coauthors: Person[];
+}
+
 /**
- * Message for squashing `list` (newest first): the oldest commit's message, the others'
- * appended, and every other author kept as a co-author.
+ * Proposed message for squashing `list` (newest first): the oldest commit's title, its
+ * description followed by the other commits' messages, and every other author (plus all
+ * existing co-authors) as co-authors.
  */
-export function combinedMessage(list: CommitInfo[]): string {
-  const chrono = list.toReversed();
-  const [first, ...rest] = chrono;
-  const parts = [first.subject, first.body, ...rest.map((c) => [c.subject, c.body].filter(Boolean).join('\n\n'))];
+export function squashFields(list: CommitInfo[]): SquashFields {
+  const [first, ...rest] = list.toReversed();
+  const body = [first.body, ...rest.map((c) => [c.subject, c.body].filter(Boolean).join('\n\n'))]
+    .filter(Boolean)
+    .join('\n\n');
   const people = new Map<string, Person>();
-  for (const c of chrono) {
+  for (const c of [first, ...rest]) {
     for (const p of [c.author, ...c.coauthors]) {
       const key = p.email.toLowerCase();
       if (key !== first.author.email.toLowerCase() && !people.has(key)) people.set(key, p);
     }
   }
-  const trailers = [...people.values()].map((p) => `Co-authored-by: ${p.name} <${p.email}>`).join('\n');
-  return [...parts.filter(Boolean), trailers].filter(Boolean).join('\n\n');
+  return { subject: first.subject, body, coauthors: [...people.values()] };
 }
