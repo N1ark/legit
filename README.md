@@ -4,12 +4,18 @@ A tiny, fast UI to rewrite git history: edit commit metadata, split commits line
 squash, reorder and drop, without running an interactive rebase.
 
 ```sh
-npm install        # also builds the UI
-npm link           # puts `legit` on your PATH
-legit [path]       # opens the UI for the repo at path (default: .)
+npm install           # also builds the UI
+npm run app:install   # builds Legit.app and copies it to /Applications
+npm link              # puts `legit` on your PATH
+legit [path]          # opens the repo at path (default: .) in Legit.app
 ```
 
-Options: `--port N`, `--no-open`. Needs Node ≥ 23.6 and a recent git (tested with 2.54; needs `merge-tree --stdin` with tree arguments).
+`legit` opens the app when it's installed and falls back to the browser otherwise (`--browser` forces
+the browser; `--port N` and `--no-open` apply there). In the app, **File ▸ Open Repository…** (<kbd>⌘O</kbd>) opens
+more repos, each in its own window, and launching it again reopens the last repo.
+
+Needs Node ≥ 23.6 and a recent git (tested with 2.54; needs `merge-tree --stdin` with tree arguments). The app itself
+is self-contained: it doesn't use your installed Node, only `git`.
 
 ## What it does
 
@@ -59,15 +65,20 @@ git for-each-ref --format='delete %(refname)' refs/legit/backups | git update-re
 ## Development
 
 ```sh
-npm run dev    # same server, with Vite + HMR for the UI
-npm test       # engine tests against throwaway repos, plus a split fuzz test
-npm run check  # svelte-check + tsc
+npm run dev        # browser version, with Vite + HMR for the UI
+npm run app:dev    # desktop app in dev mode
+npm test           # engine tests against throwaway repos, plus a split fuzz test
+npm run check      # svelte-check + tsc
 ```
 
 - `bin/legit.ts` is the CLI. Node runs the TypeScript directly, with no build step for the server.
 - `src/server/git.ts` handles git access: `cat-file --batch` for reading, direct loose-object writes (so no process per
   commit), and a persistent `merge-tree --stdin` for cherry-picks.
 - `src/server/repo.ts` holds the operations, backups and safety checks. `diff.ts` parses diffs and rebuilds files from a subset of lines.
+- `src-tauri/` is the desktop shell (Tauri 2). Each window starts its own `legit-server` sidecar: the same engine,
+  built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why
+  the app is ~145 MB (almost all of it Node). The window loads the UI from that server. A server exits when its window closes, and only after
+  any running operation has finished (or when the app dies, since it holds the server's stdin).
 - `src/ui/` is a Svelte 5 UI with Phosphor icons. `lib/highlight.ts` does syntax highlighting with Prism. Grammars are
   lazy-loaded per language (add one to `LANGS`/`EXT`), and each side of a hunk is tokenized as a block so multi-line
   strings and comments come out right. Highlighting fills in after the diff first renders.

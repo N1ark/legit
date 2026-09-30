@@ -15,16 +15,22 @@
     "build": "vite build",
     "prepare": "vite build",
     "check": "svelte-check --tsconfig src/ui/tsconfig.json && tsc -p tsconfig.json",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test test/*.test.ts",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "app:dev": "npm run build:sidecar && tauri dev",
+    "app:build": "tauri build",
+    "app:install": "tauri build && rm -rf /Applications/Legit.app && cp -R src-tauri/target/release/bundle/macos/Legit.app /Applications/"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource/fira-code": "^5.3.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tauri-apps/cli": "^2.12.0",
     "@types/node": "^26.6.3",
     "@types/prismjs": "^1.26.6",
     "phosphor-svelte": "^3.1.0",
     "prismjs": "^1.30.0",
+    "rolldown": "^1.2.11",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.0",

@@ -54,6 +54,11 @@ export class Repo {
     return new Repo(await Git.open(path));
   }
 
+  /** Resolves once no operation is running. */
+  idle(): Promise<void> {
+    return this.queue.then(() => {});
+  }
+
   /** Serialise mutating operations. */
   private exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const p = this.queue.then(fn);

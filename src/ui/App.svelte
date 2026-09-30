@@ -13,6 +13,15 @@
 
   const mac = navigator.platform.startsWith('Mac');
   const mod = mac ? '⌘' : 'Ctrl';
+  // Running inside the desktop app: the header is the title bar.
+  const desktop = '__TAURI_INTERNALS__' in window;
+
+  // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
+  const typing = () => !!document.activeElement?.closest('input, textarea, [contenteditable]');
+  (window as any).__legit = {
+    undo: () => (typing() ? document.execCommand('undo') : app.undo()),
+    redo: () => (typing() ? document.execCommand('redo') : app.redo()),
+  };
 
   onMount(() => {
     app.refresh();
@@ -48,16 +57,16 @@
 <svelte:window {onkeydown} />
 
 <div class="shell">
-  <header>
-    <span class="brand">legit</span>
+  <header class:desktop data-tauri-drag-region>
+    <span class="brand" data-tauri-drag-region>legit</span>
     {#if app.repo}
-      <span class="repo" title={app.repo.root}>{app.repo.name}</span>
-      <span class="branch">
+      <span class="repo" title={app.repo.root} data-tauri-drag-region>{app.repo.name}</span>
+      <span class="branch" data-tauri-drag-region>
         <GitBranchIcon size={14} />
         {app.repo.branch ?? `detached @ ${app.repo.head ? shortSha(app.repo.head) : '?'}`}
       </span>
     {/if}
-    <span class="spacer"></span>
+    <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<span class="spinner" aria-label="Working"></span>{/if}
     <button class="ghost" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo} title="Undo ({mod}Z)">
       <ArrowUUpLeftIcon size={16} />
@@ -123,6 +132,17 @@
       linear-gradient(90deg, var(--theme-soft), transparent 60%),
       var(--bg2);
     flex-shrink: 0;
+  }
+
+  header.desktop {
+    height: 50px;
+    padding-left: 88px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  header.desktop .brand {
+    display: none;
   }
 
   .brand {
