@@ -9,6 +9,7 @@ import { avatars } from './avatars.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
+import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
 import type { CommitDiff, FileContents } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
@@ -105,6 +106,13 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     unstage: (b) => repo.unstage(b),
     commit: (b) => repo.commit(b),
     uncommit: () => repo.uncommit(),
+    fetch: () => fetchRemote(repo),
+    pull: (b) => pull(repo, b),
+    merge: (b) => mergeBranch(repo, b),
+    rebase: (b) => rebaseBranch(repo, b),
+    resolve: (b) => markResolved(repo, b),
+    continue: () => continueOp(repo),
+    abort: () => abortOp(repo),
   };
 
   let origin = '';
@@ -142,6 +150,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const { staged, unstaged } = await repo.work();
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
+    if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
     const diff = /^\/api\/diff\/([0-9a-f]{40,64}|w\d+)$/.exec(path);
     if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.

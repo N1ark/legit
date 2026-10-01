@@ -35,6 +35,10 @@ export interface RepoState {
   work: { staged: number; unstaged: number; untracked: number };
   /** Where the current branch pushes to; null when detached or there's no remote. */
   push: PushInfo | null;
+  /** When this repo last fetched (ms since epoch), from any tool; null if never. */
+  fetchedAt: number | null;
+  /** A merge, rebase, cherry-pick or revert that stopped halfway (on conflicts, usually). */
+  conflict: Conflict | null;
 }
 
 export interface PushInfo {
@@ -209,4 +213,29 @@ export interface CommitRequest {
   coauthors: Person[];
   /** Fold what's staged into HEAD and replace its message. */
   amend?: boolean;
+}
+
+export interface Conflict {
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am';
+  /** What's going on, e.g. "Merge branch 'feature'" or "Rebasing main onto 1a2b3c4 (2 of 5)". */
+  title: string;
+  /** Files with unmerged entries. */
+  files: ConflictFile[];
+  /** Files merged automatically or marked resolved (staged, different from HEAD). */
+  resolved: string[];
+}
+
+export interface ConflictFile {
+  path: string;
+  /** As `git status` puts it: "both modified", "deleted by them"... */
+  status: string;
+  /** The working-tree file exists. */
+  exists: boolean;
+  /** It still has conflict markers (<<<<<<<, =======, >>>>>>> at a line start). */
+  markers: boolean;
+}
+
+/** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */
+export interface SyncResult extends OpResult {
+  message: string;
 }

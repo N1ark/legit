@@ -15,6 +15,7 @@ import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
+import { syncState } from './sync.ts';
 import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
@@ -69,18 +70,18 @@ export class Repo {
   }
 
   /** Serialise mutating operations. */
-  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const p = this.queue.then(fn);
     this.queue = p.catch(() => {});
     return p;
   }
 
-  private async head(): Promise<string | null> {
+  async head(): Promise<string | null> {
     const r = await this.git.run(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true });
     return r.code === 0 ? r.out.toString('latin1').trim() : null;
   }
 
-  private blocked(): string | null {
+  blocked(): string | null {
     const d = this.git.gitDir;
     if (existsSync(join(d, 'rebase-merge')) || existsSync(join(d, 'rebase-apply'))) return 'A rebase is in progress.';
     if (existsSync(join(d, 'MERGE_HEAD'))) return 'A merge is in progress.';
@@ -106,6 +107,7 @@ export class Repo {
       canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
       push: head && branch ? await this.pushInfo(branch) : null,
       work: await workCounts(this.git),
+      ...(await syncState(this)),
     };
     if (!head) return state;
 
@@ -227,7 +229,7 @@ export class Repo {
   }
 
   /** Have git itself re-read the new commits and check they are what we meant to write. */
-  private async verify(base: string | null, tip: string, oldestFirst: string[]) {
+  async verify(base: string | null, tip: string, oldestFirst: string[]) {
     const args = ['rev-list', '--first-parent', '--no-commit-header', '--format=%H %T %P', tip];
     if (base) args.push('--not', base);
     const listed = (await this.git.text(args)).split('\n').reverse();
@@ -242,7 +244,7 @@ export class Repo {
     if (!ok) throw new GitError('Safety check failed: the rewritten commits did not read back correctly. Nothing was changed.');
   }
 
-  private async pickOrThrow(merger: Merger, base: string, onto: string, c: RawCommit): Promise<string> {
+  async pickOrThrow(merger: Merger, base: string, onto: string, c: RawCommit): Promise<string> {
     const r = await merger.pick(base, onto, c.tree);
     if ('tree' in r) return r.tree;
     const subject = parseMessage(toUtf8(c.message)).subject;
@@ -284,9 +286,12 @@ export class Repo {
     return `${BACKUPS}/${branch ?? '_detached'}/`;
   }
 
-  /** Save `sha` under refs/legit/backups/<branch>/<time>-<label>, pruning old ones (see retention.ts). */
-  private async backup(sha: string, label: string) {
-    const branch = (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
+  /**
+   * Save `sha` under refs/legit/backups/<branch>/<time>-<label>, pruning old ones (see retention.ts).
+   * `branch` defaults to the current one (e.g. a rebase in progress passes the branch being rebased).
+   */
+  async backup(sha: string, label: string, branch?: string | null) {
+    if (branch === undefined) branch = await this.currentBranch();
     const prefix = this.backupPrefix(branch);
     label = label.replace(/[^\w]+/g, '-');
     const time = Math.max(Date.now(), this.lastBackup + 1);
@@ -505,7 +510,7 @@ export class Repo {
     });
   }
 
-  private async currentBranch(): Promise<string | null> {
+  async currentBranch(): Promise<string | null> {
     return (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
   }
 
@@ -520,7 +525,7 @@ export class Repo {
     return this.stacksFor(await this.currentBranch());
   }
 
-  private async record(move: Move) {
+  async record(move: Move) {
     const h = await this.stacks();
     h.undo.push(move);
     h.redo = [];
@@ -537,7 +542,7 @@ export class Repo {
   }
 
   /** Give a working-tree diff a key, keeping the previous key if nothing changed. */
-  private snapshot(kind: string, d: CommitDiff): CommitDiff {
+  snapshot(kind: string, d: CommitDiff): CommitDiff {
     const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token).join('\0');
     let key = this.snapshotIds.get(content);
     if (!key || !this.snapshots.has(key)) {
