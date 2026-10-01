@@ -228,7 +228,6 @@
 
   .row.is-current {
     background: var(--theme-soft);
-    box-shadow: inset 2px 0 0 var(--theme2);
   }
 
   .row.is-current .subject {
