@@ -169,11 +169,10 @@
       (res) => {
         if (!alive) return;
         const next = { ...contents };
-        for (const i of want) {
-          next[i] = buildRows(res[i], expandable(files[i]));
-          queueHighlight(i, next[i]);
-        }
+        for (const i of want) next[i] = buildRows(res[i], expandable(files[i]));
+        // In place before highlighting is queued: a job is dropped once its rows aren't the file's.
         contents = next;
+        for (const i of want) queueHighlight(i, next[i]);
       },
       (e) => {
         for (const i of want) requested.delete(i);
