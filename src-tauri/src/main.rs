@@ -39,9 +39,18 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .manage(Servers::default())
+        .manage(Recent::default())
         .menu(build_menu)
+        .invoke_handler(tauri::generate_handler![
+            commands::recent_repos,
+            commands::open_repo,
+            commands::pick_repo,
+            commands::forget_repo
+        ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => pick_repo(app, false),
+            "recent-clear" => update_recent(app, |list| list.clear()),
+            id if id.starts_with("recent:") => open_repo(app, PathBuf::from(&id["recent:".len()..])),
             "undo" => eval_focused(app, "window.__legit?.undo()"),
             "redo" => eval_focused(app, "window.__legit?.redo()"),
             "reload" => eval_focused(app, "location.reload()"),
@@ -59,7 +68,7 @@ fn main() {
             let handle = app.handle().clone();
             let cwd = std::env::current_dir().unwrap_or_default();
             let args: Vec<String> = std::env::args().collect();
-            match repo_arg(&args, &cwd).or_else(|| last_repo(&handle)) {
+            match repo_arg(&args, &cwd).or_else(|| recent(&handle).into_iter().next()) {
                 Some(path) => open_repo(&handle, path),
                 None => pick_repo(&handle, true),
             }
@@ -83,13 +92,127 @@ fn repo_arg(argv: &[String], cwd: &Path) -> Option<PathBuf> {
     argv.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| cwd.join(a))
 }
 
-fn last_repo_file(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("last-repo"))
+/// Recently opened repositories, most recent first: one path per line in the config dir.
+#[derive(Default)]
+struct Recent(Mutex<()>);
+
+const RECENT_MAX: usize = 30;
+
+fn config_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join(name))
 }
 
-fn last_repo(app: &AppHandle) -> Option<PathBuf> {
-    let path = PathBuf::from(std::fs::read_to_string(last_repo_file(app)?).ok()?.trim());
-    path.is_dir().then_some(path)
+/// The recent repositories that still exist (older versions only kept `last-repo`).
+fn recent(app: &AppHandle) -> Vec<PathBuf> {
+    let read = |name| config_file(app, name).and_then(|f| std::fs::read_to_string(f).ok());
+    let text = read("recent-repos").or_else(|| read("last-repo")).unwrap_or_default();
+    let mut list: Vec<PathBuf> = Vec::new();
+    for path in text.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from) {
+        if path.is_dir() && !list.contains(&path) {
+            list.push(path);
+        }
+    }
+    list
+}
+
+/// Change the recent list, save it, and rebuild the Open Recent menu.
+fn update_recent(app: &AppHandle, change: impl FnOnce(&mut Vec<PathBuf>)) {
+    {
+        let state = app.state::<Recent>();
+        let _lock = state.0.lock().unwrap();
+        let mut list = recent(app);
+        change(&mut list);
+        let mut seen = Vec::new();
+        list.retain(|p| !seen.contains(p) && {
+            seen.push(p.clone());
+            true
+        });
+        list.truncate(RECENT_MAX);
+        if let Some(file) = config_file(app, "recent-repos") {
+            let text: Vec<&str> = list.iter().filter_map(|p| p.to_str()).collect();
+            let _ = std::fs::create_dir_all(file.parent().unwrap());
+            let _ = std::fs::write(file, text.join("\n"));
+        }
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Ok(menu) = build_menu(&handle) {
+            let _ = handle.set_menu(menu);
+        }
+    });
+}
+
+/// A folder git would treat as a repository's root (a `.git` dir, or a `.git` file for worktrees).
+fn is_repo(path: &Path) -> bool {
+    path.is_dir() && path.join(".git").exists()
+}
+
+/// "~/code/legit" for a path under the home directory.
+fn short_path(app: &AppHandle, path: &Path) -> String {
+    match app.path().home_dir().ok().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+fn repo_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
+}
+
+/// What the repo windows' pages may call (see capabilities/default.json): the recent list, and
+/// opening only what's already in it, or what the user picks in the native dialog.
+mod commands {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    pub struct RecentRepo {
+        path: String,
+        name: String,
+        /// Shortened for display: "~/code/legit".
+        short: String,
+        /// Shown in the window asking.
+        current: bool,
+    }
+
+    #[tauri::command]
+    pub fn recent_repos(app: AppHandle, window: tauri::WebviewWindow) -> Vec<RecentRepo> {
+        let current = app.state::<Servers>().0.lock().unwrap().get(window.label()).map(|s| s.repo.clone());
+        recent(&app)
+            .into_iter()
+            .filter_map(|p| {
+                Some(RecentRepo {
+                    path: p.to_str()?.to_string(),
+                    name: repo_name(&p),
+                    short: short_path(&app, &p),
+                    current: current.as_ref() == Some(&p),
+                })
+            })
+            .collect()
+    }
+
+    /// Open (or focus) a repository from the recent list; nothing else.
+    #[tauri::command]
+    pub fn open_repo(app: AppHandle, path: String) -> Result<(), String> {
+        let path = PathBuf::from(path);
+        if !recent(&app).contains(&path) {
+            return Err("That repository isn't in the recent list.".into());
+        }
+        if !is_repo(&path) {
+            return Err(format!("{} isn't a git repository anymore.", path.display()));
+        }
+        super::open_repo(&app, path);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn pick_repo(app: AppHandle) {
+        super::pick_repo(&app, false);
+    }
+
+    #[tauri::command]
+    pub fn forget_repo(app: AppHandle, path: String) {
+        update_recent(&app, |list| list.retain(|p| p != Path::new(&path)));
+    }
 }
 
 fn pick_repo(app: &AppHandle, quit_if_cancelled: bool) {
@@ -197,10 +320,8 @@ fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
     }
     app.state::<Servers>().0.lock().unwrap().insert(label, Server { repo: repo.to_path_buf(), child });
 
-    if let Some(file) = last_repo_file(app) {
-        let _ = std::fs::create_dir_all(file.parent().unwrap());
-        let _ = std::fs::write(file, repo.to_string_lossy().as_bytes());
-    }
+    let opened = repo.to_path_buf();
+    update_recent(app, move |list| list.insert(0, opened));
     Ok(())
 }
 
@@ -243,12 +364,26 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::quit(app, None)?,
         ],
     )?;
+    // Open Recent: by name, with the folder when two share a name.
+    let list = recent(app);
+    let open_recent = Submenu::new(app, "Open Recent", true)?;
+    for path in list.iter().filter(|p| p.to_str().is_some()) {
+        let name = repo_name(path);
+        let clash = list.iter().filter(|p| repo_name(p) == name).count() > 1;
+        let label = if clash { format!("{name} — {}", short_path(app, path)) } else { name };
+        open_recent.append(&MenuItem::with_id(app, format!("recent:{}", path.display()), label, true, None::<&str>)?)?;
+    }
+    if !list.is_empty() {
+        open_recent.append(&sep()?)?;
+    }
+    open_recent.append(&MenuItem::with_id(app, "recent-clear", "Clear Menu", !list.is_empty(), None::<&str>)?)?;
     let file = Submenu::with_items(
         app,
         "File",
         true,
         &[
             &MenuItem::with_id(app, "open", "Open Repository…", true, Some("CmdOrCtrl+O"))?,
+            &open_recent,
             &sep()?,
             &PredefinedMenuItem::close_window(app, None)?,
         ],

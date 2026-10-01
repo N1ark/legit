@@ -12,7 +12,9 @@ legit [path]          # opens the repo at path (default: .) in Legit.app
 
 `legit` opens the app when it's installed and falls back to the browser otherwise (`--browser` forces
 the browser; `--port N` and `--no-open` apply there). In the app, **File ▸ Open Repository…** (<kbd>⌘O</kbd>) opens
-more repos, each in its own window, and launching it again reopens the last repo.
+more repos, each in its own window, and launching it again reopens the last repo. The app remembers the last 30
+repos you opened: **File ▸ Open Recent**, or click the repo name in the header (<kbd>⌘T</kbd>) to filter them, switch
+to one (its window opens, or comes to the front), remove one from the list, or open another.
 
 Needs Node ≥ 23.6 and a recent git (tested with 2.54; needs `merge-tree --stdin` with tree arguments). The app itself
 is self-contained: it doesn't use your installed Node, only `git`.
@@ -113,7 +115,9 @@ npm run check      # svelte-check + tsc
 - `src-tauri/` is the desktop shell (Tauri 2). Each window starts its own `legit-server` sidecar: the same engine,
   built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why
   the app is ~145 MB (almost all of it Node). The window loads the UI from that server. A server exits when its window closes, and only after
-  any running operation has finished (or when the app dies, since it holds the server's stdin).
+  any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list is
+  `recent-repos` in the app's config dir. The page can call only four app commands (`capabilities/default.json`):
+  list the recent repos, open one *from that list*, show the folder picker, and remove one from the list.
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
   shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
