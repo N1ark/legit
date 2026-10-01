@@ -5,7 +5,7 @@ squash, reorder and drop, without running an interactive rebase.
 
 ```sh
 npm install           # also builds the UI
-npm run app:install   # builds Legit.app and copies it to /Applications
+npm run install:app   # builds Legit.app and copies it to /Applications
 npm link              # puts `legit` on your PATH
 legit [path]          # opens the repo at path (default: .) in Legit.app
 ```

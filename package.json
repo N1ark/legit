@@ -19,7 +19,7 @@
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "app:dev": "npm run build:sidecar && tauri dev",
     "app:build": "tauri build",
-    "app:install": "tauri build && rm -rf /Applications/Legit.app && cp -R src-tauri/target/release/bundle/macos/Legit.app /Applications/"
+    "install:app": "tauri build && rm -rf /Applications/Legit.app && cp -R src-tauri/target/release/bundle/macos/Legit.app /Applications/"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
