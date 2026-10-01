@@ -33,7 +33,9 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Discard** | Throw away unstaged changes: picked lines (**Discard** next to *Stage*), a whole file (right-click it), or everything (**Discard all**), untracked files included. Each takes a second click. What's thrown away is saved first, so the toast's **Undo**, or **Restore** under *Discarded changes* in the backups panel (kept for two weeks), puts it back. Files over 20 MB go to the Trash instead. Only your files change, never what's staged. |
 | **Files** | Right-click a file name or a diff line: **Open in Zed** (the repo as the project, at that line or the file's first change), **Copy path**, **Copy relative path**. |
 | **Push** | One button in the header: **Publish** a branch with no upstream, **Push ↑N** when ahead, or, after rewriting commits that were already pushed, **Force push ↑N ↓M** (click twice). Force pushes use `--force-with-lease --force-if-includes`, so git refuses if the remote has commits you haven't fetched *and* integrated. |
-| **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Uses `git switch`, so uncommitted changes come along and it refuses if they'd be overwritten. |
+| **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Typing a new name offers **Create branch** (from HEAD); a commit's right-click menu has **New branch from here…**. Right-click a branch to **rename** it (its undo history and backups follow) or **delete** it (click twice; not the one you're on), and to delete its upstream on the remote, which is a separate confirmed action. **Remote branches** without a local one are listed too; choosing one checks it out as a local tracking branch. **Recently deleted** branches are listed for two weeks; choosing one brings it back. |
+| **Switching with changes** | If you have uncommitted changes, legit asks: **Leave my changes on** the current branch (they're stashed with `git stash push --include-untracked`) or **Bring my changes to** the new one (`git switch`, which refuses if they'd be overwritten). Coming back to a branch with changes left on it offers to **Restore** them. |
+| **Stashes** | The box icon in the header lists stashes: **Restore** (apply, then remove from the list), **Apply** (keep it), **Drop** (click twice), and **Stash all changes**. Dropped and restored stashes stay listed for two weeks and can still be applied. |
 
 Generated files (lockfiles, minified bundles, source maps, snapshots, protobuf output… see `src/server/generated.ts`)
 start collapsed with a *generated* badge. Anything marked `linguist-generated` in `.gitattributes` counts too (and
@@ -62,6 +64,16 @@ Losing work is the one failure that matters, so every operation is built to be r
 - **Kept for two weeks.** Backups (and legit's other safety refs) are for undoing a mistake you notice soon, not an
   archive, and each one keeps its objects alive. So refs older than two weeks (or beyond 500 per branch) are pruned,
   after which `git gc` can reclaim what only they kept.
+- **Deleted branches come back.** Before a branch is deleted, its tip is saved as `refs/legit/deleted/<branch>/<time>`
+  (outside the backups, so a restore can't move HEAD to it), and the delete itself is a compare-and-swap. Deleting a
+  branch on a remote saves the tip you last fetched as `refs/legit/deleted/<branch>/<time>-<remote>`, and the push is
+  leased on it, so commits you haven't fetched are never deleted. Both are kept for two weeks and listed under
+  *Recently deleted*; restoring recreates the branch in one transaction that refuses if the name is taken.
+- **Stashes only apply cleanly.** A stash is applied only if no uncommitted change touches its files, none of the files it
+  creates already exist, and its changes merge onto HEAD without conflicts (checked in memory with `git merge-tree`);
+  otherwise nothing is changed. Restoring (pop) removes it from the stash list only after a clean apply, and before
+  any stash leaves the list it's saved as `refs/legit/stashes/<time>-<pop|drop>`, kept for two weeks. If a switch
+  fails after stashing, the changes are put back.
 - **Discarding saves first.** Before a discard touches anything, the files as they are on disk (bytes, modes,
   symlinks, untracked files) are committed on HEAD as `refs/legit/discarded/<time>`, whose second parent holds the
   files as the discard leaves them. Each file is compared byte for byte right before it's written, so an edit made in
@@ -92,7 +104,11 @@ git for-each-ref refs/legit/backups       # every backup, newest last
 git reflog                                # every HEAD move, including legit's
 git reset --keep refs/legit/backups/main/<time>-<op>   # put the branch back
 git for-each-ref --format='delete %(refname)' refs/legit/backups | git update-ref --stdin  # remove all backups
-
+git for-each-ref refs/legit/deleted       # deleted branches (and remote branches, ending in -<remote>)
+git branch feature refs/legit/deleted/feature/<time>   # bring one back
+git for-each-ref refs/legit/stashes       # stashes that were dropped or restored
+git stash apply refs/legit/stashes/<time>-drop         # apply one again
+git stash store -m 'back' refs/legit/stashes/<time>-drop  # or put it back in the stash list
 git for-each-ref refs/legit/discarded     # every discard, newest last
 git diff <ref>^2 <ref>                    # what it threw away, as a patch (pipe it to `git apply`)
 git show <ref>:<path> > <path>            # one file back, byte for byte
@@ -111,6 +127,8 @@ npm run check      # svelte-check + tsc
 - `src/server/git.ts` handles git access: `cat-file --batch` for reading, direct loose-object writes (so no process per
   commit), and a persistent `merge-tree --stdin` for cherry-picks.
 - `src/server/repo.ts` holds the operations, backups and safety checks. `diff.ts` parses diffs and rebuilds files from a subset of lines.
+  `branches.ts` creates, renames, deletes and restores branches and switches between them; `stash.ts` stashes and
+  applies changes, and checks a stash can't conflict before applying it.
   `discard.ts` discards uncommitted changes and puts them back.
 - `src-tauri/` is the desktop shell (Tauri 2). Each window starts its own `legit-server` sidecar: the same engine,
   built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why

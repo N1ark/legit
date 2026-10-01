@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     ContextMenuHost,
+    DialogHost,
     IS_TAURI,
     IconButton,
     Kbd,
@@ -15,6 +16,9 @@
   import { ArrowUUpLeft, ArrowUUpRight, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
   import Backups from './Backups.svelte';
+  import StashBanner from './StashBanner.svelte';
+  import StashPanel from './StashPanel.svelte';
+  import SwitchDialog from './SwitchDialog.svelte';
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
   import PushButton from './PushButton.svelte';
@@ -111,6 +115,7 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRight />
     </IconButton>
+    <StashPanel />
     <Backups />
   </header>
 
@@ -120,6 +125,7 @@
 
   <main>
     <aside>
+      <StashBanner />
       <CommitList />
       <footer class="muted">
         <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
@@ -145,6 +151,8 @@
 </div>
 
 <ContextMenuHost />
+<DialogHost />
+<SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
