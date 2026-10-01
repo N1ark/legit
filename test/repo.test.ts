@@ -425,3 +425,19 @@ test('commit, amend and uncommit are undoable and never touch the index or worki
   await assert.rejects(repo.uncommit(), /first commit/);
   assert.equal(git('log', '--format=%s'), 'only');
 });
+
+test('old safety refs are pruned, recent and unrelated ones are kept', async () => {
+  const a = commit('one', { f: '1\n' });
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  git('update-ref', `refs/legit/backups/main/${now - 20 * day}-edit`, a);
+  git('update-ref', `refs/legit/backups/gone/${now - 15 * day}-drop`, a);
+  git('update-ref', `refs/legit/backups/main/${now - day}-edit`, a);
+  git('update-ref', `refs/legit/discarded/${now - 30 * day}`, a);
+  git('update-ref', 'refs/legit/backups/main/mine', a);
+  await Repo.open(dir);
+  assert.deepEqual(git('for-each-ref', '--format=%(refname)', 'refs/legit').split('\n').sort(), [
+    `refs/legit/backups/main/${now - day}-edit`,
+    'refs/legit/backups/main/mine',
+  ]);
+});

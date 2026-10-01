@@ -14,13 +14,13 @@ import type {
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { buildMessage, parseMessage } from './message.ts';
+import { pruneRefs } from './retention.ts';
 import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
 const PAST_MERGE = 20;
 const BACKUPS = 'refs/legit/backups';
-const MAX_BACKUPS = 500;
 
 interface Item {
   src: RawCommit;
@@ -58,7 +58,9 @@ export class Repo {
   }
 
   static async open(path: string) {
-    return new Repo(await Git.open(path));
+    const git = await Git.open(path);
+    await pruneRefs(git);
+    return new Repo(git);
   }
 
   /** Resolves once no operation is running. */
@@ -282,7 +284,7 @@ export class Repo {
     return `${BACKUPS}/${branch ?? '_detached'}/`;
   }
 
-  /** Save `sha` under refs/legit/backups/<branch>/<time>-<label>; keeps the newest MAX_BACKUPS per branch. */
+  /** Save `sha` under refs/legit/backups/<branch>/<time>-<label>, pruning old ones (see retention.ts). */
   private async backup(sha: string, label: string) {
     const branch = (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
     const prefix = this.backupPrefix(branch);
@@ -290,12 +292,7 @@ export class Repo {
     const time = Math.max(Date.now(), this.lastBackup + 1);
     this.lastBackup = time;
     await this.git.run(['update-ref', '-m', `legit: backup before ${label}`, `${prefix}${time}-${label}`, sha, '']);
-    const refs = (await this.git.text(['for-each-ref', '--format=%(refname)', prefix])).split('\n').filter(Boolean);
-    const own = refs.filter((r) => /^\d+-[\w-]+$/.test(r.slice(prefix.length))).sort();
-    const stale = own.slice(0, Math.max(0, own.length - MAX_BACKUPS));
-    if (stale.length) {
-      await this.git.run(['update-ref', '--stdin'], { input: stale.map((r) => `delete ${r}\n`).join('') });
-    }
+    await pruneRefs(this.git);
   }
 
   async backups(): Promise<Backup[]> {

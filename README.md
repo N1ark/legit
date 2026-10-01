@@ -55,8 +55,10 @@ Losing work is the one failure that matters, so every operation is built to be r
 
 - **Nothing is ever deleted.** Rewrites only *add* commits; the old ones stay in the object store.
 - **Backups.** Before HEAD moves, the old tip is saved as `refs/legit/backups/<branch>/<time>-<op>`.
-  These survive restarts and `git gc` (the newest 500 per branch are kept). The backups panel restores any of them,
-  and a restore takes its own backup first.
+  These survive restarts and `git gc`. The backups panel restores any of them, and a restore takes its own backup first.
+- **Kept for two weeks.** Backups (and legit's other safety refs) are for undoing a mistake you notice soon, not an
+  archive, and each one keeps its objects alive. So refs older than two weeks (or beyond 500 per branch) are pruned,
+  after which `git gc` can reclaim what only they kept.
 - **The final snapshot can't change unless you're dropping commits.** Edit, split, squash and reorder only restructure
   history. If the rewritten tip's tree isn't byte-identical to the current one, the operation is aborted.
 - **Your working tree is left alone.** Most operations don't touch it at all. When one would (drop, undo, restore),
