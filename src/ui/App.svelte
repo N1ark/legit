@@ -24,6 +24,7 @@
   import PushButton from './PushButton.svelte';
   import RepoPicker from './RepoPicker.svelte';
   import CommitView from './CommitView.svelte';
+  import ConflictView from './ConflictView.svelte';
   import SquashView from './SquashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
@@ -120,7 +121,13 @@
   </header>
 
   {#if app.repo?.blocked}
-    <div class="blocked"><Warning weight="bold" /> {app.repo.blocked} History is read-only.</div>
+    <div class="blocked">
+      <Warning weight="bold" />
+      {app.repo.blocked} History is read-only.
+      {#if app.repo.conflict}
+        <button class="btn btn--link" onclick={() => app.selectWork()}>Resolve, continue or abort it</button>
+      {/if}
+    </div>
   {/if}
 
   <main>
@@ -135,7 +142,9 @@
       </footer>
     </aside>
     <section data-scroller>
-      {#if app.selected[0] === WORK}
+      {#if app.selected[0] === WORK && app.repo?.conflict}
+        <ConflictView />
+      {:else if app.selected[0] === WORK}
         <WorkView />
       {:else if app.selection.length > 1}
         <SquashView commits={app.selection} />

@@ -97,7 +97,13 @@
       onkeydown={() => {}}
     >
       <span class="grip"><PencilSimpleLine /></span>
-      <span class="subject">Uncommitted changes</span>
+      {#if app.repo.conflict}
+        {@const c = app.repo.conflict}
+        <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
+        {#if c.files.length}<Tag color="var(--warn)" label="{c.files.length} conflicted" title="Files with conflicts" />{/if}
+      {:else}
+        <span class="subject">Uncommitted changes</span>
+      {/if}
       {#if w.staged}<Tag color="var(--add)" label="{w.staged} staged" title="Files with staged changes" />{/if}
       {#if w.unstaged}<Tag label="{w.unstaged} changed" title="Files with unstaged changes" />{/if}
       {#if w.untracked}<Tag label="{w.untracked} new" title="Untracked files" />{/if}

@@ -9,6 +9,7 @@
   import type { BranchInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { deleteBranch, deleteRemoteBranch, newBranch, renameBranch, restoreBranch, switchOp } from './lib/branches.svelte.ts';
+  import { integrateEntries } from './lib/integrate.ts';
 
   type Row =
     | { kind: 'local'; b: BranchInfo; indices: number[] }
@@ -93,6 +94,8 @@
       { label: 'Rename…', icon: PencilSimple, run: () => act(() => renameBranch(b.name), true) },
       copyName(b.name),
       'separator',
+      ...integrateEntries(b.name, b.current, () => (open = false)),
+      'separator',
       {
         label: 'Delete',
         icon: Trash,
@@ -119,6 +122,8 @@
       { label: `Check out as ${b.name}`, icon: CloudArrowDown, run: () => choose({ kind: 'remote', b, indices: [] }) },
       { label: 'New branch from here…', icon: Plus, run: () => act(() => newBranch(b.sha, short), true) },
       copyName(short),
+      'separator',
+      ...integrateEntries(short, false, () => (open = false)),
       'separator',
       {
         label: `Delete on ${b.remote}…`,
@@ -240,7 +245,7 @@
         </ol>
       {/if}
       <p class="foot muted">
-        Right-click a branch to rename or delete it. Switching with uncommitted changes asks whether to leave them on
+        Right-click a branch to merge it, rebase onto it, rename or delete it. Switching with uncommitted changes asks whether to leave them on
         this branch (stashed) or bring them along.
       </p>
     </div>

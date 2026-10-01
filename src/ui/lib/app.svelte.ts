@@ -1,6 +1,6 @@
 import { copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
-import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState } from '../../shared/types.ts';
+import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState, SyncResult } from '../../shared/types.ts';
 
 export async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(
@@ -52,11 +52,13 @@ class App {
   }
 
   private setRepo(repo: RepoState, focus?: string[]) {
+    // A merge (or rebase...) that just stopped: show its conflicts.
+    const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(repo.commits.map((c) => c.sha));
     if (this.hasWork) shas.add(WORK);
-    let sel = (focus ?? this.selected).filter((s) => shas.has(s));
+    let sel = (conflictStarted ? [WORK] : (focus ?? this.selected)).filter((s) => shas.has(s));
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
     this.selected = sel;
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
@@ -225,8 +227,10 @@ class App {
     return this.op('squash', { shas: newestFirst.map((c) => c.sha), subject, body, coauthors });
   }
 
-  /** Anything staged, unstaged or untracked. */
-  hasWork = $derived(!!this.repo && this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0);
+  /** Anything staged, unstaged or untracked, or a merge (rebase...) in progress. */
+  hasWork = $derived(
+    !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
+  );
   /** Avatar URL by lowercased email; null when there's none (initials are shown instead). */
   avatars = $state<Record<string, string | null>>({});
   private avatarsPending = new Set<string>();
@@ -270,6 +274,61 @@ class App {
 
   undo = () => this.op('undo');
   redo = () => this.op('redo');
+
+  /**
+   * Run a sync operation (pull, merge, rebase, resolve, continue, abort) and toast what
+   * happened. Returns the result, or null if it failed.
+   */
+  async sync(name: string, body: unknown = {}): Promise<SyncResult | null> {
+    if (this.busy) return null;
+    const gen = ++this.gen;
+    this.busy = true;
+    try {
+      const r = await request<SyncResult>(`/api/${name}`, body);
+      this.gen = Math.max(this.gen, gen);
+      this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+      if (r.message) toast(r.message, { timeout: r.message.length > 80 ? 10_000 : undefined });
+      return r;
+    } catch (e) {
+      toast.error(e);
+      this.refresh();
+      return null;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  fetching = $state(false);
+  /** Why the last background fetch failed, if it did. */
+  fetchError = $state<string | null>(null);
+  private fetchTried = 0;
+
+  /**
+   * Fetch the remote. It doesn't block other operations (a fetch only updates remote-tracking
+   * refs). In the background, a failure is only noted, not toasted.
+   */
+  async fetchRemote(background = false) {
+    if (this.fetching) return;
+    this.fetching = true;
+    this.fetchTried = Date.now();
+    try {
+      await request<SyncResult>('/api/fetch', {});
+      this.fetchError = null;
+    } catch (e) {
+      this.fetchError = e instanceof Error ? e.message : String(e);
+      if (!background) toast.error(e);
+    } finally {
+      this.fetching = false;
+      // The returned state may be older than one an operation applied meanwhile.
+      await this.refresh();
+    }
+  }
+
+  /** Fetch in the background when the last fetch (or attempt) is older than `ms`. */
+  fetchIfOlder(ms: number) {
+    const last = Math.max(this.repo?.fetchedAt ?? 0, this.fetchTried);
+    if (this.repo?.push && !this.fetching && Date.now() - last > ms) this.fetchRemote(true);
+  }
 }
 
 /** Selection key of the "Uncommitted changes" entry. */

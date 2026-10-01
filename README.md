@@ -32,7 +32,9 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Uncommitted changes** | When there are any, an *Uncommitted changes* entry sits above the newest commit. It shows a commit form plus what's **staged** and **unstaged** (untracked files included), live as files change. Pick lines, blocks or files like in a commit and press <kbd>s</kbd> to stage or <kbd>u</kbd> to unstage (or *Stage all* / *Unstage all*), then <kbd>⌘↵</kbd> to commit. **Amend last commit** folds what's staged into the last commit and lets you edit its message. **Undo commit** (on the newest commit, its right-click menu, or under the commit form) moves the branch back one commit, with that commit's changes staged and its message back in the form. <kbd>⌘Z</kbd> undoes commits and amends the same way. Staging only changes the index, never your files, and refuses if a file changed after it was shown. Commits go through `git commit`, so hooks and signing apply. |
 | **Discard** | Throw away unstaged changes: picked lines (**Discard** next to *Stage*), a whole file (right-click it), or everything (**Discard all**), untracked files included. Staged changes can be discarded the same way: they leave both the index and your files, and any unstaged edits to the same files are kept (it refuses if they overlap). Each takes a second click. What's thrown away is saved first, so the toast's **Undo**, or **Restore** under *Discarded changes* in the backups panel (kept for two weeks), puts it back, staged changes included. Files over 20 MB go to the Trash instead. |
 | **Files** | Right-click a file name or a diff line: **Open in Zed** (the repo as the project, at that line or the file's first change), **Copy path**, **Copy relative path**. |
-| **Push** | One button in the header: **Publish** a branch with no upstream, **Push ↑N** when ahead, or, after rewriting commits that were already pushed, **Force push ↑N ↓M** (click twice). Force pushes use `--force-with-lease --force-if-includes`, so git refuses if the remote has commits you haven't fetched *and* integrated. |
+| **Sync** | In the header: **Fetch** (with when it last happened; it also runs every five minutes while the window is open, and on focus after a minute), then the next step: **Publish** a branch with no upstream, **Push ↑N** when ahead, **Pull ↓N** when behind (a fast-forward; uncommitted changes come along unless they'd be overwritten). When your branch and its upstream have diverged, **Pull** offers **Rebase** (your commits replayed on top, in memory; refused if anything conflicts or if they include a merge) or **Merge** (a real `git merge`, which may stop on conflicts), next to **Force push** (click twice) for history you rewrote on purpose. Force pushes use `--force-with-lease --force-if-includes`, so git refuses if the remote has commits you haven't fetched *and* integrated. Pulls, merges and rebases can be undone. |
+| **Merge & rebase** | Right-click a branch in the branch list: **Merge it into** the current branch (`git merge`) or **Rebase** the current branch **onto** it (in memory, refused on conflicts). |
+| **Conflicts** | When a merge, rebase, cherry-pick or revert stops halfway (here or in a terminal), *Uncommitted changes* becomes *Merge in progress* (etc.) and shows the conflicted files, each with **Open in Zed** (at the first conflict marker) and **Mark resolved** (`git add`; it asks again while the file still has `<<<<<<<`/`=======`/`>>>>>>>` lines), plus the diff of what finishing would change. **Commit merge** / **Continue** is enabled once nothing is conflicted; **Abort** (click twice) saves your files first. |
 | **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Typing a new name offers **Create branch** (from HEAD); a commit's right-click menu has **New branch from here…**. Right-click a branch to **rename** it (its undo history and backups follow) or **delete** it (click twice; not the one you're on), and to delete its upstream on the remote, which is a separate confirmed action. **Remote branches** without a local one are listed too; choosing one checks it out as a local tracking branch. **Recently deleted** branches are listed for two weeks; choosing one brings it back. |
 | **Switching with changes** | If you have uncommitted changes, legit asks: **Leave my changes on** the current branch (they're stashed with `git stash push --include-untracked`) or **Bring my changes to** the new one (`git switch`, which refuses if they'd be overwritten). Coming back to a branch with changes left on it offers to **Restore** them. |
 | **Stashes** | The box icon in the header lists stashes: **Restore** (apply, then remove from the list), **Apply** (keep it), **Drop** (click twice), and **Stash all changes**. Dropped and restored stashes stay listed for two weeks and can still be applied. |
@@ -93,7 +95,20 @@ Losing work is the one failure that matters, so every operation is built to be r
 - **Force pushes can't clobber other people's work**: they only happen after an explicit confirmation, and use
   `--force-with-lease --force-if-includes`, so they fail if the remote has commits this repo hasn't fetched and
   integrated.
-- **Refuses to run** during a rebase, merge, cherry-pick, revert or bisect.
+- **Pulls and rebases carry your changes like `git switch`.** A fast-forward or a rebase onto another branch moves
+  HEAD once (after a backup, with a compare-and-swap) through a two-way `git read-tree -m -u`: uncommitted changes
+  come along, and if one (or an untracked file) would be overwritten, git refuses and nothing changes. Rebases are
+  replayed in memory, so a conflict refuses the whole rebase rather than stopping halfway.
+- **Merges start clean.** `git merge --abort` can't always restore changes that were there before a merge, so legit
+  only merges when there are no uncommitted changes to tracked files (untracked files are fine).
+- **Aborting keeps your resolutions.** Before aborting a merge, rebase, cherry-pick or revert, the working-tree
+  version of every changed or conflicted file is committed on top of HEAD (in a throwaway index) and saved as
+  `refs/legit/aborted/<branch>/<time>-<kind>`, kept for two weeks; `git restore -s <ref> -- <file>` brings a file back.
+  Continuing backs up the tip it replaces first.
+- **Fetching can't hang or get in the way.** Git never prompts (`GIT_TERMINAL_PROMPT=0`, and SSH runs with
+  `BatchMode=yes` unless you set your own SSH command), fetches time out after two minutes, and they only update
+  remote-tracking refs, so they run alongside other operations. Nothing is pruned.
+- **No rewriting mid-merge.** History rewriting refuses to run during a rebase, merge, cherry-pick, revert or bisect.
 
 Rewritten commits get you as committer (like `git rebase`); authors and dates are kept. Signatures are dropped from
 rewritten commits, since they would no longer be valid.
@@ -128,7 +143,7 @@ npm run check      # svelte-check + tsc
 - `bin/legit.ts` is the CLI. Node runs the TypeScript directly, with no build step for the server.
 - `src/server/git.ts` handles git access: `cat-file --batch` for reading, direct loose-object writes (so no process per
   commit), and a persistent `merge-tree --stdin` for cherry-picks.
-- `src/server/repo.ts` holds the operations, backups and safety checks. `diff.ts` parses diffs and rebuilds files from a subset of lines.
+- `src/server/repo.ts` holds the operations, backups and safety checks. `sync.ts` fetches, pulls, merges and rebases onto other branches, and finishes or aborts conflicted operations. `diff.ts` parses diffs and rebuilds files from a subset of lines.
   `branches.ts` creates, renames, deletes and restores branches and switches between them; `stash.ts` stashes and
   applies changes, and checks a stash can't conflict before applying it.
   `discard.ts` discards uncommitted changes and puts them back.
