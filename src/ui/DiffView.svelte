@@ -17,14 +17,28 @@
     toast,
     variableRange,
   } from 'purr';
-  import { Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
+  import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
   import { flushSync, onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
+  import { expandable } from '../shared/context.ts';
   import type { DiffSummary, FileSummary, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
-  import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
+  import {
+    ADDED,
+    type Expansion,
+    type FileRows,
+    HUNK,
+    REMOVED,
+    TAIL,
+    buildRows,
+    isHead,
+    moveTokens,
+    noExpansion,
+    rowHunks,
+    rowMap,
+  } from './lib/rows.ts';
 
   let {
     summary,
@@ -65,6 +79,8 @@
   const OVERSCAN = 1200;
   /** Files past the viewport whose contents are fetched ahead of time. */
   const PREFETCH = 4;
+  /** Unchanged lines one click on a gap's arrow shows. */
+  const STEP = 20;
 
   const files = $derived(summary.files);
   // Generated files (lockfiles etc.) start collapsed. The view is re-created per commit.
@@ -89,8 +105,10 @@
   let saving = $state(false);
   const editRows = $derived(editing ? editing.text.split('\n').length : 1);
 
+  /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
+  const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows;
   const bodyHeight = (i: number) =>
-    files[i].rows ? files[i].rows * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0) : NOTE;
+    files[i].rows ? rowCount(i) * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0) : NOTE;
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
@@ -102,7 +120,7 @@
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD;
-    const [a, b] = fixedRange(files[i].rows, ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+    const [a, b] = fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
     return out;
@@ -152,7 +170,7 @@
         if (!alive) return;
         const next = { ...contents };
         for (const i of want) {
-          next[i] = buildRows(res[i]);
+          next[i] = buildRows(res[i], expandable(files[i]));
           queueHighlight(i, next[i]);
         }
         contents = next;
@@ -166,9 +184,49 @@
 
   function queueHighlight(i: number, rows: FileRows) {
     const distance = () => Math.abs(tops[i] - view.top);
-    highlight(`${summary.sha}:${i}`, files[i].path, rows.hunks, distance, () => alive).then((t) => {
-      if (t && alive) tokens = { ...tokens, [i]: t };
+    const x = expansions[i];
+    const key = `${summary.sha}:${i}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '');
+    highlight(key, files[i].path, rowHunks(rows), distance, () => alive && contents[i] === rows).then((t) => {
+      if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
     });
+  }
+
+  // Unchanged lines between hunks: arrows on a hunk's header show more of the gap above it, from
+  // its bottom (up) or its top (down, continuing the hunk before). The old file is loaded the
+  // first time; it reads the same as the new one there.
+  const expansions: Record<number, Expansion> = {};
+  let opening = $state<Record<number, boolean>>({});
+
+  async function expand(i: number, k: number, side: 'top' | 'bottom') {
+    const x = (expansions[i] ??= noExpansion());
+    if (!x.file) {
+      if (opening[i]) return;
+      opening[i] = true;
+      try {
+        x.file = await app.oldLines(summary.sha, i);
+      } catch (e) {
+        toast.error(e);
+        return;
+      } finally {
+        opening[i] = false;
+      }
+      if (!alive) return;
+    }
+    const before = contents[i];
+    // Its size is known once the file is (after the last hunk); a short gap shows all at once.
+    const left = buildRows(before.hunks, true, x).hidden[k] ?? 0;
+    const n = left <= STEP ? left : STEP;
+    // Nothing comes before the first hunk's gap but the file's start, so it only grows upwards.
+    const s = k === 0 ? 'bottom' : side;
+    x[s][k] = (x[s][k] ?? 0) + n;
+    const rows = buildRows(before.hunks, true, x);
+    // Lines keep their highlighting (and the line being edited stays so) where they moved to.
+    const moved = rowMap(before, rows);
+    if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows) };
+    if (editing?.i === i) editing.r = moved[editing.r];
+    hoverBlock = null;
+    contents = { ...contents, [i]: rows };
+    queueHighlight(i, rows);
   }
 
   // The file tree, beside the diff when there's more than one file and room for it.
@@ -228,7 +286,7 @@
     if (readonly || !f.partial) return toggleFile(f);
     const rows = contents[i];
     const idx: number[] = [];
-    for (let r = headerRow + 1; r < rows.kind.length && rows.kind[r] !== HUNK; r++) if (rows.ci[r] >= 0) idx.push(rows.ci[r]);
+    for (let r = headerRow + 1; r < rows.kind.length && !isHead(rows.kind[r]); r++) if (rows.ci[r] >= 0) idx.push(rows.ci[r]);
     const s = sel[f.path];
     const on = !idx.every((c) => s.has(c));
     for (const c of idx) on ? s.add(c) : s.delete(c);
@@ -270,9 +328,10 @@
   }
 
   function down(e: MouseEvent, i: number) {
-    if ((e.target as HTMLElement).closest('.editor')) return;
+    if ((e.target as HTMLElement).closest('.editor, .xp')) return;
     const r = rowOf(e);
     const rows = contents[i];
+    if (rows?.kind[r] === TAIL && e.button === 0) return void expand(i, rows.gap[r], 'top');
     if (readonly || r < 0 || !rows || e.button !== 0) return;
     if (rows.kind[r] === HUNK) return toggleHunk(i, r);
     const ci = rows.ci[r];
@@ -325,7 +384,7 @@
   function canEdit(i: number, r: number): boolean {
     const f = files[i];
     const rows = contents[i];
-    return !!oneditline && !readonly && f.partial && f.status !== 'D' && !!rows && rows.kind[r] !== HUNK && rows.n[r] > 0;
+    return !!oneditline && !readonly && f.partial && f.status !== 'D' && !!rows && !isHead(rows.kind[r]) && rows.n[r] > 0;
   }
 
   /** Focus the field when it's first shown, not each time scrolling mounts it again. */
@@ -412,8 +471,8 @@
   // Context menu (right-click a file header, a line, or a file in the tree): open in Zed, copy paths.
   /** New-side line number to open at for row r: its own, or the nearest one after/before it. */
   function lineFor(rows: FileRows, r: number): number | undefined {
-    for (let k = r; k < rows.n.length && rows.kind[k] !== HUNK; k++) if (rows.n[k]) return rows.n[k];
-    for (let k = r; k >= 0 && rows.kind[k] !== HUNK; k--) if (rows.n[k]) return rows.n[k];
+    for (let k = r; k < rows.n.length && !isHead(rows.kind[k]); k++) if (rows.n[k]) return rows.n[k];
+    for (let k = r; k >= 0 && !isHead(rows.kind[k]); k--) if (rows.n[k]) return rows.n[k];
   }
 
   function firstChange(i: number): number | undefined {
@@ -429,7 +488,7 @@
     e.preventDefault();
     const r = rowOf(e);
     const rows = contents[i];
-    const onLine = !!rows && r >= 0 && rows.kind[r] !== HUNK;
+    const onLine = !!rows && r >= 0 && !isHead(rows.kind[r]);
     const line = onLine ? lineFor(rows, r) : firstChange(i);
     const f = files[i];
     menu.show(e, [
@@ -548,8 +607,35 @@
                     onfocus={() => {}}
                   >
                     {#each shown as r (r)}
-                      {#if rows.kind[r] === HUNK}
-                        <div class="hunk" data-r={r}><span class="gutter"></span><span class="code">{rows.text[r]}</span></div>
+                      {#if isHead(rows.kind[r])}
+                        {@const k = rows.gap[r]}
+                        {@const left = k >= 0 ? rows.hidden[k] : 0}
+                        {@const tail = rows.kind[r] === TAIL}
+                        <div class="hunk" class:tail data-r={r}>
+                          <span class="gutter xp"
+                            >{#if left === null || (left > STEP && tail)}<button
+                                title="Show {STEP} more lines"
+                                aria-label="Show {STEP} more lines"
+                                disabled={opening[i]}
+                                onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
+                              >{:else if left > STEP}{#if k > 0}<button
+                                  title="Show {STEP} more lines below the hunk above"
+                                  aria-label="Show {STEP} more lines below the hunk above"
+                                  disabled={opening[i]}
+                                  onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
+                                >{/if}<button
+                                title="Show {STEP} more lines above"
+                                aria-label="Show {STEP} more lines above"
+                                disabled={opening[i]}
+                                onclick={() => expand(i, k, 'bottom')}><ArrowLineUp size={12} /></button
+                              >{:else if left > 0}<button
+                                title="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
+                                aria-label="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
+                                disabled={opening[i]}
+                                onclick={() => expand(i, k, 'top')}><ArrowsOutLineVertical size={12} /></button
+                              >{/if}</span
+                          ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
+                        </div>
                       {:else}
                         {@const kind = rows.kind[r]}
                         {@const ci = rows.ci[r]}
@@ -816,7 +902,41 @@
     color: var(--theme2);
   }
 
-  .readonly .hunk {
+  .readonly .hunk:not(.tail) {
+    cursor: default;
+  }
+
+  /* A gap's arrows, in its header's gutter. */
+  .xp {
+    justify-content: center;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .xp button {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 17px;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .xp button:hover {
+    color: var(--theme2);
+    background: var(--theme-soft);
+  }
+
+  .xp button:focus-visible {
+    outline: 2px solid var(--theme2);
+    outline-offset: -2px;
+  }
+
+  .xp button:disabled {
+    opacity: 0.5;
     cursor: default;
   }
 

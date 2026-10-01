@@ -126,7 +126,7 @@ export interface CommitDiff {
 export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   /** Generated (lockfile, minified, `linguist-generated`...): collapsed by default. */
   generated: boolean;
-  /** Rows the file renders: one per hunk header and per diff line. */
+  /** Rows the file renders: one per hunk header and per diff line, and one after the last hunk when the file may go on. */
   rows: number;
   /** Widest line, in columns (tabs count as 4). */
   width: number;
@@ -146,6 +146,13 @@ export interface HunkData {
   text: string[];
   /** Indices of lines without a trailing newline. */
   eof: number[];
+}
+
+/** A modified file's old version, for the unchanged lines between its hunks. */
+export interface FileLines {
+  lines: string[];
+  /** The last line has no newline. */
+  noNewline: boolean;
 }
 
 /** File contents by file index. */

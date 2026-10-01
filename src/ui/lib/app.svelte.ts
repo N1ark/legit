@@ -1,7 +1,7 @@
 import { IS_TAURI, copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
-  CommitInfo, DiffSummary, EditLineRequest, FileContents, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
+  CommitInfo, DiffSummary, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
   SyncResult,
 } from '../../shared/types.ts';
 
@@ -26,6 +26,7 @@ class App {
 
   private diffs = new Map<string, Promise<DiffSummary>>();
   private contents = new Map<string, Promise<HunkData[]>>();
+  private olds = new Map<string, Promise<FileLines>>();
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
@@ -154,6 +155,19 @@ class App {
     const out: Record<number, HunkData[]> = {};
     for (const i of files) out[i] = await this.contents.get(key(i))!;
     return out;
+  }
+
+  /** File i's old version, to show the unchanged lines between its hunks. */
+  oldLines(sha: string, i: number): Promise<FileLines> {
+    const key = `${sha}:${i}`;
+    let p = this.olds.get(key);
+    if (!p) {
+      p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
+      p.catch(() => this.olds.delete(key));
+      if (this.olds.size > 50) this.olds.delete(this.olds.keys().next().value!);
+      this.olds.set(key, p);
+    }
+    return p;
   }
 
   /** Warm the caches for a commit: its file list and the files on its first screen. */

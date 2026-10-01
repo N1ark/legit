@@ -1,14 +1,15 @@
 // Commit diffs: parsing git's patch output, and rebuilding files from a subset of changed lines.
 
 import { createHash } from 'node:crypto';
-import type { CommitDiff, DiffLine, DiffSummary, FileDiff, HunkData, Hunk } from '../shared/types.ts';
-import { type Git, toUtf8 } from './git.ts';
+import { CONTEXT_LINES, expandable, moreAfter } from '../shared/context.ts';
+import type { CommitDiff, DiffLine, DiffSummary, FileDiff, FileLines, HunkData, Hunk } from '../shared/types.ts';
+import { type Git, GitError, toUtf8 } from './git.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const TEXT_MODES = new Set(['100644', '100755', '000000']);
 
 /** Options shared by every diff we parse: raw records + patch, no renames, no external tools. */
-export const DIFF_ARGS = ['-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--full-index', '--patch-with-raw', '-U3'];
+export const DIFF_ARGS = ['-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--full-index', '--patch-with-raw', `-U${CONTEXT_LINES}`];
 
 /** Diff of a commit against its first parent. All strings are byte strings. */
 export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
@@ -95,10 +96,24 @@ export function summarize(d: CommitDiff, generated: Set<string>): DiffSummary {
           if (w > width) width = w;
         }
       }
+      if (hunks.length && expandable(f)) {
+        const last = hunks[hunks.length - 1].lines;
+        if (moreAfter(last.map((l) => l.t).join(''), !!last[last.length - 1]?.eof)) rows++;
+      }
       const { token: _, ...rest } = f;
       return { ...rest, path: toUtf8(f.path), rows, width, generated: generated.has(f.path) };
     }),
   };
+}
+
+/** A modified file's old version (utf8 for display), for the lines between its hunks. */
+export async function oldLines(git: Git, f: FileDiff): Promise<FileLines> {
+  if (!expandable(f) || /^0+$/.test(f.oldSha)) throw new GitError("That file's other lines can't be shown.");
+  const { out } = await git.run(['cat-file', 'blob', f.oldSha]);
+  const lines = out.toString('utf8').split('\n');
+  const noNewline = lines[lines.length - 1] !== '';
+  if (!noNewline) lines.pop();
+  return { lines, noNewline };
 }
 
 /** A file's hunks in compact form, utf8 for display. */

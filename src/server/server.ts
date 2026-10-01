@@ -4,7 +4,7 @@ import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
-import { fileContent, summarize } from './diff.ts';
+import { fileContent, oldLines, summarize } from './diff.ts';
 import { avatars } from './avatars.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
@@ -194,6 +194,13 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
         if (Number.isInteger(i) && d.files[i]) out[i] = fileContent(d.files[i]);
       }
       return send(res, 200, out);
+    }
+    // /api/diff/<sha>/old?i=3: a modified file's old version, to show the lines between its hunks.
+    const old = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)\/old$/.exec(path);
+    if (old) {
+      const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
+      if (!f) return send(res, 404, { error: 'Not found' });
+      return send(res, 200, await oldLines(repo.git, f));
     }
     if (path === '/api/open' && req.method === 'POST') {
       if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
