@@ -10,6 +10,7 @@ import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
 } from './branches.ts';
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
+import { discard, discarded, restoreDiscarded } from './discard.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -119,6 +120,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     stashApply: (b) => stashApply(repo, b),
     stashPop: (b) => stashPop(repo, b),
     stashDrop: (b) => stashDrop(repo, b),
+    discard: (b) => discard(repo, b),
+    restoreDiscarded: (b) => restoreDiscarded(repo, b),
   };
 
   let origin = '';
@@ -139,6 +142,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
+    if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
     if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo));
     if (path === '/api/branches/deleted') return send(res, 200, await deletedBranches(repo));

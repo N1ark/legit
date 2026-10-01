@@ -2,6 +2,7 @@
   import { ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast } from 'purr';
   import { ClockCounterClockwise } from 'purr/icons';
   import type { Backup } from '../shared/types.ts';
+  import DiscardedList from './DiscardedList.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
 
   let open = $state(false);
@@ -72,6 +73,7 @@
         {/each}
       </ol>
     {/if}
+    <DiscardedList />
   </Popover>
 {/if}
 

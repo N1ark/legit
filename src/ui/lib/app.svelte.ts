@@ -2,7 +2,7 @@ import { copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState } from '../../shared/types.ts';
 
-async function request<T>(path: string, body?: unknown): Promise<T> {
+export async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(
     path,
     body === undefined

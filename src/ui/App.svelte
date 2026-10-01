@@ -22,12 +22,14 @@
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
   import PushButton from './PushButton.svelte';
+  import RepoPicker from './RepoPicker.svelte';
   import CommitView from './CommitView.svelte';
   import SquashView from './SquashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
+  let repoPicker = $state<RepoPicker>();
   let help = $state(false);
 
   // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
@@ -49,7 +51,7 @@
     };
   });
 
-  type Action = 'undo' | 'redo' | 'branch' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp';
+  type Action = 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -68,6 +70,8 @@
     { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
     { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
     { keys: 'b', action: 'branch', label: 'Switch branch' },
+    // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
+    ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
     { keys: '?', action: 'help', label: 'Show shortcuts' },
   ];
   const keymap = createKeymap(bindings);
@@ -85,6 +89,7 @@
     if (action === 'undo') app.undo();
     else if (action === 'redo') app.redo();
     else if (action === 'branch') branchPicker?.show();
+    else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
     else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
     else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
@@ -98,7 +103,7 @@
   <header class:desktop={IS_TAURI} data-tauri-drag-region>
     <span class="brand" data-tauri-drag-region>legit</span>
     {#if app.repo}
-      <span class="repo" title={app.repo.root} data-tauri-drag-region>{app.repo.name}</span>
+      <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
@@ -186,11 +191,6 @@
     font-size: var(--fs-xl);
     color: var(--theme2);
     letter-spacing: -0.02em;
-  }
-
-  .repo {
-    font-weight: 600;
-    color: var(--color2);
   }
 
   .spacer {

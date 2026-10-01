@@ -2,13 +2,14 @@
   // Uncommitted changes: a commit form, what's staged, and what isn't (untracked files
   // included). Select lines like in a commit and stage/unstage them; only the index changes.
   import { Button, Checkbox, ConfirmButton, IconButton, Kbd, hasOverlay, isTyping, matches } from 'purr';
-  import { ArrowDown, ArrowUp, Check, X } from 'purr/icons';
+  import { ArrowDown, ArrowUp, Check, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
+  import { discardChanges } from './lib/discard.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
 
   type Sel = Record<string, SvelteSet<number>>;
@@ -79,6 +80,13 @@
     const sel = selection(d, op === 'stage' ? unstaged : staged, all);
     if (!Object.keys(sel).length) return;
     await app.op(op, { key: d.sha, selection: sel });
+    await load();
+  }
+
+  // Discarding saves what it throws away first (refs/legit/discarded); the toast can undo it.
+  async function discard(sel: Selection | null = null) {
+    if (!work || app.busy) return;
+    await discardChanges(work.unstaged.sha, sel ?? selection(work.unstaged, unstaged));
     await load();
   }
 
@@ -246,12 +254,34 @@
         <span class="muted">{plural(work.unstaged.files.length, 'file')}</span>
         <span class="spacer"></span>
         {#if work.unstaged.files.length}
+          <ConfirmButton
+            variant="ghost"
+            confirmLabel="Discard all {plural(work.unstaged.files.length, 'file')}? Click again"
+            onconfirm={() => discard(selection(work!.unstaged, unstaged, true))}
+            disabled={app.busy}
+            title="Discard all unstaged changes (saved first, so it can be undone)"><Trash /> Discard all</ConfirmButton
+          >
           <Button onclick={() => run('stage', true)} disabled={app.busy}><ArrowUp /> Stage all</Button>
         {/if}
       </div>
       {#if work.unstaged.files.length}
         {#key work.unstaged.sha}
-          <DiffView summary={work.unstaged} sel={unstaged} readonly={false} hint="Pick changes to stage (s)." />
+          <DiffView
+            summary={work.unstaged}
+            sel={unstaged}
+            readonly={false}
+            hint="Pick changes to stage (s) or discard."
+            fileActions={(f) => [
+              {
+                label: 'Discard changes',
+                icon: Trash,
+                danger: true,
+                confirm: 'Click again to discard',
+                note: f.untracked ? 'Deletes the file. It can be restored.' : 'It can be restored.',
+                run: () => discard({ [f.path]: 'all' }),
+              },
+            ]}
+          />
         {/key}
       {:else}
         <p class="muted empty">No unstaged changes.</p>
@@ -267,6 +297,14 @@
         <Button variant="primary" onclick={() => run('stage')} disabled={app.busy}>
           <ArrowUp /> Stage {plural(selUnstaged, 'change')} <Kbd hint="s" />
         </Button>
+        <ConfirmButton
+          confirmLabel="Click again to discard"
+          onconfirm={() => discard()}
+          disabled={app.busy}
+          title="Throw these changes away (saved first, so it can be undone)"
+        >
+          <Trash /> Discard {plural(selUnstaged, 'change')}
+        </ConfirmButton>
       {/if}
       {#if selStaged}
         <Button onclick={() => run('unstage')} disabled={app.busy}>
