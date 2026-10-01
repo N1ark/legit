@@ -135,6 +135,7 @@ class App {
   select(sha: string, mode: 'set' | 'toggle' | 'range' = 'set') {
     const c = this.bySha.get(sha);
     if (!c) return;
+    this.stash = null;
     if (mode === 'toggle' && c.editable) {
       this.selected = this.selected.includes(sha)
         ? this.selected.filter((s) => s !== sha)
@@ -156,6 +157,7 @@ class App {
 
   /** Move selection up (-1) or down (+1). */
   step(dir: number, extend = false) {
+    this.stash = null;
     const cur = this.anchor ?? this.selected[0];
     // "Uncommitted changes" sits above the newest commit.
     if (cur === WORK) {
@@ -263,6 +265,7 @@ class App {
   }
 
   selectWork() {
+    this.stash = null;
     this.selected = [WORK];
     this.anchor = WORK;
   }
@@ -271,6 +274,9 @@ class App {
     this.workTick++;
     this.refresh();
   }
+
+  /** The stash shown in place of the selected commit, if any (from the stashes panel). */
+  stash = $state<ShownStash | null>(null);
 
   undo = () => this.op('undo');
   redo = () => this.op('redo');
@@ -329,6 +335,16 @@ class App {
     const last = Math.max(this.repo?.fetchedAt ?? 0, this.fetchTried);
     if (this.repo?.push && !this.fetching && Date.now() - last > ms) this.fetchRemote(true);
   }
+}
+
+/** A stash being looked at: one in the stash list, or a dropped one legit kept. */
+export interface ShownStash {
+  sha: string;
+  title: string;
+  message: string;
+  time: number;
+  /** Dropped or popped (only under refs/legit/stashes): it can only be applied. */
+  dropped: boolean;
 }
 
 /** Selection key of the "Uncommitted changes" entry. */

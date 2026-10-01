@@ -139,7 +139,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     let json = summaries.get(d.sha);
     if (!json) {
       const work = /^w\d+$/.test(d.sha);
-      const generated = await generatedPaths(repo.git, work ? null : d.sha, d.files.map((f) => f.path));
+      const generated = await generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), d.files.map((f) => f.path));
       json = JSON.stringify(summarize(d, generated));
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
@@ -172,10 +172,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
-    const diff = /^\/api\/diff\/([0-9a-f]{40,64}|w\d+)$/.exec(path);
+    const diff = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)$/.exec(path);
     if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.
-    const files = /^\/api\/diff\/([0-9a-f]{40,64}|w\d+)\/files$/.exec(path);
+    const files = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)\/files$/.exec(path);
     if (files) {
       const d = await repo.diff(files[1]);
       const out: FileContents = {};

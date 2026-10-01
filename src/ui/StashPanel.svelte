@@ -29,6 +29,12 @@
   const title = (s: { message: string; branch?: string | null }) =>
     s.branch ? `Left on ${s.branch}` : s.message.replace(/^(WIP on|On) [^:]+: /, '') || s.message;
   const files = (s: StashEntry) => `${s.files.length} file${s.files.length === 1 ? '' : 's'}`;
+
+  /** Show a stash's changes in place of the selected commit. */
+  function view(s: { sha: string; message: string; time: number; branch?: string | null }, dropped: boolean) {
+    app.stash = { sha: s.sha, title: title(s), message: s.message, time: s.time, dropped };
+    open = false;
+  }
 </script>
 
 <IconButton label="Stashes" tip="Stashed changes" size="lg" aria-expanded={open} onclick={toggle}>
@@ -68,7 +74,7 @@
           {#each data.entries as s (s.sha)}
             <li>
               <span class="mono sha">{shortSha(s.sha)}</span>
-              <span class="subject" title={s.message}>{title(s)}</span>
+              <button class="subject" title="Show its changes" onclick={() => view(s, false)}>{title(s)}</button>
               <span class="muted files" title={s.files.join('\n')}>{files(s)}</span>
               <span class="muted when" title={formatFull(s.time)}>{formatRelative(s.time)}</span>
               <Button
@@ -101,7 +107,9 @@
           {#each data.dropped as d (d.ref)}
             <li>
               <span class="mono sha">{shortSha(d.sha)}</span>
-              <span class="subject" title={d.message}>{title({ message: d.message, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] })}</span>
+              <button class="subject" title="Show its changes" onclick={() => view({ ...d, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] }, true)}>
+                {title({ message: d.message, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] })}
+              </button>
               <span class="muted when" title={formatFull(d.time)}>{d.label === 'pop' ? 'restored' : 'dropped'} {formatRelative(d.time)}</span>
               <Button
                 size="sm"
@@ -172,11 +180,21 @@
     color: var(--muted);
   }
 
+  /* A link-like button: the row's text, underlined on hover. */
   .subject {
+    all: unset;
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .subject:hover,
+  .subject:focus-visible {
+    text-decoration: underline;
+    color: var(--theme2);
   }
 
   .files,

@@ -26,6 +26,7 @@
   import CommitView from './CommitView.svelte';
   import ConflictView from './ConflictView.svelte';
   import SquashView from './SquashView.svelte';
+  import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
 
@@ -142,7 +143,11 @@
       </footer>
     </aside>
     <section data-scroller>
-      {#if app.selected[0] === WORK && app.repo?.conflict}
+      {#if app.stash}
+        {#key app.stash.sha}
+          <StashView stash={app.stash} />
+        {/key}
+      {:else if app.selected[0] === WORK && app.repo?.conflict}
         <ConflictView />
       {:else if app.selected[0] === WORK}
         <WorkView />

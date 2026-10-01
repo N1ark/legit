@@ -17,7 +17,7 @@ import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, pars
 import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
 import { syncState } from './sync.ts';
-import { stashFor } from './stash.ts';
+import { stashDiff, stashFor } from './stash.ts';
 import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
@@ -158,7 +158,7 @@ export class Repo {
     return i;
   }
 
-  /** A commit's diff, or a working-tree snapshot (`w<n>`, from `work()`). */
+  /** A commit's diff, a stash's (`s<sha>`), or a working-tree snapshot (`w<n>`, from `work()`). */
   async diff(sha: string): Promise<CommitDiff> {
     if (/^w\d+$/.test(sha)) {
       const snap = this.snapshots.get(sha);
@@ -167,7 +167,8 @@ export class Repo {
     }
     let d = this.diffs.get(sha);
     if (!d) {
-      d = await commitDiff(this.git, sha);
+      // `s<sha>`: a stash's changes, untracked files included.
+      d = sha.startsWith('s') ? await stashDiff(this.git, sha.slice(1), sha) : await commitDiff(this.git, sha);
       if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
       this.diffs.set(sha, d);
     }

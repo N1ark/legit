@@ -125,3 +125,22 @@ test('drop keeps the stash under refs/legit/stashes, from where it can still be 
   // Applying keeps it where it was.
   assert.equal((await stashes(repo.git)).dropped.length, 1);
 });
+
+test("a stash's diff: staged and unstaged changes, then its untracked files", async () => {
+  commit('base', { f: '1\n', g: '1\n' });
+  write('f', '2\n');
+  write('g', '2\n');
+  git('add', 'g');
+  write('new', 'untracked\n');
+  const repo = await Repo.open(t.dir);
+  await stash(repo);
+  const sha = stashList()[0];
+  const d = await repo.diff(`s${sha}`);
+  assert.equal(d.sha, `s${sha}`);
+  assert.deepEqual(d.files.map((f) => [f.path, f.status, !!f.untracked, f.added, f.removed]), [
+    ['f', 'M', false, 1, 1],
+    ['g', 'M', false, 1, 1],
+    ['new', 'A', true, 1, 0],
+  ]);
+  await assert.rejects(repo.diff(`s${git('rev-parse', 'HEAD')}`), /not a stash/);
+});

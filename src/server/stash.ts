@@ -4,7 +4,8 @@
 
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DroppedStash, OpResult, StashEntry, Stashes } from '../shared/types.ts';
+import type { CommitDiff, DroppedStash, OpResult, StashEntry, Stashes } from '../shared/types.ts';
+import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
@@ -251,4 +252,20 @@ export function stashDrop(repo: Repo, req: { sha: string }): Promise<OpResult> {
 export async function unstash(git: Git, sha: string) {
   await applyStash(git, sha);
   await dropEntry(git, sha, 'pop');
+}
+
+/**
+ * What a stash holds, as one diff keyed `key`: its tracked changes (the stash commit against
+ * the commit it was made on, so staged and unstaged together) followed by its untracked files.
+ */
+export async function stashDiff(git: Git, sha: string, key: string): Promise<CommitDiff> {
+  const c = await git.commit(sha);
+  if (c.parents.length < 2) throw new GitError(`${sha.slice(0, 7)} is not a stash.`);
+  const [tracked, untracked] = await Promise.all([
+    git.run(['diff-tree', ...DIFF_ARGS, c.parents[0], sha]),
+    c.parents[2] ? git.run(['diff-tree', ...DIFF_ARGS, git.emptyTree, c.parents[2]]) : null,
+  ]);
+  const d = parseDiff(tracked.out.toString('latin1'), key);
+  if (untracked) d.files.push(...parseDiff(untracked.out.toString('latin1'), key).files.map((f) => ({ ...f, untracked: true })));
+  return d;
 }

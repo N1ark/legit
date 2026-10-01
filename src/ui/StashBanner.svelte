@@ -9,7 +9,9 @@
   const n = $derived(s?.files.length ?? 0);
 
   async function restore() {
-    if (s && (await app.op('stashPop', { sha: s.sha }))) toast('Restored your stashed changes');
+    if (!s || !(await app.op('stashPop', { sha: s.sha }))) return;
+    if (app.stash?.sha === s.sha) app.stash = null;
+    toast('Restored your stashed changes');
   }
 </script>
 
@@ -24,6 +26,12 @@
       dismissLabel="Not now"
     >
       {#snippet actions()}
+        <Button
+          size="sm"
+          variant="ghost"
+          onclick={() => s && (app.stash = { sha: s.sha, title: `Left on ${s.branch}`, message: s.message, time: s.time, dropped: false })}
+          >View</Button
+        >
         <Button size="sm" variant="primary" disabled={app.busy || !!app.repo?.blocked} onclick={restore}>Restore</Button>
       {/snippet}
     </Banner>
