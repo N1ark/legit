@@ -100,8 +100,8 @@ npm run check      # svelte-check + tsc
   built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why
   the app is ~145 MB (almost all of it Node). The window loads the UI from that server. A server exits when its window closes, and only after
   any running operation has finished (or when the app dies, since it holds the server's stdin).
-- `src/ui/` is a Svelte 5 UI built on [purr](../purr), the components, icons and styles shared with N1ark's
-  other apps (a `file:../purr` dependency, so it needs checking out next to this repo). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
+- `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
+  shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
   loads. Only files and rows near the viewport are mounted, and file contents are fetched in batches as they
   scroll into view (`/api/diff/<sha>/files?i=…`). Syntax highlighting (Prism) runs in a web worker
