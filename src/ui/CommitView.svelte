@@ -207,7 +207,7 @@
   </div>
 
   {#if diff}
-    <DiffView summary={diff} {sel} {readonly} />
+    <DiffView summary={diff} {sel} {readonly} tree />
   {:else}
     <p class="muted loading">Loading diff…</p>
   {/if}

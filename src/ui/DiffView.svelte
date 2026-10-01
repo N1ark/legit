@@ -4,11 +4,24 @@
   // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
-  import { type MaybeEntry, Tag, Twisty, fixedRange, menu, offsets, toast, variableRange } from 'purr';
+  import {
+    type MaybeEntry,
+    ResizeEdge,
+    Tag,
+    Twisty,
+    fixedRange,
+    menu,
+    offsets,
+    persisted,
+    rowAt,
+    toast,
+    variableRange,
+  } from 'purr';
   import { Copy, FileArrowUp } from 'purr/icons';
-  import { onMount, untrack } from 'svelte';
+  import { flushSync, onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary } from '../shared/types.ts';
+  import FileTree from './FileTree.svelte';
   import { app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
@@ -19,6 +32,7 @@
     readonly,
     hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
     fileActions,
+    tree = false,
   }: {
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
@@ -26,6 +40,8 @@
     hint?: string;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
+    /** Show the files as a folder tree beside the diff, to jump between them. */
+    tree?: boolean;
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -127,6 +143,29 @@
     highlight(`${summary.sha}:${i}`, files[i].path, rows.hunks, distance, () => alive).then((t) => {
       if (t && alive) tokens = { ...tokens, [i]: t };
     });
+  }
+
+  // The file tree, beside the diff when there's more than one file and room for it.
+  const showTree = $derived(tree && files.length > 1);
+  const TREE_WIDTH = 240;
+  const savedTreeWidth = persisted('legit:tree-width', TREE_WIDTH);
+  let treeWidth = $state(savedTreeWidth.value);
+
+  /** Where the last jump left the diff, so a file too near the end to reach the top still shows as picked. */
+  let jump = $state<{ i: number; top: number } | null>(null);
+  const current = $derived(
+    jump && Math.abs(jump.top - view.top) < 1 ? jump.i : view.top < 0 ? -1 : rowAt(tops, view.top + 1),
+  );
+
+  function reveal(i: number) {
+    if (!scroller) return;
+    if (collapsed[i]) {
+      collapsed[i] = false;
+      flushSync();
+    }
+    scroller.scrollTop += tops[i] - view.top;
+    measure();
+    jump = { i, top: view.top };
   }
 
   const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }));
@@ -298,107 +337,149 @@
     {/if}
   </div>
 
-  <div class="files" bind:this={filesEl} style:height="{Math.max(0, tops[files.length] - GAP)}px">
-    {#each visible as i (i)}
-      {@const f = files[i]}
-      {@const state = fileState(f)}
-      {@const rows = contents[i]}
-      {@const tok = tokens[i]}
-      <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
-          {#if !readonly}
-            <input
-              type="checkbox"
-              class="checkbox"
-              checked={state === 'all'}
-              indeterminate={state === 'some'}
-              onchange={() => toggleFile(f)}
-              title="Select whole file"
-            />
-          {/if}
-          <button
-            class="btn btn--ghost btn--icon btn--sm"
-            aria-label={collapsed[i] ? 'Expand' : 'Collapse'}
-            aria-expanded={!collapsed[i]}
-            onclick={() => toggleCollapsed(i)}
-          >
-            <Twisty open={!collapsed[i]} size={10} />
-          </button>
-          <span class="path mono" title={f.path}>{f.path}</span>
-          {#if f.untracked}<Tag color="var(--add)" label="untracked" />
-          {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
-          {#if f.generated}
-            <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
-          {/if}
-          <span class="spacer"></span>
-          <span class="add mono">+{f.added}</span>
-          <span class="del mono">−{f.removed}</span>
-        </div>
+  <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px">
+    {#if showTree}
+      <nav class="tree" style:height="{view.bottom - view.top}px">
+        <FileTree {files} {current} onpick={reveal} />
+        <ResizeEdge
+          side="left"
+          label="Resize the file tree"
+          size={treeWidth}
+          min={140}
+          max={600}
+          preset={TREE_WIDTH}
+          onresize={(w) => (treeWidth = w)}
+          oncommit={(w) => (savedTreeWidth.value = w)}
+        />
+      </nav>
+    {/if}
+    <div class="files" bind:this={filesEl} style:height="{Math.max(0, tops[files.length] - GAP)}px">
+      {#each visible as i (i)}
+        {@const f = files[i]}
+        {@const state = fileState(f)}
+        {@const rows = contents[i]}
+        {@const tok = tokens[i]}
+        <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
+            {#if !readonly}
+              <input
+                type="checkbox"
+                class="checkbox"
+                checked={state === 'all'}
+                indeterminate={state === 'some'}
+                onchange={() => toggleFile(f)}
+                title="Select whole file"
+              />
+            {/if}
+            <button
+              class="btn btn--ghost btn--icon btn--sm"
+              aria-label={collapsed[i] ? 'Expand' : 'Collapse'}
+              aria-expanded={!collapsed[i]}
+              onclick={() => toggleCollapsed(i)}
+            >
+              <Twisty open={!collapsed[i]} size={10} />
+            </button>
+            <span class="path mono" title={f.path}>{f.path}</span>
+            {#if f.untracked}<Tag color="var(--add)" label="untracked" />
+            {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
+            {#if f.generated}
+              <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
+            {/if}
+            <span class="spacer"></span>
+            <span class="add mono">+{f.added}</span>
+            <span class="del mono">−{f.removed}</span>
+          </div>
 
-        {#if !collapsed[i]}
-          {#if !f.rows}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
-              {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
-            </div>
-          {:else}
-            <div class="body" class:loading={!rows} style:height="{f.rows * ROW + PAD}px">
-              {#if rows}
-                {@const shown = rowRange(i)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div
-                  class="lines mono"
-                  class:readonly
-                  style:top="{(shown[0] ?? 0) * ROW}px"
-                  style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
-                  onmousedown={(e) => down(e, i)}
-                  onmouseover={(e) => over(e, i)}
-                  onmouseleave={() => (hoverBlock = null)}
-                  oncontextmenu={(e) => openMenu(e, i)}
-                  onfocus={() => {}}
-                >
-                  {#each shown as r (r)}
-                    {#if rows.kind[r] === HUNK}
-                      <div class="hunk" data-r={r}><span class="gutter"></span><span class="code">{rows.text[r]}</span></div>
-                    {:else}
-                      {@const kind = rows.kind[r]}
-                      {@const ci = rows.ci[r]}
-                      <div
-                        class="line {KIND[kind]}"
-                        class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
-                        class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
-                        data-r={r}
-                      >
-                        <span class="gutter"
-                          ><span class="blk" title={ci >= 0 && !readonly ? 'Select this block of changes' : undefined}
-                          ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
-                            >{MARK[kind]}</span
-                          ></span
-                        ><span class="code"
-                          >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
-                                  >{seg.t}</span
-                                >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
-                              class="eof"
-                              title="No newline at end of file">⏎̸</span
-                            >{/if}</span
+          {#if !collapsed[i]}
+            {#if !f.rows}
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
+                {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
+              </div>
+            {:else}
+              <div class="body" class:loading={!rows} style:height="{f.rows * ROW + PAD}px">
+                {#if rows}
+                  {@const shown = rowRange(i)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="lines mono"
+                    class:readonly
+                    style:top="{(shown[0] ?? 0) * ROW}px"
+                    style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
+                    onmousedown={(e) => down(e, i)}
+                    onmouseover={(e) => over(e, i)}
+                    onmouseleave={() => (hoverBlock = null)}
+                    oncontextmenu={(e) => openMenu(e, i)}
+                    onfocus={() => {}}
+                  >
+                    {#each shown as r (r)}
+                      {#if rows.kind[r] === HUNK}
+                        <div class="hunk" data-r={r}><span class="gutter"></span><span class="code">{rows.text[r]}</span></div>
+                      {:else}
+                        {@const kind = rows.kind[r]}
+                        {@const ci = rows.ci[r]}
+                        <div
+                          class="line {KIND[kind]}"
+                          class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
+                          class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
+                          data-r={r}
                         >
-                      </div>
-                    {/if}
-                  {/each}
-                </div>
-              {/if}
-            </div>
+                          <span class="gutter"
+                            ><span class="blk" title={ci >= 0 && !readonly ? 'Select this block of changes' : undefined}
+                            ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
+                              >{MARK[kind]}</span
+                            ></span
+                          ><span class="code"
+                            >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
+                                    >{seg.t}</span
+                                  >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
+                                class="eof"
+                                title="No newline at end of file">⏎̸</span
+                              >{/if}</span
+                          >
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
           {/if}
-        {/if}
-      </div>
-    {/each}
+        </div>
+      {/each}
+    </div>
   </div>
 </div>
 
 <style>
   .diff {
     padding: var(--sp-4) var(--sp-5) calc(var(--sp-5) + var(--sp-4));
+    container-type: inline-size;
+  }
+
+  .panes.with-tree {
+    display: grid;
+    grid-template-columns: var(--tree-width) minmax(0, 1fr);
+    gap: var(--sp-4);
+    align-items: start;
+  }
+
+  .tree {
+    position: sticky;
+    top: 0;
+    margin-left: calc(-1 * var(--gap-3));
+  }
+
+  /* Too narrow for both: the diff keeps the room. */
+  @container (max-width: 640px) {
+    .panes.with-tree {
+      display: block;
+    }
+
+    .tree {
+      display: none;
+    }
   }
 
   .summary {
