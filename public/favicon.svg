@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="182.5 171.5 681 681" width="128" height="128">
+  <defs>
+    <style>.line{fill:none;stroke:#8a2aa2;stroke-width:44;stroke-linecap:round;stroke-linejoin:round}.thin{fill:none;stroke:#8a2aa2;stroke-width:28;stroke-linecap:round;stroke-linejoin:round}.fill{fill:#8a2aa2}.faint{opacity:0.55}@media (prefers-color-scheme:dark){.line{fill:none;stroke:#fff;stroke-width:44;stroke-linecap:round;stroke-linejoin:round}.thin{fill:none;stroke:#fff;stroke-width:28;stroke-linecap:round;stroke-linejoin:round}.fill{fill:#fff}.faint{opacity:0.55}}.cut{display:none}</style>
+    <mask id="cuts" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/><circle class="cut" cx="600" cy="512" r="34" style="display:inline;fill:#000"/>
+    </mask>
+  </defs>
+  <g mask="url(#cuts)"><path class="line" d="M430 230 V794"/>
+<path class="line faint" d="M430 400 C430 470 600 450 600 512 C600 574 430 554 430 624"/>
+<circle class="fill" cx="430" cy="300" r="62"/>
+<circle class="fill" cx="430" cy="724" r="62"/>
+<circle class="fill" cx="600" cy="512" r="78"/>
+<circle class="cut" cx="600" cy="512" r="34"/>
+</g>
+</svg>
