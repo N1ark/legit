@@ -1,6 +1,6 @@
 // Which files of a commit are generated, so the UI collapses them by default:
 // built-in patterns, `linguist-generated` in .gitattributes (as of that commit), and
-// the user's own patterns (`git config --add legit.hide '<glob>'`).
+// the user's own patterns (from the settings).
 
 import { matchesGlob } from 'node:path';
 import type { Git } from './git.ts';
@@ -24,18 +24,17 @@ export const DEFAULT_HIDDEN = [
 /** A pattern as a glob over repo paths: without a slash it matches the file name at any depth. */
 export const normalize = (p: string) => (p.includes('/') ? p.replace(/^\//, '') : `**/${p}`);
 
-/** `sha`: the commit whose .gitattributes apply; null for the working tree. */
-export async function generatedPaths(git: Git, sha: string | null, paths: string[]): Promise<Set<string>> {
+/** `sha`: the commit whose .gitattributes apply; null for the working tree. `extra`: the user's patterns. */
+export async function generatedPaths(git: Git, sha: string | null, paths: string[], extra: string[] = []): Promise<Set<string>> {
   const out = new Set<string>();
   if (!paths.length) return out;
-  const [config, attrs] = await Promise.all([
-    git.text(['config', '--get-all', 'legit.hide'], { allowFail: true }),
+  const [attrs] = await Promise.all([
     git.run(['check-attr', '-z', '--stdin', ...(sha ? [`--source=${sha}`] : []), 'linguist-generated'], {
       input: Buffer.from(paths.map((p) => p + '\0').join(''), 'latin1'),
       allowFail: true,
     }),
   ]);
-  const patterns = [...DEFAULT_HIDDEN, ...config.split('\n').filter(Boolean)].map(normalize);
+  const patterns = [...DEFAULT_HIDDEN, ...extra].map(normalize);
   for (const p of paths) {
     const name = Buffer.from(p, 'latin1').toString('utf8');
     if (patterns.some((g) => matchesGlob(name, g))) out.add(p);

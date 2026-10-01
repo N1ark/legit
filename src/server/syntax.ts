@@ -1,36 +1,25 @@
-// Tree-sitter grammars for files Prism doesn't highlight (or highlights wrongly), chosen per
-// repo: `git config --add legit.syntax '<glob>=<grammar>'`. The grammar is one of Zed's (the
-// name of a grammar or language in its installed extensions, e.g. `ullbc`), or a folder with
-// a compiled grammar (`*.wasm`, from `tree-sitter build --wasm`) and its `highlights.scm`.
+// Tree-sitter grammars for files Prism doesn't highlight (or highlights wrongly), by glob, from
+// the settings. A grammar is one of Zed's (the name of a grammar or language in its installed
+// extensions, e.g. `ullbc`), or a folder with a compiled grammar (`*.wasm`, from
+// `tree-sitter build --wasm`) and its `highlights.scm`.
 
 import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, matchesGlob, resolve } from 'node:path';
 import { normalize } from './generated.ts';
+import type { ScopeSettings, ZedGrammar } from '../shared/types.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
-interface Rule {
-  glob: string;
-  grammar: string;
-}
-
-async function rules(git: Git): Promise<Rule[]> {
-  const config = await git.text(['config', '--get-all', 'legit.syntax'], { allowFail: true });
-  return config
-    .split('\n')
-    .map((l) => /^\s*(.+?)\s*=\s*(.+?)\s*$/.exec(l))
-    .flatMap((m) => (m ? [{ glob: normalize(m[1]), grammar: m[2] }] : []));
-}
+type Rules = ScopeSettings['syntax'];
 
 /** The grammar of each of `paths` (byte strings) that has one; the last matching rule wins. */
-export async function syntaxes(git: Git, paths: string[]): Promise<Map<string, string>> {
+export function syntaxes(rules: Rules, paths: string[]): Map<string, string> {
   const out = new Map<string, string>();
-  const list = paths.length ? await rules(git) : [];
-  if (!list.length) return out;
-  for (const p of paths) {
+  const globs = rules.map((r) => ({ glob: normalize(r.pattern), grammar: r.grammar }));
+  for (const p of globs.length ? paths : []) {
     const name = toUtf8(p);
-    for (const r of list) if (matchesGlob(name, r.glob)) out.set(p, r.grammar);
+    for (const r of globs) if (matchesGlob(name, r.glob)) out.set(p, r.grammar);
   }
   return out;
 }
@@ -42,6 +31,24 @@ const zedExtensions = () =>
 
 const list = (dir: string) => readdir(dir).catch(() => [] as string[]);
 const field = (toml: string, key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, 'm').exec(toml)?.[1];
+
+/** Every grammar in Zed's installed extensions that comes with highlights, for the settings page. */
+export async function zedGrammars(): Promise<ZedGrammar[]> {
+  const root = zedExtensions();
+  const out: ZedGrammar[] = [];
+  for (const ext of await list(root)) {
+    const dir = join(root, ext);
+    for (const lang of await list(join(dir, 'languages'))) {
+      const toml = await readFile(join(dir, 'languages', lang, 'config.toml'), 'utf8').catch(() => '');
+      const grammar = field(toml, 'grammar');
+      if (!grammar || !existsSync(join(dir, 'grammars', `${grammar}.wasm`))) continue;
+      if (!existsSync(join(dir, 'languages', lang, 'highlights.scm'))) continue;
+      const suffixes = /^path_suffixes\s*=\s*\[([^\]]*)\]/m.exec(toml)?.[1].match(/"[^"]*"/g)?.map((x) => x.slice(1, -1)) ?? [];
+      out.push({ grammar, language: field(toml, 'name') ?? grammar, suffixes });
+    }
+  }
+  return out.sort((a, b) => a.language.localeCompare(b.language));
+}
 
 /** A grammar in Zed's installed extensions, by grammar name or language name. */
 async function fromZed(name: string): Promise<{ wasm: string; highlights: string } | null> {
@@ -73,9 +80,8 @@ async function fromFolder(dir: string): Promise<{ wasm: string; highlights: stri
   return wasm && highlights ? { wasm, highlights } : null;
 }
 
-/** Grammar `name`'s files, if this repo's config uses it. */
-export async function grammarFiles(git: Git, name: string): Promise<{ wasm: Buffer; highlights: string }> {
-  if (!(await rules(git)).some((r) => r.grammar === name)) throw new GitError(`No legit.syntax rule uses "${name}".`);
+/** Where grammar `name`'s files are (a folder's relative to the repo), or why it can't be used. */
+async function findGrammar(git: Git, name: string): Promise<{ wasm: string; highlights: string }> {
   const path = name.startsWith('~/') ? join(homedir(), name.slice(2)) : name;
   const found = /[/\\]/.test(path) ? await fromFolder(isAbsolute(path) ? path : resolve(git.root, path)) : await fromZed(name);
   if (!found) {
@@ -85,6 +91,22 @@ export async function grammarFiles(git: Git, name: string): Promise<{ wasm: Buff
         : `No grammar "${name}" in Zed's installed extensions (${zedExtensions()}).`,
     );
   }
+  return found;
+}
+
+/** Why each grammar the rules use can't be used, for those that can't. */
+export async function grammarProblems(git: Git, rules: Rules): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const name of new Set(rules.map((r) => r.grammar))) {
+    await findGrammar(git, name).catch((e) => (out[name] = e instanceof Error ? e.message : String(e)));
+  }
+  return out;
+}
+
+/** Grammar `name`'s files, if a rule uses it. */
+export async function grammarFiles(git: Git, rules: Rules, name: string): Promise<{ wasm: Buffer; highlights: string }> {
+  if (!rules.some((r) => r.grammar === name)) throw new GitError(`No syntax highlighting rule uses "${name}".`);
+  const found = await findGrammar(git, name);
   const [wasm, highlights] = await Promise.all([readFile(found.wasm), readFile(found.highlights, 'utf8')]);
   return { wasm: withoutNeeded(wasm), highlights };
 }

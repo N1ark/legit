@@ -408,6 +408,15 @@ class App {
     this.anchor = WORK;
   }
 
+  /** Bumped when the settings change: open diffs take the new ones (see DiffView). */
+  settingsTick = $state(0);
+
+  /** Diffs' summaries say which files are collapsed and how they're highlighted: drop them, and tell open diffs. */
+  settingsChanged() {
+    this.diffs.clear();
+    this.settingsTick++;
+  }
+
   workChanged() {
     this.workTick++;
     this.refresh();

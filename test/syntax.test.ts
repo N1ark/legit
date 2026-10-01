@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Git } from '../src/server/git.ts';
-import { grammarFiles, syntaxes, withoutNeeded } from '../src/server/syntax.ts';
+import { grammarFiles, grammarProblems, syntaxes, withoutNeeded, zedGrammars } from '../src/server/syntax.ts';
 import { setup } from './util.ts';
 
 const t = setup();
@@ -31,47 +31,61 @@ test('dropping the needed libraries from a grammar keeps it a valid module with 
   assert.equal(withoutNeeded(plain), plain);
 });
 
-test('legit.syntax rules pick a grammar by glob, and only configured grammars are served', async () => {
+test('syntax rules pick a grammar by glob, and only grammars a rule uses are served', async () => {
   const git = await Git.open(t.dir);
-  t.git('config', '--add', 'legit.syntax', '*.out = ullbc');
-  t.git('config', '--add', 'legit.syntax', 'tests/special/*.out=grammars/mine');
-  const map = await syntaxes(git, ['a.out', 'tests/ui/b.out', 'tests/special/c.out', 'd.rs']);
+  const rules = [
+    { pattern: '*.out', grammar: 'ullbc' },
+    { pattern: 'tests/special/*.out', grammar: 'grammars/mine' },
+  ];
+  const map = syntaxes(rules, ['a.out', 'tests/ui/b.out', 'tests/special/c.out', 'd.rs']);
   assert.deepEqual(Object.fromEntries(map), { 'a.out': 'ullbc', 'tests/ui/b.out': 'ullbc', 'tests/special/c.out': 'grammars/mine' });
 
   // A folder (relative to the repo) with a compiled grammar and its query, laid out like a grammar's repo.
   mkdirSync(join(t.dir, 'grammars/mine/queries'), { recursive: true });
   writeFileSync(join(t.dir, 'grammars/mine/tree-sitter-mine.wasm'), module(['libc.so']));
   writeFileSync(join(t.dir, 'grammars/mine/queries/highlights.scm'), '(x) @keyword\n');
-  const g = await grammarFiles(git, 'grammars/mine');
+  const g = await grammarFiles(git, rules, 'grammars/mine');
   assert.equal(g.highlights, '(x) @keyword\n');
   assert.deepEqual(g.wasm, withoutNeeded(module(['libc.so'])));
 
-  await assert.rejects(grammarFiles(git, '/etc'), /No legit.syntax rule uses "\/etc"/);
-  t.git('config', '--add', 'legit.syntax', '*.x=grammars/none');
-  await assert.rejects(grammarFiles(git, 'grammars/none'), /No grammar \(\*.wasm\) and highlights.scm in grammars\/none/);
+  await assert.rejects(grammarFiles(git, rules, '/etc'), /No syntax highlighting rule uses "\/etc"/);
+  const none = [...rules, { pattern: '*.x', grammar: 'grammars/none' }];
+  await assert.rejects(grammarFiles(git, none, 'grammars/none'), /No grammar \(\*.wasm\) and highlights.scm in grammars\/none/);
+  await withZed(async () => assert.deepEqual(Object.keys(await grammarProblems(git, none)), ['grammars/none']));
 });
 
-test("a grammar named in legit.syntax is found in Zed's installed extensions, by grammar or language name", async () => {
+/** Run `f` with a fake home holding a Zed extension that has an `ullbc` grammar. */
+async function withZed(f: () => Promise<void>) {
   const home = t.tmp('legit-home-');
   const ext = join(process.platform === 'darwin' ? join(home, 'Library/Application Support') : join(home, '.local/share'), 'zed/extensions/installed/ullbc');
   mkdirSync(join(ext, 'grammars'), { recursive: true });
   mkdirSync(join(ext, 'languages/ullbc'), { recursive: true });
   writeFileSync(join(ext, 'grammars/ullbc.wasm'), module(['libc.so']));
-  writeFileSync(join(ext, 'languages/ullbc/config.toml'), 'name = "ULLBC Crate"\ngrammar = "ullbc"\n');
+  writeFileSync(join(ext, 'languages/ullbc/config.toml'), 'name = "ULLBC Crate"\ngrammar = "ullbc"\npath_suffixes = ["ullbc.crate", "crate"]\n');
   writeFileSync(join(ext, 'languages/ullbc/highlights.scm'), '(y) @type\n');
   const before = { HOME: process.env.HOME, XDG: process.env.XDG_DATA_HOME };
   process.env.HOME = home;
   delete process.env.XDG_DATA_HOME;
   try {
-    const git = await Git.open(t.dir);
-    t.git('config', '--add', 'legit.syntax', '*.out=ullbc');
-    t.git('config', '--add', 'legit.syntax', '*.crate=ULLBC Crate');
-    t.git('config', '--add', 'legit.syntax', '*.nope=nope');
-    assert.equal((await grammarFiles(git, 'ullbc')).highlights, '(y) @type\n');
-    assert.equal((await grammarFiles(git, 'ULLBC Crate')).highlights, '(y) @type\n');
-    await assert.rejects(grammarFiles(git, 'nope'), /No grammar "nope" in Zed's installed extensions/);
+    await f();
   } finally {
     process.env.HOME = before.HOME;
     if (before.XDG !== undefined) process.env.XDG_DATA_HOME = before.XDG;
   }
+}
+
+test("a grammar in a rule is found in Zed's installed extensions, by grammar or language name", async () => {
+  await withZed(async () => {
+    const git = await Git.open(t.dir);
+    const rules = [
+      { pattern: '*.out', grammar: 'ullbc' },
+      { pattern: '*.crate', grammar: 'ULLBC Crate' },
+      { pattern: '*.nope', grammar: 'nope' },
+    ];
+    assert.equal((await grammarFiles(git, rules, 'ullbc')).highlights, '(y) @type\n');
+    assert.equal((await grammarFiles(git, rules, 'ULLBC Crate')).highlights, '(y) @type\n');
+    await assert.rejects(grammarFiles(git, rules, 'nope'), /No grammar "nope" in Zed's installed extensions/);
+    assert.deepEqual(await zedGrammars(), [{ grammar: 'ullbc', language: 'ULLBC Crate', suffixes: ['ullbc.crate', 'crate'] }]);
+    assert.deepEqual(Object.keys(await grammarProblems(git, rules)), ['nope']);
+  });
 });

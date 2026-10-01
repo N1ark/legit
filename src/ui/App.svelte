@@ -15,7 +15,7 @@
     persisted,
     type Binding,
   } from 'purr';
-  import { ArrowUUpLeft, ArrowUUpRight, PencilSimpleLine, Warning } from 'purr/icons';
+  import { ArrowUUpLeft, ArrowUUpRight, Gear, PencilSimpleLine, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
@@ -25,6 +25,7 @@
   import CommitList from './CommitList.svelte';
   import PushButton from './PushButton.svelte';
   import RepoPicker from './RepoPicker.svelte';
+  import Settings from './Settings.svelte';
   import CommitView from './CommitView.svelte';
   import ConflictView from './ConflictView.svelte';
   import EditView from './EditView.svelte';
@@ -36,6 +37,7 @@
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
+  let settings = $state(false);
 
   // The commit list's width: dragged live, remembered when the drag ends.
   const LIST_WIDTH = 440;
@@ -63,7 +65,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close';
+    | 'open' | 'close' | 'settings';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -86,6 +88,7 @@
     { keys: 'b', action: 'branch', label: 'Switch branch' },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
+    { keys: '⌘,', action: 'settings', label: 'Settings' },
     { keys: '?', action: 'help', label: 'Show shortcuts' },
   ];
   const keymap = createKeymap(bindings);
@@ -107,6 +110,7 @@
     else if (action === 'branch') branchPicker?.show();
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
+    else if (action === 'settings') settings = true;
     else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
     else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
     else if (action === 'open' || action === 'close') {
@@ -138,6 +142,7 @@
     </IconButton>
     <StashPanel />
     <Backups />
+    <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = true)}><Gear /></IconButton>
   </header>
 
   {#if app.repo?.conflict?.edit}
@@ -206,6 +211,9 @@
 <DialogHost />
 <SwitchDialog />
 <ToastHost position="bottom-end" />
+{#if settings}
+  <Settings onclose={() => (settings = false)} />
+{/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
 {/if}

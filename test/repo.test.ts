@@ -287,16 +287,15 @@ test('switching branches refuses to clobber local changes; undo history is per b
   await assert.rejects(repo.switchBranch({ branch: 'nope' }), /No local branch/);
 });
 
-test('generated files: built-in patterns, linguist-generated as of the commit, legit.hide', async () => {
+test("generated files: built-in patterns, linguist-generated as of the commit, the user's patterns", async () => {
   const { generatedPaths } = await import('../src/server/generated.ts');
   write('.gitattributes', 'gen/** linguist-generated\nyarn.lock -linguist-generated\n');
-  git('config', '--add', 'legit.hide', 'docs/*.html');
   const sha = commit('files', { 'package-lock.json': '{}\n', 'yarn.lock': 'x\n', 'app.min.js': 'x\n', 'app.js': 'x\n' });
   execFileSync('mkdir', ['-p', join(dir, 'gen'), join(dir, 'docs'), join(dir, 'sub')]);
   const sha2 = commit('more', { 'gen/api.ts': 'x\n', 'docs/index.html': 'x\n', 'sub/Cargo.lock': 'x\n', 'src.ts': 'x\n' });
   const repo = await Repo.open(dir);
   const paths = ['package-lock.json', 'yarn.lock', 'app.min.js', 'app.js', 'gen/api.ts', 'docs/index.html', 'sub/Cargo.lock', 'src.ts'];
-  const hidden = await generatedPaths(repo.git, sha2, paths);
+  const hidden = await generatedPaths(repo.git, sha2, paths, ['docs/*.html']);
   assert.deepEqual([...hidden].sort(), ['app.min.js', 'docs/index.html', 'gen/api.ts', 'package-lock.json', 'sub/Cargo.lock']);
   void sha;
 });

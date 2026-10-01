@@ -45,24 +45,22 @@ is self-contained: it doesn't use your installed Node, only `git`.
 
 Generated files (lockfiles, minified bundles, source maps, snapshots, protobuf output… see `src/server/generated.ts`)
 start collapsed with a *generated* badge. Anything marked `linguist-generated` in `.gitattributes` counts too (and
-`-linguist-generated` opts a file back in). You can add your own patterns:
+`-linguist-generated` opts a file back in).
 
-```sh
-git config --add legit.hide 'docs/*.html'     # this repo; use --global for all repos
-```
+**Settings** (the gear in the header, or <kbd>⌘,</kbd>) add to that, and pick how files are highlighted. Each list has
+a part for this repo (stored in `.git/legit/settings.json`, so not committed) and one for all repos (in
+`~/Library/Application Support/legit/settings.json`); both apply, the repo's winning. Changes save as you type, and
+the open diff takes them right away.
 
-Diffs are highlighted with Prism, by file extension. Files it doesn't know, or gets wrong, can use a tree-sitter
-grammar instead: one from Zed's installed extensions, by grammar or language name, or a folder with a compiled
-grammar (`*.wasm`, from `tree-sitter build --wasm`) and its `highlights.scm` (at the top, in `queries/`, or in
-`languages/*/`, as in a Zed extension):
+- **Collapsed files**: more patterns to collapse, e.g. `docs/*.html`. (These used to be `git config legit.hide`;
+  existing values are copied in the first time, and git config isn't read after that.)
+- **Syntax highlighting**: diffs are highlighted with Prism, by file extension. Files it doesn't know, or gets wrong,
+  can use a tree-sitter grammar instead, e.g. `*.out` → `ullbc`: the name of a grammar in Zed's installed extensions
+  (the field suggests them), or a folder with a compiled grammar (`*.wasm`, from `tree-sitter build --wasm`) and its
+  `highlights.scm` (at the top, in `queries/`, or in `languages/*/`, as in a Zed extension). A grammar that can't be
+  found gets a warning next to it; one that won't load falls back to Prism. The last matching rule wins.
 
-```sh
-git config --add legit.syntax '*.out=ullbc'                     # Zed's `ullbc` grammar for .out files, in this repo
-git config --add legit.syntax 'tests/**/*.llbc=~/src/tree-sitter-ullbc'
-```
-
-Patterns are globs like `legit.hide`'s, and the last matching rule wins. The grammar loads once, the first time a
-file needs it; if it can't (the console says why), the file falls back to Prism.
+Patterns without a slash match the file name at any depth.
 
 Authors show their GitHub avatar (initials otherwise). GitHub no-reply emails map to one directly. For other
 emails, if the repo has a github.com remote, legit asks GitHub's API for a commit by that email in that repo, which

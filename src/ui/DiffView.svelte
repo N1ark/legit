@@ -82,7 +82,42 @@
   /** Unchanged lines one click on a gap's arrow shows. */
   const STEP = 20;
 
-  const files = $derived(summary.files);
+  // Which files are collapsed as generated, and their grammars, come from the settings: when those
+  // change, the summary's fetched again and those two taken from it, in place (nothing else can change).
+  let fresh = $state.raw<Map<string, FileSummary> | null>(null);
+  const files = $derived(
+    fresh
+      ? summary.files.map((f) => {
+          const n = fresh!.get(f.path);
+          return n ? { ...f, generated: n.generated, syntax: n.syntax } : f;
+        })
+      : summary.files,
+  );
+  let settingsSeen = app.settingsTick;
+  $effect(() => {
+    const tick = app.settingsTick;
+    if (tick === settingsSeen) return;
+    settingsSeen = tick;
+    app.diff(summary.sha).then(
+      (d) => {
+        if (!alive) return;
+        const before = untrack(() => files);
+        fresh = new Map(d.files.map((f) => [f.path, f]));
+        untrack(() => {
+          const t = { ...tokens };
+          files.forEach((f, i) => {
+            if (f.generated !== before[i].generated) collapsed[i] = f.generated;
+            if (f.syntax !== before[i].syntax && contents[i]) {
+              delete t[i];
+              queueHighlight(i, contents[i]);
+            }
+          });
+          tokens = t;
+        });
+      },
+      () => {},
+    );
+  });
   // Generated files (lockfiles etc.) start collapsed. The view is re-created per commit.
   let collapsed = $state<Record<number, boolean>>(
     untrack(() =>
@@ -184,7 +219,7 @@
   function queueHighlight(i: number, rows: FileRows) {
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
-    const key = `${summary.sha}:${i}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '');
+    const key = `${summary.sha}:${i}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '');
     const want = () => alive && contents[i] === rows;
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };

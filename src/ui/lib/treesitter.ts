@@ -1,4 +1,4 @@
-// Tree-sitter highlighting, for files a repo's `legit.syntax` rules give a grammar (loaded by
+// Tree-sitter highlighting, for files the settings give a grammar (loaded by
 // the highlight worker only then). The grammar and its highlights query come from the server;
 // capture names (`keyword`, `type.builtin`...) map onto the theme's Prism token classes.
 

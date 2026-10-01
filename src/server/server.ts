@@ -12,12 +12,13 @@ import {
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
 import { cancelEdit, editChanges, finishEdit, startEdit } from './edit.ts';
-import { grammarFiles, syntaxes } from './syntax.ts';
+import { globalSettingsFile, effectiveSettings, readSettings, repoSettingsFile, saveSettings } from './settings.ts';
+import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
 import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
-import type { CommitDiff, FileContents } from '../shared/types.ts';
+import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
 const MIME: Record<string, string> = {
@@ -137,6 +138,12 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     stashDrop: (b) => stashDrop(repo, b),
     discard: (b) => discard(repo, b),
     restoreDiscarded: (b) => restoreDiscarded(repo, b),
+    // Diffs' summaries say which files are collapsed and how they're highlighted: work them out again.
+    saveSettings: async (b) => {
+      const s = await saveSettings(repo.git, b);
+      summaries.clear();
+      return s;
+    },
   };
 
   let origin = '';
@@ -147,11 +154,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (!json) {
       const work = /^w\d+$/.test(d.sha);
       const paths = d.files.map((f) => f.path);
-      const [generated, syntax] = await Promise.all([
-        generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), paths),
-        syntaxes(repo.git, paths),
-      ]);
-      json = JSON.stringify(summarize(d, generated, syntax));
+      const settings = await effectiveSettings(repo.git);
+      const generated = await generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), paths, settings.collapse);
+      json = JSON.stringify(summarize(d, generated, syntaxes(settings.syntax, paths)));
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
     }
@@ -207,9 +212,18 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       if (!f) return send(res, 404, { error: 'Not found' });
       return send(res, 200, await oldLines(repo.git, f));
     }
-    // /api/grammar?name=ullbc&part=wasm|highlights: a grammar this repo's legit.syntax rules use.
+    if (path === '/api/settings') {
+      const s = await readSettings(repo.git);
+      const [grammars, problems] = await Promise.all([
+        zedGrammars(),
+        grammarProblems(repo.git, [...s.global.syntax, ...s.repo.syntax]),
+      ]);
+      const info: SettingsInfo = { ...s, files: { repo: repoSettingsFile(repo.git), global: globalSettingsFile() }, grammars, problems };
+      return send(res, 200, info);
+    }
+    // /api/grammar?name=ullbc&part=wasm|highlights: a grammar the syntax highlighting rules use.
     if (path === '/api/grammar') {
-      const g = await grammarFiles(repo.git, query.get('name') ?? '');
+      const g = await grammarFiles(repo.git, (await effectiveSettings(repo.git)).syntax, query.get('name') ?? '');
       if (query.get('part') === 'wasm') {
         res.writeHead(200, { 'content-type': 'application/wasm', 'cache-control': 'no-store' });
         return res.end(g.wasm);

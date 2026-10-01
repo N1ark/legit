@@ -126,7 +126,7 @@ export interface CommitDiff {
 export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   /** Generated (lockfile, minified, `linguist-generated`...): collapsed by default. */
   generated: boolean;
-  /** A tree-sitter grammar to highlight it with (`legit.syntax` in git config), instead of Prism's guess. */
+  /** A tree-sitter grammar to highlight it with (from the settings), instead of Prism's guess. */
   syntax?: string;
   /** Rows the file renders: one per hunk header and per diff line, and one after the last hunk when the file may go on. */
   rows: number;
@@ -407,4 +407,37 @@ export interface Stashes {
   entries: StashEntry[];
   /** Newest first. */
   dropped: DroppedStash[];
+}
+
+/** Where a setting applies: this repo, or every repo. */
+export type Scope = 'repo' | 'global';
+
+export interface ScopeSettings {
+  /** Globs of files to collapse as generated, on top of the built-in ones. */
+  collapse: string[];
+  /** Tree-sitter grammars to highlight files with, by glob; the last matching rule wins. */
+  syntax: { pattern: string; grammar: string }[];
+}
+
+export interface Settings {
+  repo: ScopeSettings;
+  global: ScopeSettings;
+}
+
+/** A grammar in Zed's installed extensions. */
+export interface ZedGrammar {
+  grammar: string;
+  /** The language's name, e.g. "ULLBC Crate". */
+  language: string;
+  /** Its files' suffixes, e.g. ["crate"]. */
+  suffixes: string[];
+}
+
+/** What the settings page shows. */
+export interface SettingsInfo extends Settings {
+  /** Where each scope is stored. */
+  files: Record<Scope, string>;
+  grammars: ZedGrammar[];
+  /** Why a grammar in a rule can't be used, by grammar. */
+  problems: Record<string, string>;
 }
