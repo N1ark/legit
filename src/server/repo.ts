@@ -721,13 +721,31 @@ export class Repo {
     const [upstream, remote, remoteRef, track] = info.split('\0');
     if (upstream && remote && remoteRef && track !== 'gone') {
       const n = (k: string) => Number(new RegExp(`${k} (\\d+)`).exec(track)?.[1] ?? 0);
-      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead: n('ahead'), behind: n('behind') };
+      const [ahead, behind] = [n('ahead'), n('behind')];
+      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, upstream));
+      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten };
     }
     const names = remotes.split('\n').filter(Boolean);
     const target = remote || (names.includes('origin') ? 'origin' : names[0]);
     if (!target) return null;
     const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
-    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0 };
+    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false };
+  }
+
+  /**
+   * Was `ref`'s commit ever part of `branch` (reachable from an entry of its reflog)? When a
+   * diverged upstream was, the branch was rewritten after pushing; when it wasn't, the remote
+   * has new commits. The same test git's --force-if-includes makes.
+   */
+  private async hadTip(branch: string, ref: string): Promise<boolean> {
+    const log = await this.git.text(['reflog', 'show', '--format=%H', `refs/heads/${branch}`, '--'], { allowFail: true });
+    const shas = [...new Set(log.split('\n').filter(Boolean))].slice(0, 1000);
+    if (!shas.length) return false;
+    const r = await this.git.run(['rev-list', '-1', '--stdin'], {
+      input: `${ref}\n${shas.map((s) => `^${s}`).join('\n')}\n`,
+      allowFail: true,
+    });
+    return r.code === 0 && r.out.toString('latin1').trim() === '';
   }
 
   /**

@@ -276,10 +276,10 @@ test('push: publish, fast-forward, and force push only with consent and never ov
 
   // Publish a branch with no upstream.
   let st = await repo.state();
-  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: true, ahead: 2, behind: 0 });
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: true, ahead: 2, behind: 0, rewritten: false });
   st = (await repo.push({})).state;
   assert.equal(remoteHead(), a);
-  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: false, ahead: 0, behind: 0 });
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: false, ahead: 0, behind: 0, rewritten: false });
   await assert.rejects(repo.push({}), /up to date/);
 
   // Fast-forward.
@@ -291,7 +291,7 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   // Rewriting pushed history needs an explicit force.
   await repo.edit({ sha: a, subject: 'A', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
   st = await repo.state();
-  assert.deepEqual([st.push?.ahead, st.push?.behind], [2, 2]);
+  assert.deepEqual([st.push?.ahead, st.push?.behind, st.push?.rewritten], [2, 2, true]);
   await assert.rejects(repo.push({}), /needs a force push/);
   assert.equal(remoteHead(), b);
   await repo.push({ force: true });

@@ -1,9 +1,10 @@
 <script lang="ts">
   // Syncing with the remote, as GitHub Desktop does it: Fetch (also every five minutes in the
   // background, and on focus after a minute), plus one button for the obvious next step:
-  // Publish, Push ↑N or Pull ↓N. When the branch has diverged, Pull asks whether to rebase or
-  // merge, next to a force push (confirmed by a second click) for history that was rewritten
-  // on purpose; it uses a lease, which git refuses if the remote has commits this repo hasn't seen.
+  // Publish, Push ↑N or Pull ↓N. When the branch has diverged because the remote has new
+  // commits, Pull asks whether to rebase or merge. When it diverged because pushed commits were
+  // rewritten here, it's a force push instead (confirmed by a second click), with a lease that
+  // git refuses if the remote has commits this repo hasn't seen.
   import { Button, ConfirmButton, formatFull, formatRelative, menu, toast } from 'purr';
   import { ArrowsClockwise, CaretDown, CloudArrowDown, CloudArrowUp, GitMerge, GitPullRequest, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
@@ -13,7 +14,7 @@
   const mode = $derived(
     !info ? null
     : info.publish ? 'publish'
-    : info.ahead && info.behind ? 'diverged'
+    : info.ahead && info.behind ? (info.rewritten ? 'rewritten' : 'diverged')
     : info.ahead ? 'push'
     : info.behind ? 'pull'
     : 'done',
@@ -56,8 +57,8 @@
 
   async function push() {
     if (!info) return;
-    if (await app.op('push', { force: mode === 'diverged' })) {
-      toast(mode === 'publish' ? `Published to ${where}` : mode === 'diverged' ? `Force pushed to ${where}` : `Pushed to ${where}`);
+    if (await app.op('push', { force: mode === 'rewritten' })) {
+      toast(mode === 'publish' ? `Published to ${where}` : mode === 'rewritten' ? `Force pushed to ${where}` : `Pushed to ${where}`);
     }
   }
 
@@ -90,8 +91,8 @@
   const pushTitle = $derived(
     !info ? ''
     : mode === 'publish' ? `Push this branch to ${info.remote} as ${info.branch} and track it`
-    : mode === 'diverged'
-      ? `Replace ${where} with this branch, dropping its ${commits(info.behind)} you don't have. For history you rewrote on purpose. ` +
+    : mode === 'rewritten'
+      ? `You rewrote commits that were already on ${where}: this replaces its ${commits(info.behind)} with your ${commits(info.ahead)}. ` +
         "Uses --force-with-lease --force-if-includes: it refuses if the remote has commits you haven't seen."
     : `Push ${commits(info.ahead)} to ${where}`,
   );
@@ -118,7 +119,7 @@
         {#if mode === 'diverged'}<CaretDown />{/if}
       </Button>
     {/if}
-    {#if mode === 'diverged'}
+    {#if mode === 'rewritten'}
       <ConfirmButton confirmLabel="Click to force push" onconfirm={push} {disabled} title={pushTitle}>
         <Warning weight="bold" /> Force push <span class="count">↑{info.ahead}</span>
       </ConfirmButton>

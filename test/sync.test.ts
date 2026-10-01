@@ -361,3 +361,20 @@ test('merge and rebase onto another local branch', async () => {
   assert.ok((await repo.backups()).some((b) => b.label === 'merge' && b.sha === head));
   void r;
 });
+
+test('diverged by rewriting pushed commits asks for a force push; by new remote commits, a pull', async () => {
+  const pushed = commit('pushed', { m: '1\n' });
+  git('push', '-q', 'origin', 'main');
+  const repo = await Repo.open(dir);
+  await repo.edit({ sha: pushed, subject: 'reworded', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
+  let p = (await repo.state()).push!;
+  assert.deepEqual([p.ahead, p.behind, p.rewritten], [1, 1, true]);
+
+  // Someone else pushes on top of what we had: now it's their new commit we're missing.
+  git('reset', '-q', '--hard', pushed);
+  theyPush('theirs', { t: '1\n' });
+  commit('mine', { n: '1\n' });
+  await fetchRemote(repo);
+  p = (await repo.state()).push!;
+  assert.deepEqual([p.ahead, p.behind, p.rewritten], [1, 1, false]);
+});

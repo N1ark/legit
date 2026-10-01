@@ -52,6 +52,12 @@ export interface PushInfo {
   /** Commits only here / only on the remote, as of the last fetch. */
   ahead: number;
   behind: number;
+  /**
+   * Diverged because commits that were pushed got rewritten here (the upstream's tip was once
+   * part of this branch), so a force push is what's wanted; otherwise the remote has new
+   * commits, and pulling is.
+   */
+  rewritten: boolean;
 }
 
 export type LineKind = ' ' | '+' | '-';
