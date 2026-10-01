@@ -210,3 +210,41 @@ export interface CommitRequest {
   /** Fold what's staged into HEAD and replace its message. */
   amend?: boolean;
 }
+
+export interface DiscardResult {
+  state: RepoState;
+  /** Where what was discarded is saved (refs/legit/discarded/<time>); null if it all went to the Trash. */
+  ref: string | null;
+  /** Files discarded. */
+  files: number;
+  /** Files too big to save in git, moved to the Trash instead. */
+  trashed: string[];
+}
+
+/** Changes that were discarded, saved before they were. */
+export interface Discarded {
+  ref: string;
+  sha: string;
+  /** Milliseconds since epoch. */
+  time: number;
+  /** e.g. "discarded changes to 2 files". */
+  label: string;
+  /** The files (the first 50). */
+  files: string[];
+  count: number;
+}
+
+export interface RestoreDiscardedRequest {
+  ref: string;
+  /** Also write files that changed since the discard (their current content is saved first). */
+  overwrite?: boolean;
+}
+
+export interface RestoreDiscardedResult {
+  state: RepoState;
+  restored: number;
+  /** Files that changed since the discard; when not overwriting, nothing was restored. */
+  conflicts: string[];
+  /** Where the overwritten content was saved, when there was any. */
+  saved: string | null;
+}

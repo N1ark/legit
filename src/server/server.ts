@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { extname, join, normalize } from 'node:path';
 import { fileContent, summarize } from './diff.ts';
 import { avatars } from './avatars.ts';
+import { discard, discarded, restoreDiscarded } from './discard.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -105,6 +106,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     unstage: (b) => repo.unstage(b),
     commit: (b) => repo.commit(b),
     uncommit: () => repo.uncommit(),
+    discard: (b) => discard(repo, b),
+    restoreDiscarded: (b) => restoreDiscarded(repo, b),
   };
 
   let origin = '';
@@ -125,6 +128,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
+    if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

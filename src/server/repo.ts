@@ -49,8 +49,8 @@ export class Repo {
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
   /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
-  private snapshots = new Map<string, CommitDiff>();
-  private snapshotIds = new Map<string, string>();
+  snapshots = new Map<string, CommitDiff>();
+  snapshotIds = new Map<string, string>();
   private nextSnapshot = 1;
 
   constructor(git: Git) {
@@ -69,18 +69,18 @@ export class Repo {
   }
 
   /** Serialise mutating operations. */
-  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const p = this.queue.then(fn);
     this.queue = p.catch(() => {});
     return p;
   }
 
-  private async head(): Promise<string | null> {
+  async head(): Promise<string | null> {
     const r = await this.git.run(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true });
     return r.code === 0 ? r.out.toString('latin1').trim() : null;
   }
 
-  private blocked(): string | null {
+  blocked(): string | null {
     const d = this.git.gitDir;
     if (existsSync(join(d, 'rebase-merge')) || existsSync(join(d, 'rebase-apply'))) return 'A rebase is in progress.';
     if (existsSync(join(d, 'MERGE_HEAD'))) return 'A merge is in progress.';
@@ -555,7 +555,7 @@ export class Repo {
    * Resolve a selection made on snapshot `key` against a fresh diff of the same kind, refusing
    * if any selected file changed since. Returns the whole files and partial selections.
    */
-  private async resolve(req: StageRequest, fresh: CommitDiff) {
+  async resolve(req: StageRequest, fresh: CommitDiff) {
     const snap = this.snapshots.get(req.key);
     if (!snap) throw new GitError('Those changes are out of date; refresh and select again.');
     const now = new Map(fresh.files.map((f) => [f.path, f]));
