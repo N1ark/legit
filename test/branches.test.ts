@@ -132,14 +132,14 @@ test('remote branches: list the untracked ones, check one out, delete one only a
   t.gitIn(other, 'commit', '-q', '--allow-empty', '-m', 'their work');
   t.gitIn(other, 'push', '-q', 'origin', 'other');
   const theirs = t.gitIn(other, 'rev-parse', 'HEAD');
-  await assert.rejects(deleteRemoteBranch(repo, { remote: 'origin', branch: 'other' }), /haven't fetched/);
+  await assert.rejects(deleteRemoteBranch(repo, { ref: 'refs/remotes/origin/other' }), /haven't fetched/);
   assert.equal(t.gitIn(remote, 'rev-parse', 'other'), theirs);
   assert.deepEqual(await deletedBranches(repo), []);
 
-  await assert.rejects(deleteRemoteBranch(repo, { remote: 'nope', branch: 'other' }), /No remote named/);
-  await assert.rejects(deleteRemoteBranch(repo, { remote: 'origin', branch: 'gone' }), /fetch first/);
+  await assert.rejects(deleteRemoteBranch(repo, { ref: 'refs/remotes/nope/other' }), /not a remote branch/);
+  await assert.rejects(deleteRemoteBranch(repo, { ref: 'refs/remotes/origin/gone' }), /fetch first/);
   git('fetch', '-q');
-  st = (await deleteRemoteBranch(repo, { remote: 'origin', branch: 'other' })).state;
+  st = (await deleteRemoteBranch(repo, { ref: 'refs/remotes/origin/other' })).state;
   assert.equal(t.gitIn(remote, 'branch', '--list', 'other'), '');
   assert.equal(git('branch', '-r', '--list', 'origin/other'), '');
   const deleted = await deletedBranches(repo);

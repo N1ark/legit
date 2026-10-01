@@ -155,16 +155,23 @@ async function remotes(repo: Repo): Promise<string[]> {
   return (await repo.git.text(['remote'])).split('\n').filter(Boolean).sort((a, b) => b.length - a.length);
 }
 
+/** `refs/remotes/<remote>/<branch>` split into its remote and branch, if it names a remote. */
+async function parseRemoteRef(repo: Repo, ref: string) {
+  const remote = (await remotes(repo)).find((r) => ref?.startsWith(`refs/remotes/${r}/`));
+  return remote ? { remote, branch: ref.slice(`refs/remotes/${remote}/`.length) } : null;
+}
+
 /**
- * Delete a branch on a remote. Only what this repo has seen goes: the push is leased on the
- * remote-tracking branch, and that tip is first saved under refs/legit/deleted.
+ * Delete a branch on a remote, given its remote-tracking branch. Only what this repo has seen
+ * goes: the push is leased on the remote-tracking branch, whose tip is first saved under
+ * refs/legit/deleted.
  */
-export function deleteRemoteBranch(repo: Repo, req: { remote: string; branch: string }): Promise<OpResult> {
+export function deleteRemoteBranch(repo: Repo, req: { ref: string }): Promise<OpResult> {
   return guarded(repo, async () => {
-    const { remote, branch } = req;
-    if (!remote || !(await remotes(repo)).includes(remote)) throw new GitError(`No remote named ${remote}.`);
-    const tracking = `refs/remotes/${remote}/${branch}`;
-    const tip = branch && (await sha(repo, tracking));
+    const parsed = await parseRemoteRef(repo, req.ref);
+    if (!parsed) throw new GitError(`${req.ref} is not a remote branch.`);
+    const { remote, branch } = parsed;
+    const tip = await sha(repo, req.ref);
     if (!tip) throw new GitError(`There's no ${remote}/${branch} here; fetch first. Nothing was deleted.`);
     const saved = `${DELETED}/${branch}/${uniqueTime()}-${remote.replace(/[^\w-]+/g, '-')}`;
     await repo.git.run(['update-ref', '-m', `legit: backup before deleting ${remote}/${branch}`, saved, tip, '']);
@@ -216,9 +223,9 @@ export async function remoteBranches(repo: Repo): Promise<RemoteBranchInfo[]> {
 /** Create a local branch tracking a remote one and switch to it (`git switch --track`). */
 export function checkoutRemote(repo: Repo, req: { ref: string; stash?: boolean }): Promise<OpResult> {
   return guarded(repo, async () => {
-    const remote = (await remotes(repo)).find((r) => req.ref?.startsWith(`refs/remotes/${r}/`));
-    if (!remote || !(await sha(repo, req.ref))) throw new GitError(`No remote branch ${req.ref}; fetch and try again.`);
-    const name = await validName(repo, req.ref.slice(`refs/remotes/${remote}/`.length));
+    const parsed = await parseRemoteRef(repo, req.ref);
+    if (!parsed || !(await sha(repo, req.ref))) throw new GitError(`No remote branch ${req.ref}; fetch and try again.`);
+    const name = await validName(repo, parsed.branch);
     if (await localExists(repo, name)) throw new GitError(`A local branch named ${name} already exists; switch to it instead.`);
     await switchTo(repo, ['-c', name, '--track', req.ref], name, req.stash);
   });
