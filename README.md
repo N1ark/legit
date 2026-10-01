@@ -26,6 +26,7 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Edit** | Title, description, author and co-authors (`Co-authored-by` trailers) of any commit. Titles and descriptions show as markdown; click one (or tab to it) to edit it. <kbd>⌘↵</kbd> saves, <kbd>esc</kbd> reverts. |
 | **Links** | Web links in messages, and `#123`, `GH-123` or `owner/repo#123`, which open the GitHub issue or pull request (of the remote you push to, else `origin`). In the commit list, <kbd>⌘</kbd>-click them: a click selects the row. |
 | **Split** | Click, drag or shift-click lines in a commit's diff, or use the strip left of the line numbers to pick whole blocks of consecutive changes (hunk headers and file checkboxes pick more). Then split them into a new commit placed *after* (or *before*) the original. |
+| **Edit the diff** | Change what a commit does, right in its diff. Pick lines and press **Remove** (<kbd>⌫</kbd>), or right-click one: an added line is no longer added (*Don't add this line*), a removed line stays (*Keep this removed line*); right-click a file to take all of its changes out. Double-click an added or unchanged line (or right-click ▸ *Edit line*) to edit it in place: <kbd>↵</kbd> saves, <kbd>⇧↵</kbd> adds a line, <kbd>esc</kbd> cancels. The commits after it are replayed on top, like `git rebase -i` with an amended commit, so the change carries through to them and your files; if a later commit touches the same lines, it's refused, as it is when you have uncommitted changes. <kbd>⌘Z</kbd> undoes it. |
 | **Squash** | <kbd>⌘</kbd>/<kbd>⇧</kbd>-click several commits; they're folded into the oldest one, with a combined message you can edit. Other authors become co-authors. |
 | **Reorder** | Drag commits, or <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> (<kbd>K</kbd>/<kbd>J</kbd>). |
 | **Drop** | Trash button on a commit (click twice). |
@@ -85,7 +86,7 @@ Losing work is the one failure that matters, so every operation is built to be r
   changes never touches the index; discarding staged ones also saves the index entries before and after (the third
   and fourth parents), and only updates the index if nothing restaged those files meanwhile. Files over 20 MB aren't put in git: they go to the macOS Trash, and if that fails they're left alone.
   Restoring refuses files that changed since the discard unless you confirm, and then saves them first.
-- **The final snapshot can't change unless you're dropping commits.** Edit, split, squash and reorder only restructure
+- **The final snapshot can't change unless you're dropping commits or editing a diff.** Edit, split, squash and reorder only restructure
   history. If the rewritten tip's tree isn't byte-identical to the current one, the operation is aborted.
 - **Your working tree is left alone.** Most operations don't touch it at all. When one would (drop, undo, restore),
   it's refused if you have any uncommitted changes to tracked files, and git itself refuses to overwrite untracked files.

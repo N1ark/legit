@@ -9,7 +9,7 @@ import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
-  Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { switchBranch } from './branches.ts';
 import { applyLines, commitDiff } from './diff.ts';
@@ -410,14 +410,9 @@ export class Repo {
       const k = Repo.indexOf(chain, req.sha);
       const c = chain[k];
       const diff = await this.diff(c.sha);
-      const sel = new Map(Object.entries(req.selection).map(([p, v]) => [fromUtf8(p), v]));
-      if (![...sel.values()].some((v) => v === 'all' || v.length)) throw new GitError('Select some changes to split out first.');
+      const selected = Repo.picker(req.selection, 'split out');
 
       // The first of the two commits applies the changes for which `first` is true.
-      const selected = (path: string, i: number) => {
-        const v = sel.get(path);
-        return v === 'all' || (v?.includes(i) ?? false);
-      };
       const first = req.before ? selected : (path: string, i: number) => !selected(path, i);
       const mid = await this.buildTree(c, diff, first);
 
@@ -438,6 +433,80 @@ export class Repo {
     });
   }
 
+  /** A selection (paths in UTF-8) as a test of whether change `i` of `path` is picked; refuses an empty one. */
+  private static picker(selection: Selection, what: string): (path: string, i: number) => boolean {
+    const sel = new Map(Object.entries(selection).map(([p, v]) => [fromUtf8(p), v]));
+    if (![...sel.values()].some((v) => v === 'all' || v.length)) throw new GitError(`Select some changes to ${what} first.`);
+    return (path, i) => {
+      const v = sel.get(path);
+      return v === 'all' || (v?.includes(i) ?? false);
+    };
+  }
+
+  /**
+   * Take changes out of a commit: picked added lines are no longer added, picked removed lines
+   * are kept (a whole file goes back to how it was before the commit). The commits after it are
+   * replayed on top, so the change is gone from them too, and from your files; a later commit
+   * that conflicts with it refuses the whole operation.
+   */
+  removeChanges(req: RemoveChangesRequest): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const chain = await this.chain();
+      const k = Repo.indexOf(chain, req.sha);
+      const c = chain[k];
+      const picked = Repo.picker(req.selection, 'remove');
+      const tree = await this.buildTree(c, await this.diff(c.sha), (path, i) => !picked(path, i));
+      return this.retree('remove changes', chain, k, tree);
+    });
+  }
+
+  /**
+   * Replace one line of a commit's version of a file (an added line, or an unchanged one, which
+   * the commit then changes) with new text, which may be several lines. The commits after it are
+   * replayed on top, as with `removeChanges`.
+   */
+  editLine(req: EditLineRequest): Promise<OpResult> {
+    return this.exclusive(async () => {
+      const chain = await this.chain();
+      const k = Repo.indexOf(chain, req.sha);
+      const c = chain[k];
+      const path = fromUtf8(req.path);
+      const f = (await this.diff(c.sha)).files.find((x) => x.path === path);
+      if (!f) throw new GitError(`${req.path} isn't changed by this commit.`);
+      if (!f.partial || f.status === 'D') throw new GitError(`${req.path} can't be edited line by line.`);
+      const blob = (await this.git.readObjects([f.newSha])).get(f.newSha)!.data.toString('latin1');
+      const lines = blob.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+      if (!Number.isInteger(req.line) || req.line < 1 || req.line > lines.length) {
+        throw new GitError(`${req.path} has no line ${req.line} in this commit; refresh.`);
+      }
+      const old = lines[req.line - 1];
+      // The text arrives as UTF-8: a line in another encoding would come back garbled.
+      if (fromUtf8(toUtf8(old)) !== old) throw new GitError(`Line ${req.line} of ${req.path} isn't UTF-8 text, so it can't be edited here.`);
+      if (typeof req.text !== 'string') throw new GitError('Missing the new text.');
+      // Keep the file's line endings: the line's own, or (on a last line without one) the file's.
+      const ending = /\r?\n$/.exec(old)?.[0] ?? '';
+      const eol = ending || (lines.at(-2)?.endsWith('\r\n') ? '\r\n' : '\n');
+      const text = fromUtf8(req.text).split('\n').map((l) => l.replace(/\r$/, '')).join(eol) + ending;
+      if (text === old) throw new GitError('That line is unchanged.');
+      lines[req.line - 1] = text;
+      const sha = this.git.writeObject('blob', Buffer.from(lines.join(''), 'latin1'));
+      await this.git.flush();
+      const tree = await this.treeWith(c.tree, [`${f.newMode} ${sha}\t${f.path}`]);
+      return this.retree('edit line', chain, k, tree);
+    });
+  }
+
+  /**
+   * Give `chain[k]` a new tree and replay the commits after it on top. The final files change,
+   * so this goes through the same checks as a drop (no uncommitted changes, conflicts refuse).
+   */
+  private async retree(label: string, chain: RawCommit[], k: number, tree: string): Promise<OpResult> {
+    const items: Item[] = chain.slice(0, k + 1).map((src) => ({ src }));
+    items[k].tree = tree;
+    const shas = await this.rewrite(label, chain, k, items, false);
+    return this.result(await this.state(), chain.slice(0, k + 1).map((c, i) => [c, shas[i]]), [shas[k]]);
+  }
+
   /** Tree of `c`'s parent plus the changed lines of `diff` for which `apply` is true. */
   private async buildTree(c: RawCommit, diff: CommitDiff, apply: (path: string, i: number) => boolean): Promise<string> {
     const zero = '0'.repeat(c.tree.length);
@@ -452,7 +521,7 @@ export class Repo {
       if (all) {
         records.push(f.status === 'D' ? `0 ${zero}\t${f.path}` : `${f.newMode} ${f.newSha}\t${f.path}`);
       } else if (count > 0) {
-        if (!f.partial) throw new GitError(`${toUtf8(f.path)} can only be split as a whole file.`);
+        if (!f.partial) throw new GitError(`${toUtf8(f.path)} can only be picked as a whole file.`);
         partial.push(f);
       }
     }
@@ -463,12 +532,16 @@ export class Repo {
       const sha = this.git.writeObject('blob', Buffer.from(content, 'latin1'));
       records.push(`${f.status === 'D' ? f.oldMode : f.newMode} ${sha}\t${f.path}`);
     }
-
     await this.git.flush();
+    return this.treeWith(await this.git.treeOf(c.parents[0] ?? null), records);
+  }
+
+  /** `base` with index records ("mode sha\tpath"; mode 0 deletes) applied, through a throwaway index. */
+  private async treeWith(base: string, records: string[]): Promise<string> {
     const index = join(tmpdir(), `legit-index-${randomBytes(6).toString('hex')}`);
     const env = { GIT_INDEX_FILE: index };
     try {
-      await this.git.run(['read-tree', await this.git.treeOf(c.parents[0] ?? null)], { env });
+      await this.git.run(['read-tree', base], { env });
       if (records.length) {
         await this.git.run(['update-index', '-z', '--index-info'], {
           env,

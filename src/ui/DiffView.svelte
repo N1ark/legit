@@ -17,12 +17,12 @@
     toast,
     variableRange,
   } from 'purr';
-  import { Copy, FileArrowUp } from 'purr/icons';
+  import { Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
   import { flushSync, onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
-  import type { DiffSummary, FileSummary } from '../shared/types.ts';
+  import type { DiffSummary, FileSummary, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
-  import { app } from './lib/app.svelte.ts';
+  import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { ADDED, type FileRows, HUNK, REMOVED, buildRows } from './lib/rows.ts';
 
@@ -33,6 +33,9 @@
     hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
     fileActions,
     tree = false,
+    initial = null,
+    onremove,
+    oneditline,
   }: {
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
@@ -42,6 +45,12 @@
     fileActions?: (f: FileSummary) => MaybeEntry[];
     /** Show the files as a folder tree beside the diff, to jump between them. */
     tree?: boolean;
+    /** Where to open, from `position()` of the view this one replaces. */
+    initial?: DiffPosition | null;
+    /** Take changes out of the commit (offered in a changed line's menu). */
+    onremove?: (selection: Selection) => void;
+    /** Replace line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
+    oneditline?: (path: string, line: number, text: string) => Promise<boolean>;
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -60,7 +69,11 @@
   const files = $derived(summary.files);
   // Generated files (lockfiles etc.) start collapsed. The view is re-created per commit.
   let collapsed = $state<Record<number, boolean>>(
-    untrack(() => Object.fromEntries(summary.files.flatMap((f, i) => (f.generated ? [[i, true]] : [])))),
+    untrack(() =>
+      Object.fromEntries(
+        summary.files.flatMap((f, i) => ((initial ? initial.collapsed.includes(f.path) : f.generated) ? [[i, true]] : [])),
+      ),
+    ),
   );
   const generatedCount = $derived(files.filter((f) => f.generated).length);
   let contents = $state.raw<Record<number, FileRows>>({});
@@ -70,9 +83,16 @@
   let scroller: HTMLElement;
   let alive = true;
 
-  const bodyHeight = (f: FileSummary) => (f.rows ? f.rows * ROW + PAD : NOTE);
+  // Editing a line in place (double-click it, or its menu): the row becomes a text field, which
+  // grows by a row per line typed into it and pushes the rows below down.
+  let editing = $state<{ i: number; r: number; text: string; orig: string } | null>(null);
+  let saving = $state(false);
+  const editRows = $derived(editing ? editing.text.split('\n').length : 1);
+
+  const bodyHeight = (i: number) =>
+    files[i].rows ? files[i].rows * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0) : NOTE;
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
-  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(files[i])) + GAP));
+  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
 
   /** [first, end) of the files overlapping the viewport plus overscan. */
@@ -105,6 +125,12 @@
     ro.observe(scroller);
     ro.observe(scroller.firstElementChild ?? filesEl);
     measure();
+    if (initial) {
+      const k = initial.path === null ? -1 : files.findIndex((f) => f.path === initial.path);
+      if (k >= 0) scroller.scrollTop += tops[k] + Math.min(initial.offset, fileHeight(k)) - view.top;
+      else scroller.scrollTop = initial.scrollTop;
+      measure();
+    }
     return () => {
       alive = false;
       scroller.removeEventListener('scroll', measure);
@@ -166,6 +192,19 @@
     scroller.scrollTop += tops[i] - view.top;
     measure();
     jump = { i, top: view.top };
+  }
+
+  /** Where the view is, to open the next one (of the rewritten commit) at the same place. */
+  export function position(): DiffPosition {
+    const k = view.top >= 0 ? rowAt(tops, view.top) : -1;
+    const at = k >= 0 && k < files.length ? k : -1;
+    return {
+      path: at >= 0 ? files[at].path : null,
+      offset: at >= 0 ? view.top - tops[at] : 0,
+      scrollTop: scroller?.scrollTop ?? 0,
+      collapsed: files.filter((_, i) => collapsed[i]).map((f) => f.path),
+      shown: visible.map((i) => files[i].path),
+    };
   }
 
   const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }));
@@ -231,6 +270,7 @@
   }
 
   function down(e: MouseEvent, i: number) {
+    if ((e.target as HTMLElement).closest('.editor')) return;
     const r = rowOf(e);
     const rows = contents[i];
     if (readonly || r < 0 || !rows || e.button !== 0) return;
@@ -281,6 +321,94 @@
     drag.last = ci;
   }
 
+  /** Row r of file i is a line of the commit's version of a text file (added or unchanged). */
+  function canEdit(i: number, r: number): boolean {
+    const f = files[i];
+    const rows = contents[i];
+    return !!oneditline && !readonly && f.partial && f.status !== 'D' && !!rows && rows.kind[r] !== HUNK && rows.n[r] > 0;
+  }
+
+  /** Focus the field when it's first shown, not each time scrolling mounts it again. */
+  let focusEditor = false;
+
+  function startEdit(i: number, r: number) {
+    if (saving || !canEdit(i, r)) return;
+    // The line ending isn't part of the text (the server keeps the file's).
+    const text = contents[i].text[r].replace(/\r$/, '');
+    editing = { i, r, text, orig: text };
+    focusEditor = true;
+  }
+
+  async function saveEdit() {
+    if (!editing || saving || !oneditline) return;
+    const { i, r, text, orig } = editing;
+    if (text === orig) {
+      editing = null;
+      return;
+    }
+    saving = true;
+    try {
+      if (await oneditline(files[i].path, contents[i].n[r], text)) editing = null;
+    } finally {
+      saving = false;
+    }
+  }
+
+  function editorKey(e: KeyboardEvent) {
+    // The field's keys are its own (Esc mustn't also clear the picked lines, say).
+    e.stopPropagation();
+    if (e.isComposing) return;
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      saveEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      editing = null;
+    } else if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      document.execCommand('insertText', false, '\t');
+    }
+  }
+
+  // Leaving the field closes it if nothing was typed. (Removing the field blurs it too.)
+  function closeUnchanged() {
+    if (editing && editing.text === editing.orig && !saving) editing = null;
+  }
+
+  function attachEditor(el: HTMLTextAreaElement) {
+    if (!focusEditor) return;
+    focusEditor = false;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+  }
+
+  /** Picked changes of every file, as a selection. */
+  function picked(): Selection {
+    const out: Selection = {};
+    for (const f of files) if (sel[f.path].size) out[f.path] = [...sel[f.path]];
+    return out;
+  }
+
+  function lineActions(i: number, r: number): MaybeEntry[] {
+    const f = files[i];
+    const ci = contents[i].ci[r];
+    const count = Object.values(sel).reduce((n, s) => n + s.size, 0);
+    const many = ci >= 0 && sel[f.path].has(ci) && count > 1;
+    return [
+      canEdit(i, r) && { label: 'Edit line', icon: PencilSimple, note: 'Or double-click it', run: () => startEdit(i, r) },
+      !!onremove && !readonly && ci >= 0 && f.partial && {
+        label: many
+          ? `Remove ${count} picked changes from commit`
+          : contents[i].kind[r] === ADDED
+            ? "Don't add this line"
+            : 'Keep this removed line',
+        icon: Eraser,
+        note: 'Takes the change out of the commit',
+        run: () => onremove!(many ? picked() : { [f.path]: [ci] }),
+      },
+    ];
+  }
+
   // Context menu (right-click a file header or a line): open in Zed, copy paths.
   /** New-side line number to open at for row r: its own, or the nearest one after/before it. */
   function lineFor(rows: FileRows, r: number): number | undefined {
@@ -296,12 +424,16 @@
   }
 
   function openMenu(e: MouseEvent, i: number) {
+    // The line being edited keeps the field's own menu (paste...).
+    if ((e.target as HTMLElement).closest('.editor')) return;
     e.preventDefault();
     const r = rowOf(e);
     const rows = contents[i];
-    const line = rows && r >= 0 && rows.kind[r] !== HUNK ? lineFor(rows, r) : firstChange(i);
+    const onLine = !!rows && r >= 0 && rows.kind[r] !== HUNK;
+    const line = onLine ? lineFor(rows, r) : firstChange(i);
     const f = files[i];
     menu.show(e, [
+      ...(onLine ? [...lineActions(i, r), 'separator' as const] : []),
       {
         label: 'Open in Zed',
         icon: FileArrowUp,
@@ -398,7 +530,7 @@
                 {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
             {:else}
-              <div class="body" class:loading={!rows} style:height="{f.rows * ROW + PAD}px">
+              <div class="body" class:loading={!rows} style:height="{bodyHeight(i)}px">
                 {#if rows}
                   {@const shown = rowRange(i)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -410,6 +542,7 @@
                     onmousedown={(e) => down(e, i)}
                     onmouseover={(e) => over(e, i)}
                     onmouseleave={() => (hoverBlock = null)}
+                    ondblclick={(e) => startEdit(i, rowOf(e))}
                     oncontextmenu={(e) => openMenu(e, i)}
                     onfocus={() => {}}
                   >
@@ -419,10 +552,13 @@
                       {:else}
                         {@const kind = rows.kind[r]}
                         {@const ci = rows.ci[r]}
+                        {@const edit = editing?.i === i && editing.r === r ? editing : null}
                         <div
                           class="line {KIND[kind]}"
                           class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
+                          class:editing={edit}
+                          style:height={edit ? `${editRows * ROW}px` : undefined}
                           data-r={r}
                         >
                           <span class="gutter"
@@ -430,14 +566,26 @@
                             ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
                               >{MARK[kind]}</span
                             ></span
-                          ><span class="code"
+                          >{#if edit}<span class="code"
+                              ><textarea
+                                class="editor"
+                                aria-label="Line {rows.n[r]}"
+                                wrap="off"
+                                spellcheck="false"
+                                readonly={saving}
+                                bind:value={edit.text}
+                                onkeydown={editorKey}
+                                onblur={closeUnchanged}
+                                {@attach attachEditor}
+                              ></textarea></span
+                            >{:else}<span class="code"
                             >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
                                     >{seg.t}</span
                                   >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
                                 class="eof"
                                 title="No newline at end of file">⏎̸</span
                               >{/if}</span
-                          >
+                          >{/if}
                         </div>
                       {/if}
                     {/each}
@@ -724,6 +872,36 @@
 
   .line.sel .code {
     box-shadow: inset 2px 0 0 var(--theme2);
+  }
+
+  /* A line being edited: the field covers the code column, a row per line it has. */
+  .line.editing .code {
+    position: relative;
+    padding: 0;
+  }
+
+  .editor {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0 12px 0 8px;
+    border: none;
+    border-radius: 0;
+    resize: none;
+    overflow: hidden;
+    font: inherit;
+    line-height: 19px;
+    white-space: pre;
+    tab-size: 4;
+    color: var(--color);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1.5px var(--theme2);
+    outline: none;
+  }
+
+  .editor[readonly] {
+    opacity: 0.6;
   }
 
   .eof {

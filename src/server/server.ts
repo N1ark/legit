@@ -99,6 +99,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   const ops: Record<string, (body: any) => Promise<unknown>> = {
     edit: (b) => repo.edit(b),
     split: (b) => repo.split(b),
+    removeChanges: (b) => repo.removeChanges(b),
+    editLine: (b) => repo.editLine(b),
     squash: (b) => repo.squash(b),
     reorder: (b) => repo.reorder(b),
     drop: (b) => repo.drop(b),

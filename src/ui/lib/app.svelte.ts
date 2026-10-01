@@ -1,7 +1,8 @@
 import { IS_TAURI, copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
-  CommitInfo, DiffSummary, FileContents, HunkData, MergedCommits, OlderCommits, OpResult, Person, RepoState, SyncResult,
+  CommitInfo, DiffSummary, EditLineRequest, FileContents, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
+  SyncResult,
 } from '../../shared/types.ts';
 
 export async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -170,8 +171,16 @@ class App {
       .catch(() => {});
   }
 
-  /** Run a history-rewriting operation. Returns true on success. */
-  async op(name: string, body: unknown = {}, optimistic?: () => void): Promise<boolean> {
+  /**
+   * Run a history-rewriting operation. Returns true on success. `prepare` runs once it has
+   * succeeded, before the UI shows the result (to load what the next view needs, say).
+   */
+  async op(
+    name: string,
+    body: unknown = {},
+    optimistic?: () => void,
+    prepare?: (r: OpResult) => Promise<unknown>,
+  ): Promise<boolean> {
     if (this.busy) return false;
     const gen = ++this.gen;
     const before = this.repo;
@@ -179,6 +188,7 @@ class App {
     optimistic?.();
     try {
       const r = await request<OpResult>(`/api/${name}`, body);
+      await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
       this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
       return true;
@@ -190,6 +200,34 @@ class App {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Where to put the diff of a commit that was just rewritten from its own diff (see `editDiff`). */
+  diffPosition: { sha: string; at: DiffPosition } | null = null;
+
+  /**
+   * Run an operation that edits commit `sha`'s diff (remove changes, edit a line). The rewritten
+   * commit's view opens where this one was (`at`), with its file list and the files that were in
+   * view already loaded, so it doesn't jump or flash.
+   */
+  editDiff(
+    ...[name, body, at]: ['removeChanges', RemoveChangesRequest, DiffPosition | null] | ['editLine', EditLineRequest, DiffPosition | null]
+  ): Promise<boolean> {
+    return this.op(name, body, undefined, async (r) => {
+      const sha = r.renamed[body.sha];
+      if (!sha || !at) return;
+      this.diffPosition = { sha, at };
+      const d = await this.diff(sha);
+      const want = d.files.flatMap((f, i) => (f.rows && at.shown.includes(f.path) ? [i] : []));
+      if (want.length) await this.fileContents(sha, want);
+    });
+  }
+
+  /** The position saved for `sha`'s diff, once. */
+  takeDiffPosition(sha: string): DiffPosition | null {
+    const p = this.diffPosition?.sha === sha ? this.diffPosition.at : null;
+    this.diffPosition = null;
+    return p;
   }
 
   /** Click on a commit: plain, toggle (cmd/ctrl) or range (shift). */
@@ -409,6 +447,17 @@ class App {
     const last = Math.max(this.repo?.fetchedAt ?? 0, this.fetchTried);
     if (this.repo?.push && !this.fetching && Date.now() - last > ms) this.fetchRemote(true);
   }
+}
+
+/** Where a diff view is scrolled to, and which of its files are collapsed or in view (by path). */
+export interface DiffPosition {
+  /** File at the top of the viewport and how far into it, or null when the diff starts below the top. */
+  path: string | null;
+  offset: number;
+  /** The scroller's scrollTop, for when `path` is null. */
+  scrollTop: number;
+  collapsed: string[];
+  shown: string[];
 }
 
 /** A stash being looked at: one in the stash list, or a dropped one legit kept. */

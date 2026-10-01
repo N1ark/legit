@@ -171,6 +171,21 @@ export interface SplitRequest {
   before: boolean;
 }
 
+export interface RemoveChangesRequest {
+  sha: string;
+  /** Changes to take out of the commit: picked '+' lines aren't added, picked '-' lines stay. */
+  selection: Selection;
+}
+
+export interface EditLineRequest {
+  sha: string;
+  path: string;
+  /** Line number in the commit's version of the file (an added or unchanged line), from 1. */
+  line: number;
+  /** What replaces the line: its new text, or several lines separated by '\n'. */
+  text: string;
+}
+
 export interface SquashRequest {
   /** Commits to squash, any order; they're folded into the oldest one. */
   shas: string[];

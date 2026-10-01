@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
-  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, GitMerge, Scissors, Trash, X } from 'purr/icons';
+  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Eraser, GitMerge, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
@@ -75,10 +75,12 @@
   let splitMessage = $state('');
   let where = $state<'before' | 'after'>('after');
 
-  // A new commit starts at the top.
+  // A new commit starts at the top; one rewritten from its own diff, where the old one was.
+  const position = app.takeDiffPosition(init.sha);
+  let diffView = $state<DiffView>();
   onMount(() => {
     const scroller = document.querySelector('[data-scroller]');
-    if (scroller) scroller.scrollTop = 0;
+    if (scroller && !position) scroller.scrollTop = 0;
   });
 
   app.diff(init.sha).then(
@@ -115,6 +117,26 @@
     app.op('split', { sha: commit.sha, selection: selection(), message: splitMessage, before: where === 'before' });
   }
 
+  /**
+   * Take changes out of this commit (and so out of the commits after it, and your files).
+   * It's undoable like any rewrite; the toast says so.
+   */
+  async function remove(selection: Selection) {
+    const n = Object.values(selection).reduce((k, v) => k + (v === 'all' ? 1 : v.length), 0);
+    if (!n || readonly) return;
+    const what = Object.values(selection).some((v) => v === 'all') ? 'changes' : n === 1 ? 'a change' : `${n} changes`;
+    const { sha, subject } = commit;
+    if (await app.editDiff('removeChanges', { sha, selection }, diffView?.position() ?? null)) {
+      // Undoing brings this commit back, so show it again rather than the newest one.
+      const undo = async () => (await app.undo()) && app.select(sha);
+      toast(`Removed ${what} from "${subject}".`, { timeout: 8000, action: { label: 'Undo', run: undo } });
+    }
+  }
+
+  function editLine(path: string, line: number, text: string) {
+    return app.editDiff('editLine', { sha: commit.sha, path, line, text }, diffView?.position() ?? null);
+  }
+
   const clear = () => Object.values(sel).forEach((s) => s.clear());
   const isHead = $derived(commit.sha === app.repo?.head);
 
@@ -136,7 +158,12 @@
   }
 
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && picked.files && !isTyping(e.target) && !hasOverlay()) clear();
+    if (!picked.files || isTyping(e.target) || hasOverlay()) return;
+    if (e.key === 'Escape') clear();
+    else if ((e.key === 'Backspace' || e.key === 'Delete') && !readonly) {
+      e.preventDefault();
+      remove(selection());
+    }
   }
 
   function onSplitKey(e: KeyboardEvent) {
@@ -271,7 +298,25 @@
   </div>
 
   {#if diff}
-    <DiffView summary={diff} {sel} {readonly} tree />
+    <DiffView
+      bind:this={diffView}
+      summary={diff}
+      {sel}
+      {readonly}
+      tree
+      initial={position}
+      hint="Pick lines to split out or remove: click, drag, or shift-click; the left edge picks whole blocks. Double-click a line to edit it."
+      onremove={remove}
+      oneditline={editLine}
+      fileActions={(f) => [
+        !readonly && {
+          label: 'Remove file from commit',
+          icon: Eraser,
+          note: f.status === 'A' ? "The file won't be added" : f.status === 'D' ? 'The file stays' : 'It goes back to how it was before',
+          run: () => remove({ [f.path]: 'all' }),
+        },
+      ]}
+    />
   {:else}
     <p class="muted loading">Loading diff…</p>
   {/if}
@@ -295,6 +340,13 @@
       />
       <input class="field-input msg" bind:value={splitMessage} placeholder="New commit title" onkeydown={onSplitKey} />
       <Button variant="primary" onclick={split} disabled={!splitMessage.trim() || app.busy}>Split <Kbd hint="↩" /></Button>
+      <Button
+        onclick={() => remove(selection())}
+        disabled={app.busy}
+        title="Take these changes out of the commit: added lines aren't added, removed lines stay. The commits after it, and your files, lose them too."
+      >
+        <Eraser /> Remove <Kbd hint="⌫" />
+      </Button>
       <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><X /></IconButton>
     </div>
   {/if}
