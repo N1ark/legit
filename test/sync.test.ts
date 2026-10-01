@@ -202,6 +202,7 @@ test('merge conflicts: listed, marked resolved only without markers, then contin
   assert.equal(c.kind, 'merge');
   assert.equal(c.title, "Merge remote-tracking branch 'origin/main'");
   assert.deepEqual(c.files.map((f) => [f.path, f.status, f.markers]).sort(), [['f', 'both modified', true], ['g', 'both modified', true]]);
+  assert.equal(c.files.find((f) => f.path === 'f')!.line, 2);
   assert.deepEqual(c.resolved, ['t']);
   assert.match(r.state.blocked!, /merge is in progress/);
   assert.ok((await repo.backups()).some((b) => b.label === 'pull' && b.sha === head));

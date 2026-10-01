@@ -233,6 +233,8 @@ export interface ConflictFile {
   exists: boolean;
   /** It still has conflict markers (<<<<<<<, =======, >>>>>>> at a line start). */
   markers: boolean;
+  /** Line of the first marker, to open the file at. */
+  line: number | null;
 }
 
 /** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */

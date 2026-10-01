@@ -106,14 +106,19 @@ async function unmergedPaths(git: Git): Promise<Map<string, string>> {
   return out;
 }
 
-async function inspect(git: Git, path: string): Promise<{ exists: boolean; markers: boolean }> {
+async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exists' | 'markers' | 'line'>> {
   try {
     const file = join(git.root, toUtf8(path));
     const st = await lstat(file);
-    if (!st.isFile() || st.size > 50 * 1024 * 1024) return { exists: true, markers: false };
-    return { exists: true, markers: MARKERS.test((await readFile(file)).toString('latin1')) };
+    if (!st.isFile() || st.size > 50 * 1024 * 1024) return { exists: true, markers: false, line: null };
+    const text = (await readFile(file)).toString('latin1');
+    const m = MARKERS.exec(text);
+    if (!m) return { exists: true, markers: false, line: null };
+    let line = 1;
+    for (let i = text.indexOf('\n'); i >= 0 && i < m.index; i = text.indexOf('\n', i + 1)) line++;
+    return { exists: true, markers: true, line };
   } catch {
-    return { exists: false, markers: false };
+    return { exists: false, markers: false, line: null };
   }
 }
 

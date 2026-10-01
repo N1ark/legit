@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Highlight, Popover, formatRelative, rank, toast } from 'purr';
+  import { Highlight, Popover, formatRelative, menu, rank, toast } from 'purr';
   import { CaretDown, Check, GitBranch } from 'purr/icons';
   import type { BranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
+  import { integrateEntries } from './lib/integrate.ts';
 
   let open = $state(false);
   let list = $state<BranchInfo[] | null>(null);
@@ -93,6 +94,7 @@
               aria-selected={k === active}
               onclick={() => choose(b)}
               onmousemove={() => (active = k)}
+              oncontextmenu={(e) => menu.show(e, integrateEntries(b.name, b.current, () => (open = false)))}
             >
               <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
               <span class="name mono"><Highlight text={b.name} {indices} /></span>
