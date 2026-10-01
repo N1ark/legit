@@ -249,7 +249,7 @@ test('abort saves what was resolved under refs/legit/aborted first', async () =>
   assert.equal(git('status', '--porcelain'), '');
   assert.equal(read('f'), '1\nMINE\n3\n');
 
-  const ref = /saved first, as (refs\/legit\/aborted\/main\/\d+-merge);/.exec(r.message)?.[1];
+  const ref = /were saved first, as (refs\/legit\/aborted\/main\/\d+-merge);/.exec(r.message)?.[1];
   assert.ok(ref, r.message);
   assert.equal(git('rev-parse', `${ref}^`), head);
   assert.equal(git('show', `${ref}:f`), '1\nRESOLVED\n3');

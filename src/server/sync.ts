@@ -514,7 +514,7 @@ export function abortOp(repo: Repo): Promise<SyncResult> {
     return done(
       repo,
       changed
-        ? `Aborted the ${kind}. What you had resolved was saved first, as ${saved}; \`git restore -s ${saved} -- <file>\` brings a file back.`
+        ? `Aborted the ${kind}. Your files as they were (resolutions included) were saved first, as ${saved}; \`git restore -s ${saved} -- <file>\` brings one back.`
         : `Aborted the ${kind}.`,
     );
   });
