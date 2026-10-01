@@ -106,6 +106,15 @@ export async function unmergedPaths(git: Git): Promise<Map<string, string>> {
   return out;
 }
 
+/**
+ * Tracked files (byte strings) changed since they were staged, outside the unmerged ones. A
+ * rebase won't continue with any (git says to "edit all merge conflicts"), unlike a merge.
+ */
+async function unstagedPaths(git: Git, unmerged: Map<string, string>): Promise<string[]> {
+  const r = await git.run(['diff', '--no-ext-diff', '--ignore-submodules', '--name-only', '-z'], { env: NO_LOCKS, allowFail: true });
+  return [...new Set(r.out.toString('latin1').split('\0'))].filter((p) => p && !unmerged.has(p));
+}
+
 async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exists' | 'markers' | 'line'>> {
   try {
     const file = join(git.root, toUtf8(path));
@@ -139,7 +148,8 @@ async function conflictState(git: Git): Promise<Conflict | null> {
   );
   const resolved = [...new Set(staged.out.toString('latin1').split('\0'))].filter((p) => p && !unmerged.has(p)).map(toUtf8);
   const edit = kind === 'rebase' && !unmerged.size ? await editStop(git) : null;
-  return { kind, title, files, resolved, edit };
+  const unstaged = kind === 'rebase' && !edit ? (await unstagedPaths(git, unmerged)).map(toUtf8) : [];
+  return { kind, title, files, resolved, unstaged, edit };
 }
 
 /** What legit notes about an edit it started (see edit.ts), inside git's rebase dir so it goes with it. */
@@ -439,7 +449,10 @@ export function markResolved(repo: Repo, req: { path: string; force?: boolean })
   return repo.exclusive(async () => {
     const shown = String(req.path ?? '');
     const path = fromUtf8(shown);
-    if (!(await unmergedPaths(repo.git)).has(path)) throw new GitError(`${shown} isn't conflicted (any more); nothing was changed.`);
+    const unmerged = await unmergedPaths(repo.git);
+    // A file changed again after it was staged (in a rebase, which won't continue so) is staged again.
+    const again = !unmerged.has(path) && inProgress(repo.git) === 'rebase' && (await unstagedPaths(repo.git, unmerged)).includes(path);
+    if (!unmerged.has(path) && !again) throw new GitError(`${shown} isn't conflicted (any more); nothing was changed.`);
     const { markers } = await inspect(repo.git, path);
     if (markers && !req.force) {
       throw new GitError(`${shown} still has conflict markers (<<<<<<<, =======, >>>>>>>). Nothing was changed.`);
@@ -448,7 +461,7 @@ export function markResolved(repo: Repo, req: { path: string; force?: boolean })
     await repo.git.run(['--literal-pathspecs', 'add', '-A', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'], {
       input: nul([path]),
     });
-    return done(repo, `Marked ${shown} as resolved.`);
+    return done(repo, again ? `Staged ${shown} again.` : `Marked ${shown} as resolved.`);
   });
 }
 
@@ -477,6 +490,14 @@ export async function continueNow(repo: Repo, label?: string): Promise<SyncResul
     const unmerged = [...(await unmergedPaths(git)).keys()].map(toUtf8);
     if (unmerged.length) {
       throw new GitError(`Still conflicted: ${unmerged.join(', ')}. Resolve and mark them resolved first. Nothing was changed.`);
+    }
+    if (kind === 'rebase') {
+      const unstaged = (await unstagedPaths(git, new Map())).map(toUtf8);
+      if (unstaged.length) {
+        throw new GitError(
+          `Changed since staged: ${unstaged.join(', ')}. Stage ${unstaged.length === 1 ? 'it' : 'them'} to keep the change in the commit, or undo it; a rebase won't continue otherwise. Nothing was changed.`,
+        );
+      }
     }
     const head = await repo.head();
     const branch = await opBranch(repo, kind);

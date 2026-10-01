@@ -2,7 +2,8 @@
   // A merge, rebase, cherry-pick or revert that stopped halfway (from legit or a terminal):
   // what's still conflicted, what's merged, and Continue or Abort. Files are resolved in an
   // editor; "Mark resolved" stages one, and asks again while it still has conflict markers.
-  // Abort saves what was resolved before throwing it away.
+  // A rebase also needs files changed since they were staged to be staged again. Abort saves
+  // what was resolved before throwing it away.
   import { Button, ConfirmButton, Tag } from 'purr';
   import { ArrowCounterClockwise, Check, FileArrowUp } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
@@ -53,6 +54,16 @@
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
   const resolve = (path: string, force = false) => app.sync('resolve', { path, force });
+
+  /** A path split into its folder (with the trailing slash) and the file's name. */
+  const split = (path: string) => {
+    const k = path.lastIndexOf('/') + 1;
+    return { dir: path.slice(0, k), name: path.slice(k) };
+  };
+
+  const MERGED_SHOWN = 8;
+  let allMerged = $state(false);
+  const blocked = $derived(!!c && (c.files.length > 0 || c.unstaged.length > 0));
 </script>
 
 {#if c}
@@ -67,6 +78,9 @@
         {#if c.files.length}
           Resolve each file in your editor, then mark it resolved. History can't be rewritten until this is finished or
           aborted.
+        {:else if c.unstaged.length}
+          Some files changed after they were staged. Stage them to keep the changes in the commit, or undo them in your
+          editor: a rebase won't continue otherwise.
         {:else}
           Nothing is conflicted any more. {c.kind === 'merge' ? 'Commit the merge' : 'Continue'} to finish, or abort.
         {/if}
@@ -106,18 +120,49 @@
         </ul>
       {/if}
 
+      {#if c.unstaged.length}
+        <ul class="files">
+          {#each c.unstaged as path (path)}
+            <li>
+              <span class="path mono" title={path}>{path}</span>
+              <Tag color="var(--warn)" label="changed since staged" title="Changed in your files after it was staged (git add)" />
+              <span class="spacer"></span>
+              <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUp /> Open in Zed</Button>
+              <Button size="sm" onclick={() => resolve(path)} disabled={app.busy} title="Stage the file as it is now (git add)">
+                <Check /> Stage
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
       {#if c.resolved.length}
-        <p class="muted merged" title={c.resolved.join('\n')}>
-          Merged: {plural(c.resolved.length, 'file')} ({c.resolved.slice(0, 5).join(', ')}{c.resolved.length > 5 ? ', …' : ''})
-        </p>
+        <div class="merged">
+          <span class="muted">Merged: {plural(c.resolved.length, 'file')}</span>
+          <ul class="mono">
+            {#each allMerged ? c.resolved : c.resolved.slice(0, MERGED_SHOWN) as path (path)}
+              {@const p = split(path)}
+              <li title={path}><span class="dir">{p.dir}</span><span class="name">{p.name}</span></li>
+            {/each}
+          </ul>
+          {#if c.resolved.length > MERGED_SHOWN}
+            <Button size="sm" variant="ghost" onclick={() => (allMerged = !allMerged)}>
+              {allMerged ? 'Show fewer' : `Show ${c.resolved.length - MERGED_SHOWN} more`}
+            </Button>
+          {/if}
+        </div>
       {/if}
 
       <div class="actions">
         <Button
           variant="primary"
           onclick={() => app.sync('continue')}
-          disabled={!!c.files.length || app.busy}
-          title={c.files.length ? 'Mark every file resolved first' : 'Commits with the prepared message; hooks run as usual'}
+          disabled={blocked || app.busy}
+          title={c.files.length
+            ? 'Mark every file resolved first'
+            : c.unstaged.length
+              ? 'Stage the files changed since they were staged first'
+              : 'Commits with the prepared message; hooks run as usual'}
         >
           <Check weight="bold" /> {CONTINUE[c.kind]}
         </Button>
@@ -187,6 +232,42 @@
   .hint,
   .merged {
     font-size: var(--fs-sm);
+  }
+
+  .merged {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--gap-2);
+  }
+
+  .merged ul {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 var(--gap-4);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 100%;
+  }
+
+  .merged li {
+    display: flex;
+    min-width: 0;
+    white-space: pre;
+  }
+
+  /* The folder a step dimmer than the file's name, so names stand out; a long one is cut, never the name. */
+  .merged .dir {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .merged .name {
+    color: var(--color);
+    flex-shrink: 0;
   }
 
   .files {

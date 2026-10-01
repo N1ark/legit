@@ -300,6 +300,36 @@ test('a conflicted rebase started from a terminal can be continued, or aborted k
   assert.equal(git('rev-parse', 'HEAD'), tip);
 });
 
+test("a rebase won't continue with a file changed since it was staged: it's listed, and staging it again lets it go on", async () => {
+  commit('two', { f: '1\n2\n3\nfour\n', g: 'g\n' });
+  git('checkout', '-q', '-b', 'topic', 'HEAD~1');
+  commit('b', { f: '1\n2\n3\nFOUR\n' });
+  const repo = await Repo.open(dir);
+  assert.throws(() => git('rebase', '-q', 'main'));
+  write('f', '1\n2\n3\nboth\n');
+  await markResolved(repo, { path: 'f' });
+  // Changed again after being marked resolved (a formatter, a test run...), and another file too.
+  write('f', '1\n2\n3\nboth, again\n');
+  write('g', 'g2\n');
+  let st = (await repo.state()).conflict!;
+  assert.deepEqual(st.files, []);
+  assert.deepEqual(st.unstaged.sort(), ['f', 'g']);
+  await assert.rejects(continueOp(repo), /Changed since staged: f, g\. .*Nothing was changed/);
+  assert.equal(git('status', '--porcelain', '--untracked-files=no'), 'MM f\n M g');
+
+  // Staging refuses conflict markers, as marking resolved does.
+  write('g', '<<<<<<< a\n=======\n>>>>>>> b\n');
+  await assert.rejects(markResolved(repo, { path: 'g' }), /still has conflict markers/);
+  write('g', 'g2\n');
+  assert.match((await markResolved(repo, { path: 'f' })).message, /Staged f again/);
+  st = (await markResolved(repo, { path: 'g' })).state.conflict!;
+  assert.deepEqual(st.unstaged, []);
+  await continueOp(repo);
+  assert.equal(git('show', 'HEAD:f'), '1\n2\n3\nboth, again');
+  assert.equal(git('show', 'HEAD:g'), 'g2');
+  assert.equal((await repo.state()).conflict, null);
+});
+
 test('a conflicted cherry-pick from a terminal: continue commits it', async () => {
   git('checkout', '-q', '-b', 'side');
   const pick = commit('fix', { f: '1\nfix\n3\n' });

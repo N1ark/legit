@@ -307,6 +307,8 @@ export interface Conflict {
   files: ConflictFile[];
   /** Files merged automatically or marked resolved (staged, different from HEAD). */
   resolved: string[];
+  /** In a rebase, tracked files changed since they were staged: it won't continue until they're staged again. */
+  unstaged: string[];
   /** A rebase that stopped to edit a commit (not on a conflict); null otherwise. */
   edit: EditStop | null;
 }
