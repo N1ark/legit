@@ -136,7 +136,7 @@
     <span class="muted">{date}</span>
     {#if commit.pushed}
       <Tag color="var(--warn)" title="This commit is on a remote branch; rewriting it means you'll need to force-push.">
-        <CloudCheck /> pushed
+        <span class="tag-icon"><CloudCheck /> pushed</span>
       </Tag>
     {/if}
     <span class="spacer"></span>
@@ -257,6 +257,14 @@
 
   .spacer {
     flex: 1;
+  }
+
+  /* Tag puts its content in an inline span, where an icon would sit on the text's baseline. */
+  .tag-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    vertical-align: top;
   }
 
   .glyph {
