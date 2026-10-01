@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Repo } from '../src/server/repo.ts';
+import { abortOp, continueOp, markResolved } from '../src/server/sync.ts';
 import { env, setup } from './util.ts';
 
 const t = setup();
@@ -61,15 +62,82 @@ test('re-add a removed line, and take whole files out of a commit', async () => 
   assert.equal(git('rev-parse', 'HEAD^{tree}'), git('rev-parse', 'HEAD~1^{tree}'));
 });
 
-test('a later commit that conflicts with the removal refuses it, with nothing changed', async () => {
+test('a later commit that conflicts stops in a rebase; aborting puts everything back', async () => {
   commit('base', { f: 'a\nc\n' });
   const c = commit('change', { f: 'a\nb\nc\n' });
   commit('later', { f: 'a\nB!\nc\n' });
+  const last = commit('last', { g: 'g\n' });
   const repo = await Repo.open(t.dir);
-  const head = git('rev-parse', 'HEAD');
-  await assert.rejects(repo.removeChanges({ sha: c, selection: { f: [await change(repo, c, 'f', '+', 'b')] } }), /Conflict replaying/);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-  assert.deepEqual(backups(), []);
+  await repo.removeChanges({ sha: c, selection: { f: [await change(repo, c, 'f', '+', 'b')] } });
+  const state = await repo.state();
+  assert.equal(state.conflict?.kind, 'rebase');
+  assert.deepEqual(state.conflict?.files.map((f) => f.path), ['f']);
+  assert.match(state.blocked ?? '', /rebase/);
+  // The edited commit is in place, and the old tip is backed up.
+  assert.equal(blob('HEAD', 'f'), 'a\nc\n');
+  assert.equal(git('log', '-1', '--format=%s', 'HEAD'), 'change');
+  assert.equal(git('rev-parse', backups()[0]), last);
+
+  await abortOp(repo);
+  assert.equal(git('rev-parse', 'HEAD'), last);
+  assert.equal(git('symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.equal(read('f'), 'a\nB!\nc\n');
+  assert.equal(git('status', '--porcelain'), '');
+});
+
+test('resolving the conflict and continuing finishes the edit, which can be undone', async () => {
+  commit('base', { f: 'a\nc\n' });
+  const c = commit('change', { f: 'a\ntypo\nc\n' });
+  commit('later', { f: 'a\ntypo!\nc\n' });
+  const last = commit('last', { g: 'g\n' });
+  const repo = await Repo.open(t.dir);
+  await repo.editLine({ sha: c, path: 'f', line: 2, text: 'fixed' });
+  assert.equal((await repo.state()).conflict?.kind, 'rebase');
+  write('f', 'a\nfixed!\nc\n');
+  await markResolved(repo, { path: 'f' });
+  await continueOp(repo);
+  const state = await repo.state();
+  assert.equal(state.conflict, null);
+  assert.equal(git('symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.deepEqual(log(), ['last', 'later', 'change', 'base']);
+  assert.equal(blob('HEAD~2', 'f'), 'a\nfixed\nc\n');
+  assert.equal(blob('HEAD', 'f'), 'a\nfixed!\nc\n');
+  assert.equal(blob('HEAD', 'g'), 'g\n');
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), last);
+});
+
+test('later commits that become empty are kept, as in the in-memory replay', async () => {
+  commit('base', { f: 'a\n' });
+  const c = commit('change', { f: 'a\nb\n' });
+  commit('conflicting', { f: 'a\nB\n' });
+  commit('add z', { f: 'a\nB\nz\n' });
+  git('commit', '-q', '--allow-empty', '-m', 'empty');
+  const repo = await Repo.open(t.dir);
+  await repo.removeChanges({ sha: c, selection: { f: 'all' } });
+  // The resolution already has z, so "add z" becomes empty.
+  write('f', 'a\nB\nz\n');
+  await markResolved(repo, { path: 'f' });
+  await continueOp(repo);
+  assert.equal((await repo.state()).conflict, null);
+  assert.deepEqual(log(), ['empty', 'add z', 'conflicting', 'change', 'base']);
+  assert.equal(blob('HEAD', 'f'), 'a\nB\nz\n');
+});
+
+test('an untracked file in the way of the rebase is never overwritten', async () => {
+  commit('base', { f: 'a\nc\n', u: 'tracked\n' });
+  const c = commit('change', { f: 'a\nb\nc\n' });
+  commit('later', { f: 'a\nB!\nc\n' });
+  git('rm', '-q', 'u');
+  git('commit', '-qm', 'drop u');
+  const last = git('rev-parse', 'HEAD');
+  write('u', 'precious\n');
+  const repo = await Repo.open(t.dir);
+  await assert.rejects(repo.removeChanges({ sha: c, selection: { f: 'all' } }));
+  assert.equal(read('u'), 'precious\n');
+  assert.equal(git('rev-parse', 'HEAD'), last);
+  assert.equal(git('symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.equal((await repo.state()).conflict, null);
   assert.equal(read('f'), 'a\nB!\nc\n');
 });
 

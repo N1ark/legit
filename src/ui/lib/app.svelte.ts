@@ -210,17 +210,24 @@ class App {
    * commit's view opens where this one was (`at`), with its file list and the files that were in
    * view already loaded, so it doesn't jump or flash.
    */
-  editDiff(
+  async editDiff(
     ...[name, body, at]: ['removeChanges', RemoveChangesRequest, DiffPosition | null] | ['editLine', EditLineRequest, DiffPosition | null]
   ): Promise<boolean> {
-    return this.op(name, body, undefined, async (r) => {
+    const ok = await this.op(name, body, undefined, async (r) => {
       const sha = r.renamed[body.sha];
-      if (!sha || !at) return;
+      if (!sha || !at || r.state.conflict) return;
       this.diffPosition = { sha, at };
       const d = await this.diff(sha);
       const want = d.files.flatMap((f, i) => (f.rows && at.shown.includes(f.path) ? [i] : []));
       if (want.length) await this.fileContents(sha, want);
     });
+    // A later commit conflicted with the change, and the rebase replaying them stopped there.
+    if (ok && this.repo?.conflict) {
+      toast('A later commit conflicts with that change. Resolve the conflicts and continue, or abort to put everything back.', {
+        timeout: 15_000,
+      });
+    }
+    return ok;
   }
 
   /** The position saved for `sha`'s diff, once. */

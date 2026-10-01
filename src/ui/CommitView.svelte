@@ -126,7 +126,7 @@
     if (!n || readonly) return;
     const what = Object.values(selection).some((v) => v === 'all') ? 'changes' : n === 1 ? 'a change' : `${n} changes`;
     const { sha, subject } = commit;
-    if (await app.editDiff('removeChanges', { sha, selection }, diffView?.position() ?? null)) {
+    if ((await app.editDiff('removeChanges', { sha, selection }, diffView?.position() ?? null)) && !app.repo?.conflict) {
       // Undoing brings this commit back, so show it again rather than the newest one.
       const undo = async () => (await app.undo()) && app.select(sha);
       toast(`Removed ${what} from "${subject}".`, { timeout: 8000, action: { label: 'Undo', run: undo } });

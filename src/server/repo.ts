@@ -29,6 +29,9 @@ const PAGE = 200;
 const MERGED = 500;
 const BACKUPS = 'refs/legit/backups';
 
+/** A commit being replayed conflicts with what it's replayed onto. */
+class ReplayConflict extends GitError {}
+
 interface Item {
   src: RawCommit;
   tree?: string;
@@ -299,7 +302,7 @@ export class Repo {
     const r = await merger.pick(base, onto, c.tree);
     if ('tree' in r) return r.tree;
     const subject = parseMessage(toUtf8(c.message)).subject;
-    throw new GitError(
+    throw new ReplayConflict(
       `Conflict replaying ${c.sha.slice(0, 7)} "${subject}" in: ${r.conflicts.map(toUtf8).join(', ')}. Nothing was changed.`,
     );
   }
@@ -312,15 +315,7 @@ export class Repo {
   private async moveHead(from: string, to: string, label: string) {
     if (from === to) return;
     const treeChanged = (await this.git.treeOf(from)) !== (await this.git.treeOf(to));
-    if (treeChanged) {
-      await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-      const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-      if (status) {
-        throw new GitError(
-          `This would change files in your working tree, but you have uncommitted changes:\n${status}\nCommit or stash them first. Nothing was changed.`,
-        );
-      }
-    }
+    if (treeChanged) await this.requireClean();
     await this.backup(from, label);
     if (treeChanged) {
       const r = await this.git.run(['read-tree', '-m', '-u', from, to], { allowFail: true });
@@ -330,6 +325,17 @@ export class Repo {
     if (r.code !== 0) {
       if (treeChanged) await this.git.run(['read-tree', '-m', '-u', to, from], { allowFail: true });
       throw new GitError(`HEAD moved while rewriting; nothing was changed. ${r.err.trim()}`);
+    }
+  }
+
+  /** Refuse if any tracked file has uncommitted changes (staged or not). */
+  private async requireClean() {
+    await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
+    const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+    if (status) {
+      throw new GitError(
+        `This would change files in your working tree, but you have uncommitted changes:\n${status}\nCommit or stash them first. Nothing was changed.`,
+      );
     }
   }
 
@@ -498,13 +504,65 @@ export class Repo {
 
   /**
    * Give `chain[k]` a new tree and replay the commits after it on top. The final files change,
-   * so this goes through the same checks as a drop (no uncommitted changes, conflicts refuse).
+   * so this goes through the same checks as a drop (no uncommitted changes). The replay happens
+   * in memory; if a later commit conflicts with the change, it's handed to `git rebase`, which
+   * stops on the conflict for the conflict view to resolve (or abort, back to how it was).
    */
   private async retree(label: string, chain: RawCommit[], k: number, tree: string): Promise<OpResult> {
     const items: Item[] = chain.slice(0, k + 1).map((src) => ({ src }));
     items[k].tree = tree;
-    const shas = await this.rewrite(label, chain, k, items, false);
-    return this.result(await this.state(), chain.slice(0, k + 1).map((c, i) => [c, shas[i]]), [shas[k]]);
+    try {
+      const shas = await this.rewrite(label, chain, k, items, false);
+      return this.result(await this.state(), chain.slice(0, k + 1).map((c, i) => [c, shas[i]]), [shas[k]]);
+    } catch (e) {
+      if (!(e instanceof ReplayConflict)) throw e;
+      return this.rebaseOnto(label, chain, k, tree);
+    }
+  }
+
+  /**
+   * `chain[k]` rewritten with `tree`, then `git rebase --onto <it> chain[k]`: the commits after
+   * it replayed by git, which stops at a conflict like any rebase. It starts from a clean working
+   * tree (so `git rebase --abort` gets back exactly), after a backup of the tip.
+   */
+  private async rebaseOnto(label: string, chain: RawCommit[], k: number, tree: string): Promise<OpResult> {
+    const c = chain[k];
+    const base = c.parents[0] ?? null;
+    const edited = this.git.writeCommit({
+      tree,
+      parents: base ? [base] : [],
+      author: c.author,
+      committer: await this.git.committerIdent(),
+      extra: c.extra,
+      message: c.message,
+    });
+    await this.git.flush();
+    await this.verify(base, edited, [edited]);
+    await this.requireClean();
+    const head = chain[0].sha;
+    if ((await this.head()) !== head) throw new GitError('HEAD moved while rewriting; nothing was changed.');
+    await this.backup(head, label);
+    const r = await this.git.run(
+      [
+        '-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false',
+        // Keep every commit, as the in-memory replay would: none dropped as empty or as already applied.
+        'rebase', '--no-autosquash', '--reapply-cherry-picks', '--empty=keep', '--onto', edited, c.sha,
+      ],
+      { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } },
+    );
+    if (this.blocked()) {
+      // Stopped on a conflict: the conflict view takes it from here.
+      return this.result(await this.state(), [], []);
+    }
+    const after = await this.head();
+    if (r.code !== 0 || !after || after === head) {
+      const output = (r.err + r.out.toString('utf8')).trim();
+      throw new GitError(
+        after === head ? `Replaying the later commits failed; nothing was changed.\n${output}` : `Replaying the later commits failed.\n${output}`,
+      );
+    }
+    await this.record({ label, before: head, after });
+    return this.result(await this.state(), [[c, edited]], [edited]);
   }
 
   /** Tree of `c`'s parent plus the changed lines of `diff` for which `apply` is true. */

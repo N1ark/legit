@@ -26,7 +26,7 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Edit** | Title, description, author and co-authors (`Co-authored-by` trailers) of any commit. Titles and descriptions show as markdown; click one (or tab to it) to edit it. <kbd>⌘↵</kbd> saves, <kbd>esc</kbd> reverts. |
 | **Links** | Web links in messages, and `#123`, `GH-123` or `owner/repo#123`, which open the GitHub issue or pull request (of the remote you push to, else `origin`). In the commit list, <kbd>⌘</kbd>-click them: a click selects the row. |
 | **Split** | Click, drag or shift-click lines in a commit's diff, or use the strip left of the line numbers to pick whole blocks of consecutive changes (hunk headers and file checkboxes pick more). Then split them into a new commit placed *after* (or *before*) the original. |
-| **Edit the diff** | Change what a commit does, right in its diff. Pick lines and press **Remove** (<kbd>⌫</kbd>), or right-click one: an added line is no longer added (*Don't add this line*), a removed line stays (*Keep this removed line*); right-click a file to take all of its changes out. Double-click an added or unchanged line (or right-click ▸ *Edit line*) to edit it in place: <kbd>↵</kbd> saves, <kbd>⇧↵</kbd> adds a line, <kbd>esc</kbd> cancels. The commits after it are replayed on top, like `git rebase -i` with an amended commit, so the change carries through to them and your files; if a later commit touches the same lines, it's refused, as it is when you have uncommitted changes. <kbd>⌘Z</kbd> undoes it. |
+| **Edit the diff** | Change what a commit does, right in its diff. Pick lines and press **Remove** (<kbd>⌫</kbd>), or right-click one: an added line is no longer added (*Don't add this line*), a removed line stays (*Keep this removed line*); right-click a file to take all of its changes out. Double-click an added or unchanged line (or right-click ▸ *Edit line*) to edit it in place: <kbd>↵</kbd> saves, <kbd>⇧↵</kbd> adds a line, <kbd>esc</kbd> cancels. The commits after it are replayed on top, like `git rebase -i` with an amended commit, so the change carries through to them and your files (it's refused when you have uncommitted changes). If a later commit touches the same lines, the replay continues as a `git rebase` that stops on the conflict, like any other: resolve it and continue, or abort to put everything back. <kbd>⌘Z</kbd> undoes it. |
 | **Squash** | <kbd>⌘</kbd>/<kbd>⇧</kbd>-click several commits; they're folded into the oldest one, with a combined message you can edit. Other authors become co-authors. |
 | **Reorder** | Drag commits, or <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> (<kbd>K</kbd>/<kbd>J</kbd>). |
 | **Drop** | Trash button on a commit (click twice). |
@@ -91,7 +91,9 @@ Losing work is the one failure that matters, so every operation is built to be r
 - **Your working tree is left alone.** Most operations don't touch it at all. When one would (drop, undo, restore),
   it's refused if you have any uncommitted changes to tracked files, and git itself refuses to overwrite untracked files.
 - **All in memory until the last step.** Cherry-picks run through `git merge-tree` (no checkout, no index); a conflict
-  aborts with nothing changed. New commits are read back through git and checked before HEAD moves.
+  aborts with nothing changed. The one exception is editing a commit's diff when a later commit conflicts with the
+  change: then the edited commit is written, the tip backed up, and the later commits handed to `git rebase`, which
+  stops on the conflict. It only starts from a clean working tree, so aborting always gets back to where you were. New commits are read back through git and checked before HEAD moves.
 - **Atomic.** HEAD is moved with a compare-and-swap (`git update-ref HEAD new old`), so if anything else changed the
   branch in the meantime the operation fails instead of clobbering it. Every move also lands in the reflog as
   `legit: <op>`.
