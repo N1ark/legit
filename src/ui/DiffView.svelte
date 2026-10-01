@@ -409,7 +409,7 @@
     ];
   }
 
-  // Context menu (right-click a file header or a line): open in Zed, copy paths.
+  // Context menu (right-click a file header, a line, or a file in the tree): open in Zed, copy paths.
   /** New-side line number to open at for row r: its own, or the nearest one after/before it. */
   function lineFor(rows: FileRows, r: number): number | undefined {
     for (let k = r; k < rows.n.length && rows.kind[k] !== HUNK; k++) if (rows.n[k]) return rows.n[k];
@@ -472,7 +472,7 @@
   <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px">
     {#if showTree}
       <nav class="tree" style:height="{view.bottom - view.top}px">
-        <FileTree {files} {current} onpick={reveal} />
+        <FileTree {files} {current} onpick={reveal} onmenu={openMenu} />
         <ResizeEdge
           side="left"
           label="Resize the file tree"

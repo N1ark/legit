@@ -1,6 +1,6 @@
 <script lang="ts">
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
-  // highlighted, and kept in sight as the diff scrolls.
+  // highlighted, and kept in sight as the diff scrolls. Right-clicking one opens its menu.
   import { Twisty } from 'purr';
   import type { FileSummary } from '../shared/types.ts';
   import { fileTree, treeRows } from './lib/tree.ts';
@@ -9,11 +9,14 @@
     files,
     current,
     onpick,
+    onmenu,
   }: {
     files: FileSummary[];
     /** Index of the file at the top of the diff, or -1. */
     current: number;
     onpick: (i: number) => void;
+    /** A file's context menu. */
+    onmenu?: (e: MouseEvent, i: number) => void;
   } = $props();
 
   const tree = $derived(fileTree(files.map((f) => f.path)));
@@ -60,6 +63,7 @@
         aria-selected={r.index === current}
         title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}, +{f.added} −{f.removed}"
         onclick={() => onpick(r.index)}
+        oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >
         <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}>{r.name}</span>
         <span class="status mono" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
