@@ -255,6 +255,7 @@
             summary={work.staged}
             sel={staged}
             readonly={false}
+            tree
             hint="Pick changes to unstage (u) or discard."
             fileActions={(f) => [
               {
@@ -295,6 +296,7 @@
             summary={work.unstaged}
             sel={unstaged}
             readonly={false}
+            tree
             hint="Pick changes to stage (s) or discard."
             fileActions={(f) => [
               {

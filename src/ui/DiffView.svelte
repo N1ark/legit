@@ -471,7 +471,8 @@
 
   <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px">
     {#if showTree}
-      <nav class="tree" style:height="{view.bottom - view.top}px">
+      <!-- As tall as the window, or the diff if that's shorter (a short diff above another). -->
+      <nav class="tree" style:height="{Math.min(view.bottom - view.top, tops[files.length] - GAP)}px">
         <FileTree {files} {current} onpick={reveal} onmenu={openMenu} />
         <ResizeEdge
           side="left"
