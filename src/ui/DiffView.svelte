@@ -4,7 +4,7 @@
   // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
-  import { Tag, Twisty, fixedRange, menu, offsets, toast, variableRange } from 'purr';
+  import { type MaybeEntry, Tag, Twisty, fixedRange, menu, offsets, toast, variableRange } from 'purr';
   import { Copy, FileArrowUp } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
@@ -18,7 +18,15 @@
     sel,
     readonly,
     hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
-  }: { summary: DiffSummary; sel: Record<string, SvelteSet<number>>; readonly: boolean; hint?: string } = $props();
+    fileActions,
+  }: {
+    summary: DiffSummary;
+    sel: Record<string, SvelteSet<number>>;
+    readonly: boolean;
+    hint?: string;
+    /** More entries for a file's context menu. */
+    fileActions?: (f: FileSummary) => MaybeEntry[];
+  } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
   const HEAD = 34;
@@ -265,6 +273,7 @@
       'separator',
       { label: 'Copy path', icon: Copy, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
       { label: 'Copy relative path', icon: Copy, run: () => app.copy(f.path, 'relative path') },
+      ...(fileActions ? ['separator' as const, ...fileActions(f)] : []),
     ]);
   }
 
