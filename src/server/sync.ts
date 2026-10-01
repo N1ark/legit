@@ -12,7 +12,7 @@ import { lstat, readFile, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { CommitDiff, Conflict, ConflictFile, RepoState, SyncResult } from '../shared/types.ts';
+import type { CommitDiff, Conflict, ConflictFile, EditStop, RepoState, SyncResult } from '../shared/types.ts';
 import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
@@ -36,7 +36,7 @@ const STATUS: Record<string, string> = {
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const nul = (paths: string[]) => Buffer.from(paths.map((p) => p + '\0').join(''), 'latin1');
 
-async function done(repo: Repo, message: string, focus: string[] = [], renamed: Record<string, string> = {}): Promise<SyncResult> {
+export async function done(repo: Repo, message: string, focus: string[] = [], renamed: Record<string, string> = {}): Promise<SyncResult> {
   return { state: await repo.state(), renamed, focus, message };
 }
 
@@ -56,7 +56,7 @@ async function lastFetch(git: Git): Promise<number | null> {
   return t ? Math.round(t) : null;
 }
 
-function inProgress(git: Git): Kind | null {
+export function inProgress(git: Git): Kind | null {
   const has = (f: string) => existsSync(join(git.gitDir, f));
   if (has('rebase-merge')) return 'rebase';
   if (has('rebase-apply')) return has('rebase-apply/applying') ? 'am' : 'rebase';
@@ -66,7 +66,7 @@ function inProgress(git: Git): Kind | null {
   return null;
 }
 
-const readGitFile = (git: Git, f: string) => readFile(join(git.gitDir, f), 'utf8').then((s) => s.trim(), () => '');
+export const readGitFile = (git: Git, f: string) => readFile(join(git.gitDir, f), 'utf8').then((s) => s.trim(), () => '');
 const rebaseDir = (git: Git) => (existsSync(join(git.gitDir, 'rebase-merge')) ? 'rebase-merge' : 'rebase-apply');
 
 async function describe(git: Git, kind: Kind): Promise<string> {
@@ -94,7 +94,7 @@ async function opBranch(repo: Repo, kind: Kind): Promise<string | null> {
 }
 
 /** Unmerged paths (byte strings) and which index stages they have, e.g. "123". */
-async function unmergedPaths(git: Git): Promise<Map<string, string>> {
+export async function unmergedPaths(git: Git): Promise<Map<string, string>> {
   const r = await git.run(['ls-files', '-u', '-z'], { env: NO_LOCKS, allowFail: true });
   const out = new Map<string, string>();
   for (const e of r.out.toString('latin1').split('\0')) {
@@ -138,7 +138,38 @@ async function conflictState(git: Git): Promise<Conflict | null> {
     })),
   );
   const resolved = [...new Set(staged.out.toString('latin1').split('\0'))].filter((p) => p && !unmerged.has(p)).map(toUtf8);
-  return { kind, title, files, resolved };
+  const edit = kind === 'rebase' && !unmerged.size ? await editStop(git) : null;
+  return { kind, title, files, resolved, edit };
+}
+
+/** What legit notes about an edit it started (see edit.ts), inside git's rebase dir so it goes with it. */
+export const EDIT_NOTE = 'rebase-merge/legit-edit';
+
+/**
+ * A rebase stopped to edit a commit (`edit` in its todo), with HEAD still that commit: not on a
+ * conflict, and nothing committed on top of it since.
+ */
+export async function editStop(git: Git): Promise<EditStop | null> {
+  if (!existsSync(join(git.gitDir, 'rebase-merge'))) return null;
+  const [amend, head, todo] = await Promise.all([
+    readGitFile(git, 'rebase-merge/amend'),
+    git.text(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true }),
+    readGitFile(git, 'rebase-merge/git-rebase-todo'),
+  ]);
+  if (!amend || amend !== head) return null;
+  const picks = todo
+    .split('\n')
+    .map((l) => /^(?:p|pick|e|edit|r|reword|s|squash|f|fixup)\s+([0-9a-f]{4,64})\b/.exec(l.trim())?.[1])
+    .filter((x): x is string => !!x);
+  const log = (shas: string[]) =>
+    git
+      .text(['log', '--no-walk=unsorted', '--format=%H%x00%s', ...shas, '--'], { allowFail: true })
+      .then((o) => o.split('\n').filter(Boolean).map((l) => {
+        const [sha, subject] = l.split('\0');
+        return { sha, subject };
+      }));
+  const [[self], pending] = await Promise.all([log([head]), picks.length ? log(picks) : []]);
+  return { sha: head, subject: self?.subject ?? '', pending, legit: existsSync(join(git.gitDir, EDIT_NOTE)) };
 }
 
 // ---- fetch ----
@@ -435,7 +466,11 @@ const CONTINUE: Record<Kind, string[]> = {
  * replaced is backed up first, and a finished merge, rebase, cherry-pick or revert can be undone.
  */
 export function continueOp(repo: Repo): Promise<SyncResult> {
-  return repo.exclusive(async () => {
+  return repo.exclusive(() => continueNow(repo));
+}
+
+/** `continueOp`, for a caller already holding the repo's lock. `label` names the undo step. */
+export async function continueNow(repo: Repo, label?: string): Promise<SyncResult> {
     const git = repo.git;
     const kind = inProgress(git);
     if (!kind) throw new GitError('There is no merge, rebase, cherry-pick or revert to continue.');
@@ -454,7 +489,8 @@ export function continueOp(repo: Repo): Promise<SyncResult> {
     const after = await repo.head();
     const output = (r.err + r.out.toString('utf8')).trim();
     if (still) {
-      if (r.code === 0 || after !== head) {
+      // Nothing was unmerged before, so unmerged files now are a new conflict (maybe in the very next commit).
+      if (r.code === 0 || after !== head || (await unmergedPaths(git)).size) {
         const n = (await unmergedPaths(git)).size;
         return done(repo, `Continued; the ${kind} stopped again${n ? ` with conflicts in ${plural(n, 'file')}` : ''}.`);
       }
@@ -462,10 +498,9 @@ export function continueOp(repo: Repo): Promise<SyncResult> {
     }
     if (r.code !== 0) throw new GitError(`The ${kind} ended with an error.\n${output}`);
     if (before && after && after !== before && (await repo.currentBranch()) === branch) {
-      await repo.record({ label: kind, before, after });
+      await repo.record({ label: label ?? kind, before, after });
     }
     return done(repo, `Finished the ${kind}.`, after ? [after] : []);
-  });
 }
 
 /** Back up `sha` unless it's already the newest backup of `branch`. */
@@ -482,7 +517,11 @@ async function backupOnce(repo: Repo, sha: string, label: string, branch: string
  * HEAD, in a throwaway index) and kept as refs/legit/aborted/<branch>/<time>-<kind>.
  */
 export function abortOp(repo: Repo): Promise<SyncResult> {
-  return repo.exclusive(async () => {
+  return repo.exclusive(() => abortNow(repo));
+}
+
+/** `abortOp`, for a caller already holding the repo's lock. `untracked`: new files to save too. */
+export async function abortNow(repo: Repo, untracked: string[] = []): Promise<SyncResult> {
     const git = repo.git;
     const kind = inProgress(git);
     if (!kind) throw new GitError('There is no merge, rebase, cherry-pick or revert to abort.');
@@ -490,7 +529,7 @@ export function abortOp(repo: Repo): Promise<SyncResult> {
     let saved: string | null = null;
     let changed = false;
     if (head) {
-      const tree = await worktreeTree(git, head, await changedPaths(git));
+      const tree = await worktreeTree(git, head, [...new Set([...(await changedPaths(git)), ...untracked])]);
       changed = tree !== (await git.treeOf(head));
       let sha = head;
       if (changed) {
@@ -517,11 +556,10 @@ export function abortOp(repo: Repo): Promise<SyncResult> {
         ? `Aborted the ${kind}. Your files as they were (resolutions included) were saved first, as ${saved}; \`git restore -s ${saved} -- <file>\` brings one back.`
         : `Aborted the ${kind}.`,
     );
-  });
 }
 
 /** Paths (byte strings) whose index or working-tree version differs from HEAD, or that are unmerged. */
-async function changedPaths(git: Git): Promise<string[]> {
+export async function changedPaths(git: Git): Promise<string[]> {
   const lists = await Promise.all([
     git.run(['diff-index', '--name-only', '-z', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-index', '--cached', '--name-only', '-z', 'HEAD'], { env: NO_LOCKS }),
@@ -535,7 +573,7 @@ async function changedPaths(git: Git): Promise<string[]> {
 }
 
 /** HEAD's tree with `paths` as they are in the working tree, built in a throwaway index. */
-async function worktreeTree(git: Git, head: string, paths: string[]): Promise<string> {
+export async function worktreeTree(git: Git, head: string, paths: string[]): Promise<string> {
   if (!paths.length) return git.treeOf(head);
   const index = join(tmpdir(), `legit-index-${randomBytes(6).toString('hex')}`);
   const env = { GIT_INDEX_FILE: index };

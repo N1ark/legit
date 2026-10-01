@@ -191,7 +191,7 @@ export class Repo {
   }
 
   /** The editable part of the first-parent chain, newest first. */
-  private async chain(): Promise<RawCommit[]> {
+  async chain(): Promise<RawCommit[]> {
     const why = this.blocked();
     if (why) throw new GitError(why);
     const head = await this.head();
@@ -202,7 +202,7 @@ export class Repo {
     return end < 0 ? all : all.slice(0, end);
   }
 
-  private static indexOf(chain: RawCommit[], sha: string): number {
+  static indexOf(chain: RawCommit[], sha: string): number {
     const i = chain.findIndex((c) => c.sha === sha);
     if (i < 0) throw new GitError(`Commit ${sha.slice(0, 7)} is not editable (history may have changed; refresh).`);
     return i;
@@ -329,7 +329,7 @@ export class Repo {
   }
 
   /** Refuse if any tracked file has uncommitted changes (staged or not). */
-  private async requireClean() {
+  async requireClean() {
     await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
     const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
     if (status) {

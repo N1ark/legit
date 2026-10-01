@@ -15,7 +15,7 @@
     persisted,
     type Binding,
   } from 'purr';
-  import { ArrowUUpLeft, ArrowUUpRight, Warning } from 'purr/icons';
+  import { ArrowUUpLeft, ArrowUUpRight, PencilSimpleLine, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
@@ -27,6 +27,7 @@
   import RepoPicker from './RepoPicker.svelte';
   import CommitView from './CommitView.svelte';
   import ConflictView from './ConflictView.svelte';
+  import EditView from './EditView.svelte';
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
@@ -92,7 +93,7 @@
     groups: ['General', C],
     extra: [
       { label: 'Select several (click)', hints: [MOD, '⇧'], group: C },
-      { label: 'Save, commit or squash', hints: ['⌘↩'] },
+      { label: 'Save, commit, squash or finish editing', hints: ['⌘↩'] },
       { label: 'Stage / unstage picked changes', hints: ['s', 'u'] },
       { label: "Remove picked changes from the commit", hints: ['⌫'] },
       { label: 'Editing a line (double-click it): save / add a line', hints: ['↩', '⇧↩'] },
@@ -139,7 +140,14 @@
     <Backups />
   </header>
 
-  {#if app.repo?.blocked}
+  {#if app.repo?.conflict?.edit}
+    {@const edit = app.repo.conflict.edit}
+    <div class="blocked editing">
+      <PencilSimpleLine weight="bold" />
+      <span class="what">Editing "{edit.subject}": your files are as they were in it.</span>
+      <button class="btn btn--link" onclick={() => app.selectWork()}>Finish or cancel</button>
+    </div>
+  {:else if app.repo?.blocked}
     <div class="blocked">
       <Warning weight="bold" />
       {app.repo.blocked} History is read-only.
@@ -175,6 +183,8 @@
         {#key app.stash.sha}
           <StashView stash={app.stash} />
         {/key}
+      {:else if app.selected[0] === WORK && app.repo?.conflict?.edit}
+        <EditView />
       {:else if app.selected[0] === WORK && app.repo?.conflict}
         <ConflictView />
       {:else if app.selected[0] === WORK}
@@ -247,6 +257,18 @@
     background: var(--del-bg);
     color: var(--warn);
     border-bottom: 1px solid var(--border);
+  }
+
+  .blocked.editing {
+    background: var(--theme-soft);
+    color: var(--theme2);
+  }
+
+  .what {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   main {

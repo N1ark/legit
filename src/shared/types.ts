@@ -300,6 +300,19 @@ export interface Conflict {
   files: ConflictFile[];
   /** Files merged automatically or marked resolved (staged, different from HEAD). */
   resolved: string[];
+  /** A rebase that stopped to edit a commit (not on a conflict); null otherwise. */
+  edit: EditStop | null;
+}
+
+/** A commit checked out to edit its files, in the middle of a rebase that replays the ones after it. */
+export interface EditStop {
+  /** The commit being edited (HEAD). */
+  sha: string;
+  subject: string;
+  /** Commits still to replay on top of it, oldest first. */
+  pending: { sha: string; subject: string }[];
+  /** Started from legit, which knows which untracked files were there before (they're left out). */
+  legit: boolean;
 }
 
 export interface ConflictFile {

@@ -48,6 +48,13 @@
         note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
         run: () => app.uncommit(),
       },
+      c.editable && !c.merge && !blocked && {
+        label: 'Edit files…',
+        icon: PencilSimpleLine,
+        disabled: app.busy,
+        note: 'Check it out, change anything, then finish to amend',
+        run: () => app.editCommit(c.sha),
+      },
       {
         label: 'New branch from here…',
         icon: GitBranch,
@@ -110,7 +117,9 @@
       onkeydown={() => {}}
     >
       <span class="grip"><PencilSimpleLine /></span>
-      {#if app.repo.conflict}
+      {#if app.repo.conflict?.edit}
+        <span class="subject">Editing "{app.repo.conflict.edit.subject}"</span>
+      {:else if app.repo.conflict}
         {@const c = app.repo.conflict}
         <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
         {#if c.files.length}<Tag color="var(--warn)" label="{c.files.length} conflicted" title="Files with conflicts" />{/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
-  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Eraser, GitMerge, Scissors, Trash, X } from 'purr/icons';
+  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
@@ -192,6 +192,16 @@
       {@const open = commit.sha in app.expanded}
       <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} title="List the commits it brought in under it (→ / ←)">
         <GitMerge /> {open ? 'Hide' : 'Show'} merged commits
+      </Button>
+    {/if}
+    {#if !readonly && !commit.merge}
+      <Button
+        variant="ghost"
+        onclick={() => app.editCommit(commit.sha)}
+        disabled={app.busy}
+        title="Check out this commit to change its files in your editor; finishing amends the changes into it and replays the commits after it"
+      >
+        <PencilSimpleLine /> Edit files
       </Button>
     {/if}
     {#if !readonly && isHead && !commit.merge}

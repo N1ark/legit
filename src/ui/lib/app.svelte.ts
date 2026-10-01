@@ -237,6 +237,11 @@ class App {
     return p;
   }
 
+  /** Check out commit `sha` to edit its files (see EditView). */
+  editCommit(sha: string) {
+    return this.sync('editStart', { sha });
+  }
+
   /** Click on a commit: plain, toggle (cmd/ctrl) or range (shift). */
   select(sha: string, mode: 'set' | 'toggle' | 'range' = 'set') {
     const c = this.bySha.get(sha);

@@ -11,6 +11,7 @@ import {
 } from './branches.ts';
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
+import { cancelEdit, editChanges, finishEdit, startEdit } from './edit.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -120,6 +121,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     resolve: (b) => markResolved(repo, b),
     continue: () => continueOp(repo),
     abort: () => abortOp(repo),
+    editStart: (b) => startEdit(repo, b),
+    editFinish: () => finishEdit(repo),
+    editCancel: () => cancelEdit(repo),
     createBranch: (b) => createBranch(repo, b),
     renameBranch: (b) => renameBranch(repo, b),
     deleteBranch: (b) => deleteBranch(repo, b),
@@ -174,6 +178,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
+    if (path === '/api/edit') return send(res, 200, await summary(await editChanges(repo)));
     const older = /^\/api\/older\/([0-9a-f]{40,64})$/.exec(path);
     if (older) return send(res, 200, await repo.older(older[1]));
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);
