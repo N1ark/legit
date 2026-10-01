@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import { ArrowUUpLeft, ArrowsMerge, CloudCheck, DotsSixVertical, GitBranch, GitMerge, PencilSimpleLine, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
+  import Markdown from './Markdown.svelte';
   import { newBranch } from './lib/branches.svelte.ts';
 
   let list = $state<HTMLOListElement>();
@@ -176,7 +177,9 @@
         round
         title=""
       />
-      <span class="subject" class:muted={!c.subject}>{c.subject || '(no message)'}</span>
+      <span class="subject" class:muted={!c.subject}
+        >{#if c.subject}<Markdown text={c.subject} inline links="mod" />{:else}(no message){/if}</span
+      >
       {#if c.coauthors.length}
         <span class="meta" title={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
       {/if}

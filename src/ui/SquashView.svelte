@@ -4,6 +4,7 @@
   import { untrack } from 'svelte';
   import type { CommitInfo } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
+  import Markdown from './Markdown.svelte';
   import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { squashFields } from './lib/squash.ts';
@@ -64,7 +65,7 @@
     {#each commits.toReversed() as c (c.sha)}
       <li>
         <span class="mono sha">{shortSha(c)}</span>
-        {c.subject}
+        <Markdown text={c.subject} inline />
         <span class="muted who">
           <Avatar name={c.author.name} src={avatarUrl(c.author.email, 14)} seed={c.author.email.toLowerCase()} size={14} round />
           {c.author.name}

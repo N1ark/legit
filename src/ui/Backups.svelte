@@ -3,6 +3,7 @@
   import { ClockCounterClockwise } from 'purr/icons';
   import type { Backup } from '../shared/types.ts';
   import DiscardedList from './DiscardedList.svelte';
+  import Markdown from './Markdown.svelte';
   import { app, shortSha } from './lib/app.svelte.ts';
 
   let open = $state(false);
@@ -56,7 +57,7 @@
           <li>
             <span class="label">before {b.label}</span>
             <span class="mono sha">{shortSha(b.sha)}</span>
-            <span class="subject" title={b.subject}>{b.subject}</span>
+            <span class="subject" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
             <span class="muted when" title={formatFull(b.time)}>{formatRelative(b.time)}</span>
             {#if b.sha === app.repo?.head}
               <span class="muted now">current</span>

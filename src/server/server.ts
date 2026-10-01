@@ -11,7 +11,7 @@ import {
 } from './branches.ts';
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
-import { openInZed } from './editor.ts';
+import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
 import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
@@ -193,6 +193,13 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const { path: file, line } = await readBody(req);
       if (typeof file !== 'string') return send(res, 400, { error: 'Missing path' });
       await openInZed(repo.git.root, file, typeof line === 'number' ? line : undefined);
+      return send(res, 200, {});
+    }
+    if (path === '/api/open-url' && req.method === 'POST') {
+      if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
+      const { url: link } = await readBody(req);
+      if (typeof link !== 'string') return send(res, 400, { error: 'Missing url' });
+      await openUrl(link);
       return send(res, 200, {});
     }
     const op = /^\/api\/(\w+)$/.exec(path)?.[1];

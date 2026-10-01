@@ -28,3 +28,21 @@ export function openInZed(root: string, path: string, line?: number): Promise<vo
     p.unref();
   });
 }
+
+/** Open a web link in the default browser. Only http(s) and mailto: links come from commit messages. */
+export function openUrl(url: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new GitError('That link is malformed.');
+  }
+  if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) throw new GitError(`Won't open a ${parsed.protocol} link.`);
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [parsed.href]] : ['xdg-open', [parsed.href]];
+  return new Promise((done, fail) => {
+    const p = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    p.on('error', () => fail(new GitError("Couldn't open the link.")));
+    p.on('exit', (code) => (code === 0 ? done() : fail(new GitError(`Opening the link failed (code ${code}).`))));
+    p.unref();
+  });
+}

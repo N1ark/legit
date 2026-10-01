@@ -6,6 +6,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
+  import Markdown from './Markdown.svelte';
   import { type ShownStash, app, shortSha } from './lib/app.svelte.ts';
 
   let { stash }: { stash: ShownStash } = $props();
@@ -76,7 +77,7 @@
       <IconButton label="Close" shortcut="Esc" onclick={close}><X /></IconButton>
     </div>
     <h2>{stash.title}</h2>
-    {#if stash.message !== stash.title}<p class="muted message">{stash.message}</p>{/if}
+    {#if stash.message !== stash.title}<p class="muted message"><Markdown text={stash.message} inline /></p>{/if}
   </div>
 
   {#if error}

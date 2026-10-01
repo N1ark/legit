@@ -26,6 +26,7 @@
     "@tauri-apps/cli": "^2.12.0",
     "@types/node": "^26.6.3",
     "@types/prismjs": "^1.26.6",
+    "marked": "^18.0.14",
     "prismjs": "^1.30.0",
     "purr": "github:N1ark/purr#v0.3.0",
     "rolldown": "^1.2.11",

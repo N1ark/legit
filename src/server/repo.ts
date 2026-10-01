@@ -14,6 +14,7 @@ import type {
 import { switchBranch } from './branches.ts';
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
+import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
 import { syncState } from './sync.ts';
@@ -110,10 +111,18 @@ export class Repo {
   }
 
   async state(): Promise<RepoState> {
-    const [head, branch] = await Promise.all([
+    const [head, branch, remoteUrls] = await Promise.all([
       this.head(),
       this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true }),
+      this.git.text(['config', '--get-regexp', '^remote\\..*\\.url$'], { allowFail: true }),
     ]);
+    const push = head && branch ? await this.pushInfo(branch) : null;
+    const remotes = new Map(
+      remoteUrls.split('\n').flatMap((l) => {
+        const m = /^remote\.(.+)\.url (.+)$/.exec(l);
+        return m ? [[m[1], m[2]] as const] : [];
+      }),
+    );
     const state: RepoState = {
       root: this.git.root,
       name: basename(this.git.root),
@@ -123,7 +132,8 @@ export class Repo {
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
       canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
       canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
-      push: head && branch ? await this.pushInfo(branch) : null,
+      push,
+      github: pickGithubRepo(remotes, push?.remote),
       work: await workCounts(this.git),
       ...(await syncState(this)),
       stashed: await stashFor(this.git, branch || null),

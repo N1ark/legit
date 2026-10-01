@@ -23,7 +23,8 @@ is self-contained: it doesn't use your installed Node, only `git`.
 
 | | |
 |---|---|
-| **Edit** | Title, description, author and co-authors (`Co-authored-by` trailers) of any commit. <kbd>⌘↵</kbd> saves, <kbd>esc</kbd> reverts. |
+| **Edit** | Title, description, author and co-authors (`Co-authored-by` trailers) of any commit. Titles and descriptions show as markdown; click one (or tab to it) to edit it. <kbd>⌘↵</kbd> saves, <kbd>esc</kbd> reverts. |
+| **Links** | Web links in messages, and `#123`, `GH-123` or `owner/repo#123`, which open the GitHub issue or pull request (of the remote you push to, else `origin`). In the commit list, <kbd>⌘</kbd>-click them: a click selects the row. |
 | **Split** | Click, drag or shift-click lines in a commit's diff, or use the strip left of the line numbers to pick whole blocks of consecutive changes (hunk headers and file checkboxes pick more). Then split them into a new commit placed *after* (or *before*) the original. |
 | **Squash** | <kbd>⌘</kbd>/<kbd>⇧</kbd>-click several commits; they're folded into the oldest one, with a combined message you can edit. Other authors become co-authors. |
 | **Reorder** | Drag commits, or <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> (<kbd>K</kbd>/<kbd>J</kbd>). |

@@ -10,6 +10,7 @@
   import { app, shortSha } from './lib/app.svelte.ts';
   import { deleteBranch, deleteRemoteBranch, newBranch, renameBranch, restoreBranch, switchOp } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
+  import Markdown from './Markdown.svelte';
 
   type Row =
     | { kind: 'local'; b: BranchInfo; indices: number[] }
@@ -224,20 +225,20 @@
                 {@const b = r.b}
                 <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
                 <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}>{b.subject}</span>
+                <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 {#if b.track}<span class="track">{b.track}</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
               {:else if r.kind === 'remote'}
                 {@const b = r.b}
                 <span class="check"><CloudArrowDown /></span>
                 <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}>{b.subject}</span>
+                <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
               {:else}
                 {@const b = r.b}
                 <span class="check"><ArrowCounterClockwise /></span>
                 <span class="name mono gone"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · {b.subject}</span>
+                <span class="subject muted" title={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
                 <span class="when muted">{formatRelative(b.time)}</span>
               {/if}
             </li>

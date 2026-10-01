@@ -1,4 +1,4 @@
-import { copyText, toast } from 'purr';
+import { IS_TAURI, copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
   CommitInfo, DiffSummary, FileContents, HunkData, MergedCommits, OlderCommits, OpResult, Person, RepoState, SyncResult,
@@ -269,6 +269,19 @@ class App {
   async openInZed(path: string, line?: number) {
     try {
       await request('/api/open', { path, line });
+    } catch (e) {
+      toast.error(e);
+    }
+  }
+
+  /** Open a web link: the desktop app's window can't, so the server asks the OS to. */
+  async openUrl(url: string) {
+    if (!IS_TAURI) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      await request('/api/open-url', { url });
     } catch (e) {
       toast.error(e);
     }

@@ -6,6 +6,7 @@
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
+  import Markdown from './Markdown.svelte';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
 
@@ -31,6 +32,23 @@
       authorEmail !== commit.author.email ||
       coauthors.filter((s) => s.trim()).join('\n') !== commit.coauthors.map(fmt).join('\n'),
   );
+
+  // Title and description show rendered, and turn into fields to edit them (on a click, or Tab).
+  let editing = $state<'subject' | 'body' | null>(null);
+
+  function edit(field: 'subject' | 'body') {
+    if (!readonly) editing = field;
+  }
+
+  /** A click on a link follows it rather than starting to edit. */
+  function keepLinks(e: MouseEvent) {
+    if ((e.target as HTMLElement).closest('a')) e.preventDefault();
+  }
+
+  function focusEnd(el: HTMLInputElement | HTMLTextAreaElement) {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }
 
   function save() {
     if (!dirty || !valid || readonly) return;
@@ -111,6 +129,9 @@
     } else if (e.key === 'Escape' && dirty) {
       e.preventDefault();
       revert();
+    } else if (e.key === 'Escape' && editing) {
+      e.preventDefault();
+      editing = null;
     }
   }
 
@@ -181,8 +202,51 @@
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="meta" onkeydown={onFormKey}>
-    <input class="field-input subject" bind:value={subject} placeholder="Commit title" disabled={readonly} spellcheck="true" />
-    <textarea class="field-input body" bind:value={body} placeholder="Description" disabled={readonly} rows="3" spellcheck="true"></textarea>
+    {#if editing === 'subject'}
+      <input
+        class="field-input subject"
+        bind:value={subject}
+        placeholder="Commit title"
+        spellcheck="true"
+        onblur={() => editing === 'subject' && (editing = null)}
+        {@attach focusEnd}
+      />
+    {:else}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="field-input subject shown"
+        class:readonly
+        tabindex={readonly ? undefined : 0}
+        title={readonly ? undefined : 'Click to edit'}
+        onfocus={() => edit('subject')}
+        onmousedown={keepLinks}
+      >
+        {#if subject}<Markdown text={subject} inline />{:else}<span class="placeholder">Commit title</span>{/if}
+      </div>
+    {/if}
+    {#if editing === 'body'}
+      <textarea
+        class="field-input body"
+        bind:value={body}
+        placeholder="Description"
+        rows="3"
+        spellcheck="true"
+        onblur={() => editing === 'body' && (editing = null)}
+        {@attach focusEnd}
+      ></textarea>
+    {:else if body.trim() || !readonly}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="field-input body shown"
+        class:readonly
+        tabindex={readonly ? undefined : 0}
+        title={readonly ? undefined : 'Click to edit'}
+        onfocus={() => edit('body')}
+        onmousedown={keepLinks}
+      >
+        {#if body.trim()}<Markdown text={body} />{:else}<span class="placeholder">Description</span>{/if}
+      </div>
+    {/if}
 
     <div class="people">
       <label for="author-name" class="muted">Author</label>
@@ -295,7 +359,32 @@
     padding: var(--sp-3) var(--sp-4);
   }
 
-  .field-input:disabled {
+  .shown {
+    cursor: text;
+    overflow-wrap: anywhere;
+  }
+
+  .subject.shown {
+    line-height: 1.4;
+  }
+
+  .body.shown {
+    height: auto;
+    max-height: none;
+  }
+
+  .placeholder {
+    color: var(--muted);
+    font-weight: normal;
+  }
+
+  .shown.readonly {
+    cursor: auto;
+    user-select: text;
+  }
+
+  .field-input:disabled,
+  .shown.readonly {
     background: transparent;
     border-color: transparent;
     opacity: 1;
