@@ -224,6 +224,43 @@ test('refuses to rewrite past a merge and keeps the merge intact', async () => {
   assert.equal(git('rev-list', '--merges', '--count', 'HEAD'), '1');
 });
 
+test('older history loads in pages; a merge lists the commits it brought in', async () => {
+  commit('base', { f: '1\n' });
+  // 300 more commits, quickly.
+  let stream = '';
+  for (let i = 1; i <= 300; i++) stream += `commit refs/heads/main\ncommitter Ann <ann@x.org> ${1e9 + i} +0000\ndata ${`old ${i}`.length}\nold ${i}\n\n`;
+  execFileSync('git', ['fast-import', '--quiet'], { cwd: dir, env, input: stream.replace('\n\n', '\nfrom main^0\n\n') });
+  git('reset', '-q', '--hard');
+  git('checkout', '-q', '-b', 'side');
+  commit('side 1', { s: '1\n' });
+  commit('side 2', { s: '2\n' });
+  git('checkout', '-q', 'main');
+  commit('main', { m: '1\n' });
+  git('merge', '-q', '--no-edit', 'side');
+  commit('after merge', { m: '2\n' });
+  const repo = await Repo.open(dir);
+
+  const st = await repo.state();
+  const all = git('rev-list', '--first-parent', 'HEAD').split('\n');
+  assert.deepEqual(st.commits.map((c) => c.sha), all.slice(0, st.commits.length));
+  const p1 = await repo.older(st.commits.at(-1)!.sha);
+  assert.equal(p1.commits.length, 200);
+  assert.ok(p1.more);
+  const p2 = await repo.older(p1.commits.at(-1)!.sha);
+  assert.ok(!p2.more);
+  assert.deepEqual([...st.commits, ...p1.commits, ...p2.commits].map((c) => c.sha), all);
+  assert.equal(p2.commits.at(-1)!.subject, 'base');
+  assert.ok(p2.commits.every((c) => !c.editable));
+  assert.deepEqual(await repo.older(p2.commits.at(-1)!.sha), { commits: [], more: false });
+
+  const merge = st.commits[1];
+  assert.ok(merge.merge);
+  const m = await repo.merged(merge.sha);
+  assert.equal(m.total, 2);
+  assert.deepEqual(m.commits.map((c) => [c.subject, c.side, c.editable]), [['side 2', merge.sha, false], ['side 1', merge.sha, false]]);
+  assert.deepEqual(await repo.merged(st.commits[0].sha), { commits: [], total: 0 });
+});
+
 test('switching branches refuses to clobber local changes; undo history is per branch', async () => {
   commit('base', { f: '1\n' });
   git('branch', 'other');

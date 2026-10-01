@@ -17,6 +17,20 @@ export interface CommitInfo {
   /** Merge commits (and anything below them) can't be rewritten. */
   editable: boolean;
   merge: boolean;
+  /** Listed under a merge (the SHA) as one of the commits it brought in. */
+  side?: string;
+}
+
+/** A page of history past what `RepoState.commits` lists. */
+export interface OlderCommits {
+  commits: CommitInfo[];
+  more: boolean;
+}
+
+/** The commits a merge brought in (at most a few hundred of `total`). */
+export interface MergedCommits {
+  commits: CommitInfo[];
+  total: number;
 }
 
 export interface RepoState {

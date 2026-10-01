@@ -172,6 +172,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
+    const older = /^\/api\/older\/([0-9a-f]{40,64})$/.exec(path);
+    if (older) return send(res, 200, await repo.older(older[1]));
+    const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);
+    if (merged) return send(res, 200, await repo.merged(merged[1]));
     const diff = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)$/.exec(path);
     if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.

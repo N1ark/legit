@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { Avatar, Tag, formatRelative, isMac, menu } from 'purr';
+  import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu } from 'purr';
+  import { tick } from 'svelte';
   import { ArrowUUpLeft, ArrowsMerge, CloudCheck, DotsSixVertical, GitBranch, GitMerge, PencilSimpleLine, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import { newBranch } from './lib/branches.svelte.ts';
 
+  let list = $state<HTMLOListElement>();
   let dragging = $state<string[] | null>(null);
   let drop = $state<{ sha: string; after: boolean } | null>(null);
 
@@ -54,6 +56,16 @@
     ]);
   }
 
+  // Older history loads as the list nears its end, and again after each page if it still does.
+  function loadIfNearEnd() {
+    if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 600) app.loadOlder();
+  }
+
+  $effect(() => {
+    void app.commits.length;
+    if (!app.loadingOlder) tick().then(loadIfNearEnd);
+  });
+
   function ondragstart(e: DragEvent, sha: string) {
     if (!app.selected.includes(sha)) app.select(sha);
     dragging = app.editable.map((c) => c.sha).filter((s) => app.selected.includes(s));
@@ -84,7 +96,7 @@
   }
 </script>
 
-<ol class="list" role="listbox" aria-multiselectable="true">
+<ol class="list" role="listbox" aria-multiselectable="true" bind:this={list} onscroll={loadIfNearEnd}>
   {#if app.hasWork && app.repo}
     {@const w = app.repo.work}
     <li
@@ -111,13 +123,14 @@
   {/if}
   {#each app.commits as c, i (c.sha)}
     {#if !c.editable && (i === 0 || app.commits[i - 1].editable)}
-      <li class="boundary muted">history below a merge can't be rewritten</li>
+      <li class="boundary muted">{c.merge ? "history below a merge can't be rewritten" : "older history can't be rewritten here"}</li>
     {/if}
     <li
       data-sha={c.sha}
       class="row"
       class:is-current={app.selected.includes(c.sha)}
       class:locked={!c.editable}
+      class:side={c.side}
       class:dnd-dragging={dragging?.includes(c.sha)}
       class:dnd-before={drop?.sha === c.sha && !drop.after}
       class:dnd-after={drop?.sha === c.sha && drop.after}
@@ -135,9 +148,25 @@
       {ondragend}
       title="{c.author.name} <{c.author.email}>{c.pushed ? '\nPushed: rewriting it needs a force-push' : ''}"
     >
-      <span class="grip">
-        {#if c.merge}<GitMerge />{:else if c.editable}<DotsSixVertical weight="bold" />{/if}
-      </span>
+      {#if c.merge && !c.side}
+        {@const open = c.sha in app.expanded}
+        <button
+          class="grip twisty"
+          title={open ? 'Hide the merged commits' : 'Show the merged commits'}
+          aria-label={open ? 'Hide the merged commits' : 'Show the merged commits'}
+          aria-expanded={open}
+          onclick={(e) => {
+            e.stopPropagation();
+            app.toggleMerge(c.sha);
+          }}
+        >
+          <Twisty {open} size={10} />
+        </button>
+      {:else}
+        <span class="grip">
+          {#if c.merge}<GitMerge />{:else if c.editable}<DotsSixVertical weight="bold" />{/if}
+        </span>
+      {/if}
       <span class="sha mono">{shortSha(c)}</span>
       <Avatar
         name={c.author.name}
@@ -154,7 +183,21 @@
       <span class="meta">{formatRelative(c.author.time * 1000)}</span>
       <span class="meta pushed">{#if c.pushed}<CloudCheck />{/if}</span>
     </li>
+    {#if c.merge && app.expanded[c.sha] === null}
+      <li class="note side muted"><Spinner size={12} /> Loading merged commits…</li>
+    {:else if c.merge && app.expanded[c.sha]?.commits.length === 0}
+      <li class="note side muted">It didn't bring in any commits.</li>
+    {/if}
+    {#if c.side && app.commits[i + 1]?.side !== c.side}
+      {@const m = app.expanded[c.side]}
+      {#if m && m.total > m.commits.length}
+        <li class="note side muted">…and {m.total - m.commits.length} older merged commits</li>
+      {/if}
+    {/if}
   {/each}
+  {#if app.loadingOlder}
+    <li class="note muted"><Spinner size={12} /> Loading older commits…</li>
+  {/if}
 </ol>
 
 <style>
@@ -235,6 +278,31 @@
   .pushed {
     width: 13px;
     font-size: var(--icon-md);
+  }
+
+  .side {
+    margin-left: calc(var(--gap-3) + 18px);
+  }
+
+  .twisty {
+    all: unset;
+    width: 14px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 1;
+    cursor: pointer;
+  }
+
+  .note {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    height: 30px;
+    padding: 0 var(--sp-4) 0 var(--sp-5);
+    font-size: var(--fs-xs);
   }
 
   .row.work .subject {

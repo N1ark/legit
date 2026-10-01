@@ -53,8 +53,9 @@ returns the linked account. Emails are only sent to `api.github.com`, and only f
 `GITHUB_TOKEN`/`GH_TOKEN` or the `gh` CLI's login when available (read-only), and results are cached in
 `~/Library/Caches/legit/avatars.json`.
 
-<kbd>j</kbd>/<kbd>k</kbd> move the selection, and <kbd>?</kbd> lists every shortcut. The list follows the first-parent history of `HEAD` down to the first
-merge commit; the history below a merge is shown but can't be rewritten.
+<kbd>j</kbd>/<kbd>k</kbd> move the selection, and <kbd>?</kbd> lists every shortcut. The list follows the first-parent history of `HEAD`, and older
+history loads as you scroll. Everything from the first merge commit down is shown but can't be rewritten. Click the
+arrow on a merge (or press <kbd>→</kbd>/<kbd>←</kbd>) to list the commits it brought in under it.
 
 ## How it stays safe
 

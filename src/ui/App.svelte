@@ -53,7 +53,9 @@
     };
   });
 
-  type Action = 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp';
+  type Action =
+    | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
+    | 'open' | 'close';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -68,6 +70,8 @@
     { keys: '⌥↑', action: 'moveUp', label: 'Move up', group: C },
     { keys: '⇧K', action: 'moveUp', label: 'Move up', group: C },
     { keys: '⌥k', action: 'moveUp', label: 'Move up', group: C, hidden: true },
+    { keys: '→', action: 'open', label: "Show a merge's commits", group: C },
+    { keys: '←', action: 'close', label: "Hide a merge's commits", group: C },
     // In a field, ⌘Z is the field's own undo.
     { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
     { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
@@ -95,6 +99,11 @@
     else if (action === 'help') help = true;
     else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
     else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
+    else if (action === 'open' || action === 'close') {
+      const c = app.selection.length === 1 ? app.selection[0] : null;
+      const merge = c?.side ?? (c?.merge ? c.sha : null);
+      if (merge) app.toggleMerge(merge, action === 'open');
+    }
     else app.move(action === 'moveDown' ? 1 : -1);
   }
 </script>

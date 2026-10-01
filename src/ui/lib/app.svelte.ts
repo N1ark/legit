@@ -1,6 +1,8 @@
 import { copyText, toast } from 'purr';
 import { type SquashFields, squashFields } from './squash.ts';
-import type { CommitInfo, DiffSummary, FileContents, HunkData, OpResult, Person, RepoState, SyncResult } from '../../shared/types.ts';
+import type {
+  CommitInfo, DiffSummary, FileContents, HunkData, MergedCommits, OlderCommits, OpResult, Person, RepoState, SyncResult,
+} from '../../shared/types.ts';
 
 export async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(
@@ -25,7 +27,25 @@ class App {
   private contents = new Map<string, Promise<HunkData[]>>();
   private gen = 0;
 
-  commits = $derived(this.repo?.commits ?? []);
+  /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
+  private older = $state.raw<({ from: string } & OlderCommits) | null>(null);
+  loadingOlder = $state(false);
+  /** Merges whose commits are listed under them, by SHA (null while loading). */
+  expanded = $state.raw<Record<string, MergedCommits | null>>({});
+
+  /** Everything the list shows, newest first: the state's commits, older ones, and expanded merges' commits. */
+  commits = $derived.by(() => {
+    const base = this.repo?.commits ?? [];
+    const older = this.older && this.older.from === base.at(-1)?.sha ? this.older.commits : [];
+    const out: CommitInfo[] = [];
+    for (const c of [...base, ...older]) {
+      out.push(c);
+      if (c.merge) out.push(...(this.expanded[c.sha]?.commits ?? []));
+    }
+    return out;
+  });
+  /** No older history left to load. */
+  atEnd = $derived(!!this.older && this.older.from === this.repo?.commits.at(-1)?.sha && !this.older.more);
   editable = $derived(this.commits.filter((c) => c.editable));
   bySha = $derived(new Map(this.commits.map((c) => [c.sha, c])));
   /** Selected commits, newest first. */
@@ -56,12 +76,53 @@ class App {
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
-    const shas = new Set(repo.commits.map((c) => c.sha));
+    const shas = new Set(this.commits.map((c) => c.sha));
     if (this.hasWork) shas.add(WORK);
     let sel = (conflictStarted ? [WORK] : (focus ?? this.selected)).filter((s) => shas.has(s));
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
     this.selected = sel;
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
+  }
+
+  /** Load the next page of older history (the list calls this when scrolled near its end). */
+  async loadOlder() {
+    const from = this.repo?.commits.at(-1)?.sha;
+    if (!from || this.loadingOlder || this.atEnd) return;
+    const cur = this.older?.from === from ? this.older : null;
+    this.loadingOlder = true;
+    try {
+      const r = await request<OlderCommits>(`/api/older/${cur?.commits.at(-1)?.sha ?? from}`);
+      // History changed meanwhile: the next call starts over from the new oldest commit.
+      if (this.repo?.commits.at(-1)?.sha !== from || this.older !== cur) return;
+      this.older = { from, commits: [...(cur?.commits ?? []), ...r.commits], more: r.more };
+      this.loadAvatars(r.commits.map((c) => c.author.email));
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      this.loadingOlder = false;
+    }
+  }
+
+  /** List a merge's commits under it, or stop listing them. */
+  async toggleMerge(sha: string, open = !(sha in this.expanded)) {
+    if (open === sha in this.expanded) return;
+    if (!open) {
+      const side = new Set(this.expanded[sha]?.commits.map((c) => c.sha));
+      const { [sha]: _, ...rest } = this.expanded;
+      this.expanded = rest;
+      if (this.selected.some((s) => side.has(s))) this.select(sha);
+      return;
+    }
+    this.expanded = { ...this.expanded, [sha]: null };
+    try {
+      const r = await request<MergedCommits>(`/api/merged/${sha}`);
+      if (sha in this.expanded) this.expanded = { ...this.expanded, [sha]: r };
+      this.loadAvatars(r.commits.map((c) => c.author.email));
+    } catch (e) {
+      const { [sha]: _, ...rest } = this.expanded;
+      this.expanded = rest;
+      toast.error(e);
+    }
   }
 
   /** A commit's file list (no content). Cached: commits are immutable. */

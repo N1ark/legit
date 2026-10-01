@@ -9,7 +9,7 @@ import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
-  Backup, BranchInfo, CommitDiff, CommitInfo, CommitRequest, DropRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { switchBranch } from './branches.ts';
 import { applyLines, commitDiff } from './diff.ts';
@@ -23,6 +23,9 @@ import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
 const PAST_MERGE = 20;
+/** How many older commits each scroll loads, and how many of a merge's commits are listed. */
+const PAGE = 200;
+const MERGED = 500;
 const BACKUPS = 'refs/legit/backups';
 
 interface Item {
@@ -42,6 +45,19 @@ interface Move {
   after: string;
   /** Only HEAD moves; the index and working tree are left as they are (commit, amend, uncommit). */
   soft?: boolean;
+}
+
+/** What the commit list shows of a commit. `local`: SHAs not on any remote-tracking branch. */
+function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
+  const a = parseIdent(toUtf8(c.author));
+  return {
+    sha: c.sha,
+    ...parseMessage(toUtf8(c.message)),
+    author: { name: a.name, email: a.email, time: a.time },
+    pushed: !local.has(c.sha),
+    editable,
+    merge: c.parents.length > 1,
+  };
 }
 
 export class Repo {
@@ -123,21 +139,42 @@ export class Repo {
     let editable = true;
     let past = 0;
     for (const c of commits) {
-      const merge = c.parents.length > 1;
-      if (merge) editable = false;
+      if (c.parents.length > 1) editable = false;
       if (!editable && past++ > PAST_MERGE) break;
-      const msg = parseMessage(toUtf8(c.message));
-      const a = parseIdent(toUtf8(c.author));
-      state.commits.push({
-        sha: c.sha,
-        ...msg,
-        author: { name: a.name, email: a.email, time: a.time },
-        pushed: !local.has(c.sha),
-        editable,
-        merge,
-      } satisfies CommitInfo);
+      state.commits.push(info(c, local, editable));
     }
     return state;
+  }
+
+  /**
+   * First-parent history older than `sha` (the oldest commit shown so far), newest first.
+   * It's never editable: it's past what `state()` lists.
+   */
+  async older(sha: string): Promise<OlderCommits> {
+    const parent = (await this.git.commit(sha)).parents[0];
+    if (!parent) return { commits: [], more: false };
+    const [list, unpushed] = await Promise.all([
+      this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent]),
+      this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent, '--not', '--remotes']),
+    ]);
+    const local = new Set(unpushed.split('\n'));
+    const commits = await this.git.loadCommits(list.split('\n'));
+    return { commits: commits.slice(0, PAGE).map((c) => info(c, local, false)), more: commits.length > PAGE };
+  }
+
+  /** The commits a merge brought in: reachable from its other parents but not its first. Newest first. */
+  async merged(sha: string): Promise<MergedCommits> {
+    const [first, ...others] = (await this.git.commit(sha)).parents;
+    if (!others.length) return { commits: [], total: 0 };
+    const range = [...others, '--not', first];
+    const [list, unpushed, total] = await Promise.all([
+      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range]),
+      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range, '--remotes']),
+      this.git.text(['rev-list', '--count', ...range]),
+    ]);
+    const local = new Set(unpushed.split('\n'));
+    const commits = list ? await this.git.loadCommits(list.split('\n')) : [];
+    return { commits: commits.map((c) => ({ ...info(c, local, false), side: sha })), total: Number(total) };
   }
 
   /** The editable part of the first-parent chain, newest first. */

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
-  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Scissors, Trash, X } from 'purr/icons';
+  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, GitMerge, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
@@ -140,6 +140,12 @@
       </Tag>
     {/if}
     <span class="spacer"></span>
+    {#if commit.merge && !commit.side}
+      {@const open = commit.sha in app.expanded}
+      <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} title="List the commits it brought in under it (→ / ←)">
+        <GitMerge /> {open ? 'Hide' : 'Show'} merged commits
+      </Button>
+    {/if}
     {#if !readonly && isHead && !commit.merge}
       {#if commit.pushed}
         <ConfirmButton
