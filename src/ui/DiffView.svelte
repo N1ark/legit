@@ -186,7 +186,8 @@
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
     const key = `${summary.sha}:${i}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '');
-    highlight(key, files[i].path, rowHunks(rows), distance, () => alive && contents[i] === rows).then((t) => {
+    const want = () => alive && contents[i] === rows;
+    highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
     });
   }

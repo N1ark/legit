@@ -126,6 +126,8 @@ export interface CommitDiff {
 export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   /** Generated (lockfile, minified, `linguist-generated`...): collapsed by default. */
   generated: boolean;
+  /** A tree-sitter grammar to highlight it with (`legit.syntax` in git config), instead of Prism's guess. */
+  syntax?: string;
   /** Rows the file renders: one per hunk header and per diff line, and one after the last hunk when the file may go on. */
   rows: number;
   /** Widest line, in columns (tabs count as 4). */

@@ -21,7 +21,8 @@ export const DEFAULT_HIDDEN = [
   '.pnp.cjs', '.pnp.loader.mjs', '.yarn/releases/**', '.yarn/plugins/**',
 ];
 
-const normalize = (p: string) => (p.includes('/') ? p.replace(/^\//, '') : `**/${p}`);
+/** A pattern as a glob over repo paths: without a slash it matches the file name at any depth. */
+export const normalize = (p: string) => (p.includes('/') ? p.replace(/^\//, '') : `**/${p}`);
 
 /** `sha`: the commit whose .gitattributes apply; null for the working tree. */
 export async function generatedPaths(git: Git, sha: string | null, paths: string[]): Promise<Set<string>> {

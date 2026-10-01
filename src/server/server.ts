@@ -12,6 +12,7 @@ import {
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
 import { cancelEdit, editChanges, finishEdit, startEdit } from './edit.ts';
+import { grammarFiles, syntaxes } from './syntax.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -145,8 +146,12 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     let json = summaries.get(d.sha);
     if (!json) {
       const work = /^w\d+$/.test(d.sha);
-      const generated = await generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), d.files.map((f) => f.path));
-      json = JSON.stringify(summarize(d, generated));
+      const paths = d.files.map((f) => f.path);
+      const [generated, syntax] = await Promise.all([
+        generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), paths),
+        syntaxes(repo.git, paths),
+      ]);
+      json = JSON.stringify(summarize(d, generated, syntax));
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
     }
@@ -201,6 +206,16 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
       if (!f) return send(res, 404, { error: 'Not found' });
       return send(res, 200, await oldLines(repo.git, f));
+    }
+    // /api/grammar?name=ullbc&part=wasm|highlights: a grammar this repo's legit.syntax rules use.
+    if (path === '/api/grammar') {
+      const g = await grammarFiles(repo.git, query.get('name') ?? '');
+      if (query.get('part') === 'wasm') {
+        res.writeHead(200, { 'content-type': 'application/wasm', 'cache-control': 'no-store' });
+        return res.end(g.wasm);
+      }
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(g.highlights);
     }
     if (path === '/api/open' && req.method === 'POST') {
       if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });

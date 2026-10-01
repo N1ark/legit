@@ -3,18 +3,16 @@
 
 import type { HunkData } from '../../shared/types.ts';
 import { language } from './languages.ts';
+import type { Tokens } from './rows.ts';
 
-/** Per-row runs of [length, class id]; row r spans data[offsets[r]..offsets[r+1]). */
-export interface Tokens {
-  classes: string[];
-  offsets: Uint32Array;
-  data: Uint32Array;
-}
+export type { Tokens };
 
 interface Job {
   key: string;
   path: string;
   hunks: HunkData[];
+  /** A tree-sitter grammar to use instead of Prism. */
+  syntax?: string;
   /** Lower runs first; re-read whenever the worker frees up. */
   priority: () => number;
   /** False once nobody needs the result (e.g. the diff was closed). */
@@ -36,7 +34,7 @@ function pump() {
   for (let k = 1; k < queue.length; k++) if (queue[k].priority() < queue[best].priority()) best = k;
   running = queue.splice(best, 1)[0];
   worker ??= start();
-  worker.postMessage({ id: ++nextId, path: running.path, hunks: running.hunks });
+  worker.postMessage({ id: ++nextId, path: running.path, hunks: running.hunks, syntax: running.syntax });
 }
 
 function start() {
@@ -58,11 +56,12 @@ export function highlight(
   hunks: HunkData[],
   priority: () => number,
   wanted: () => boolean,
+  syntax?: string,
 ): Promise<Tokens | null> {
-  if (!language(path)) return Promise.resolve(null);
+  if (!syntax && !language(path)) return Promise.resolve(null);
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
   return new Promise((done) => {
-    queue.push({ key, path, hunks, priority, wanted, done });
+    queue.push({ key, path, hunks, syntax, priority, wanted, done });
     pump();
   });
 }

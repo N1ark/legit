@@ -8,7 +8,6 @@
 
 import { moreAfter } from '../../shared/context.ts';
 import type { FileLines, HunkData } from '../../shared/types.ts';
-import type { Tokens } from './highlighter.ts';
 
 export const HUNK = 0;
 export const CONTEXT = 1;
@@ -33,6 +32,13 @@ export interface Expansion {
   file: FileLines | null;
   top: number[];
   bottom: number[];
+}
+
+/** Highlighting: per-row runs of [length, class id]; row r spans data[offsets[r]..offsets[r+1]). */
+export interface Tokens {
+  classes: string[];
+  offsets: Uint32Array;
+  data: Uint32Array;
 }
 
 export interface FileRows {

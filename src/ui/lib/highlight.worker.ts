@@ -1,9 +1,10 @@
 // Web worker: syntax-highlights a file's hunks with Prism, off the main thread.
 //
-// In: { id, path, hunks: HunkData[] }. Out: { id, tokens } where tokens encodes, for every
-// row of the file (hunk headers included, empty), runs of [length, class id] over the text.
-// Each side (old/new) of a hunk is tokenized as one block so multi-line strings and comments
-// come out right. Buffers are transferred, not copied.
+// In: { id, path, hunks: HunkData[], syntax? }. Out: { id, tokens } where tokens encodes, for
+// every row of the file (hunk headers included, empty), runs of [length, class id] over the
+// text. Each side (old/new) of a hunk is tokenized as one block so multi-line strings and
+// comments come out right. A file with a tree-sitter grammar (`syntax`) uses that instead of
+// Prism, falling back to Prism if it can't load. Buffers are transferred, not copied.
 
 import type { Grammar, Token, TokenStream } from 'prismjs';
 import type { HunkData } from '../../shared/types.ts';
@@ -78,9 +79,18 @@ function tokenizeLines(P: Prism, lines: string[], grammar: Grammar): Seg[][] {
   return out;
 }
 
-async function highlight(path: string, hunks: HunkData[]) {
+/** A block of lines with grammar `syntax`, or null when it can't be used. */
+async function treeSitter(syntax: string, lines: string[]): Promise<Seg[][] | null> {
+  try {
+    return await (await import('./treesitter.ts')).tokenize(syntax, lines);
+  } catch {
+    return null;
+  }
+}
+
+async function highlight(path: string, hunks: HunkData[], syntax?: string) {
   const lang = language(path);
-  if (!lang) return null;
+  if (!lang && !syntax) return null;
   let chars = 0;
   for (const h of hunks) {
     for (const t of h.text) {
@@ -89,10 +99,18 @@ async function highlight(path: string, hunks: HunkData[]) {
     }
   }
   if (chars > MAX_CHARS) return null;
-  await load(lang);
-  const P = await core();
-  const grammar = P.languages[lang];
-  if (!grammar) return null;
+  // Tree-sitter when the file has a grammar and it loads (tried on the first hunk), else Prism.
+  let tokenizeSide: (lines: string[]) => Promise<Seg[][]> | Seg[][];
+  const first = syntax && hunks.length ? await treeSitter(syntax, hunks[0].text.filter((_, k) => hunks[0].types[k] !== '-')) : null;
+  if (first) tokenizeSide = async (lines) => (await treeSitter(syntax!, lines)) ?? lines.map(() => []);
+  else {
+    if (!lang) return null;
+    await load(lang);
+    const P = await core();
+    const grammar = P.languages[lang];
+    if (!grammar) return null;
+    tokenizeSide = (lines) => tokenizeLines(P, lines, grammar);
+  }
 
   const classes = [''];
   const ids = new Map([['', 0]]);
@@ -102,8 +120,8 @@ async function highlight(path: string, hunks: HunkData[]) {
   let r = 0;
   for (const h of hunks) {
     offsets[r++] = data.length; // hunk header: no tokens
-    const oldSide = tokenizeLines(P, h.text.filter((_, k) => h.types[k] !== '+'), grammar);
-    const newSide = tokenizeLines(P, h.text.filter((_, k) => h.types[k] !== '-'), grammar);
+    const oldSide = await tokenizeSide(h.text.filter((_, k) => h.types[k] !== '+'));
+    const newSide = await tokenizeSide(h.text.filter((_, k) => h.types[k] !== '-'));
     let o = 0;
     let n = 0;
     for (let k = 0; k < h.text.length; k++) {
@@ -124,11 +142,11 @@ async function highlight(path: string, hunks: HunkData[]) {
   return { classes, offsets, data: Uint32Array.from(data) };
 }
 
-self.onmessage = async (e: MessageEvent<{ id: number; path: string; hunks: HunkData[] }>) => {
-  const { id, path, hunks } = e.data;
+self.onmessage = async (e: MessageEvent<{ id: number; path: string; hunks: HunkData[]; syntax?: string }>) => {
+  const { id, path, hunks, syntax } = e.data;
   let tokens = null;
   try {
-    tokens = await highlight(path, hunks);
+    tokens = await highlight(path, hunks, syntax);
   } catch {
     // Unhighlighted is fine.
   }

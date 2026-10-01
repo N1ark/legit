@@ -81,8 +81,8 @@ export function parseDiff(data: string, sha: string): CommitDiff {
   return { sha, files };
 }
 
-/** File list with exact row counts and widths, but no content (utf8 for display). */
-export function summarize(d: CommitDiff, generated: Set<string>): DiffSummary {
+/** File list with exact row counts and widths, but no content (utf8 for display). `syntax`: grammars by path. */
+export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Map<string, string>()): DiffSummary {
   return {
     sha: d.sha,
     files: d.files.map(({ hunks, ...f }) => {
@@ -101,7 +101,8 @@ export function summarize(d: CommitDiff, generated: Set<string>): DiffSummary {
         if (moreAfter(last.map((l) => l.t).join(''), !!last[last.length - 1]?.eof)) rows++;
       }
       const { token: _, ...rest } = f;
-      return { ...rest, path: toUtf8(f.path), rows, width, generated: generated.has(f.path) };
+      const grammar = syntax.get(f.path);
+      return { ...rest, path: toUtf8(f.path), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
     }),
   };
 }

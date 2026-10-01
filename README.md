@@ -51,6 +51,19 @@ start collapsed with a *generated* badge. Anything marked `linguist-generated` i
 git config --add legit.hide 'docs/*.html'     # this repo; use --global for all repos
 ```
 
+Diffs are highlighted with Prism, by file extension. Files it doesn't know, or gets wrong, can use a tree-sitter
+grammar instead: one from Zed's installed extensions, by grammar or language name, or a folder with a compiled
+grammar (`*.wasm`, from `tree-sitter build --wasm`) and its `highlights.scm` (at the top, in `queries/`, or in
+`languages/*/`, as in a Zed extension):
+
+```sh
+git config --add legit.syntax '*.out=ullbc'                     # Zed's `ullbc` grammar for .out files, in this repo
+git config --add legit.syntax 'tests/**/*.llbc=~/src/tree-sitter-ullbc'
+```
+
+Patterns are globs like `legit.hide`'s, and the last matching rule wins. The grammar loads once, the first time a
+file needs it; if it can't (the console says why), the file falls back to Prism.
+
 Authors show their GitHub avatar (initials otherwise). GitHub no-reply emails map to one directly. For other
 emails, if the repo has a github.com remote, legit asks GitHub's API for a commit by that email in that repo, which
 returns the linked account. Emails are only sent to `api.github.com`, and only for repos hosted there. It uses
