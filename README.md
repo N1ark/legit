@@ -30,7 +30,7 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Drop** | Trash button on a commit (click twice). |
 | **Undo** | <kbd>⌘Z</kbd>/<kbd>⌘⇧Z</kbd> (per branch), plus the backups panel (clock icon) for anything older. Undoing a commit, amend or uncommit only moves the branch: what's staged and your files stay as they are. |
 | **Uncommitted changes** | When there are any, an *Uncommitted changes* entry sits above the newest commit. It shows a commit form plus what's **staged** and **unstaged** (untracked files included), live as files change. Pick lines, blocks or files like in a commit and press <kbd>s</kbd> to stage or <kbd>u</kbd> to unstage (or *Stage all* / *Unstage all*), then <kbd>⌘↵</kbd> to commit. **Amend last commit** folds what's staged into the last commit and lets you edit its message. **Undo commit** (on the newest commit, its right-click menu, or under the commit form) moves the branch back one commit, with that commit's changes staged and its message back in the form. <kbd>⌘Z</kbd> undoes commits and amends the same way. Staging only changes the index, never your files, and refuses if a file changed after it was shown. Commits go through `git commit`, so hooks and signing apply. |
-| **Discard** | Throw away unstaged changes: picked lines (**Discard** next to *Stage*), a whole file (right-click it), or everything (**Discard all**), untracked files included. Each takes a second click. What's thrown away is saved first, so the toast's **Undo**, or **Restore** under *Discarded changes* in the backups panel (kept for two weeks), puts it back. Files over 20 MB go to the Trash instead. Only your files change, never what's staged. |
+| **Discard** | Throw away unstaged changes: picked lines (**Discard** next to *Stage*), a whole file (right-click it), or everything (**Discard all**), untracked files included. Staged changes can be discarded the same way: they leave both the index and your files, and any unstaged edits to the same files are kept (it refuses if they overlap). Each takes a second click. What's thrown away is saved first, so the toast's **Undo**, or **Restore** under *Discarded changes* in the backups panel (kept for two weeks), puts it back, staged changes included. Files over 20 MB go to the Trash instead. |
 | **Files** | Right-click a file name or a diff line: **Open in Zed** (the repo as the project, at that line or the file's first change), **Copy path**, **Copy relative path**. |
 | **Push** | One button in the header: **Publish** a branch with no upstream, **Push ↑N** when ahead, or, after rewriting commits that were already pushed, **Force push ↑N ↓M** (click twice). Force pushes use `--force-with-lease --force-if-includes`, so git refuses if the remote has commits you haven't fetched *and* integrated. |
 | **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Typing a new name offers **Create branch** (from HEAD); a commit's right-click menu has **New branch from here…**. Right-click a branch to **rename** it (its undo history and backups follow) or **delete** it (click twice; not the one you're on), and to delete its upstream on the remote, which is a separate confirmed action. **Remote branches** without a local one are listed too; choosing one checks it out as a local tracking branch. **Recently deleted** branches are listed for two weeks; choosing one brings it back. |
@@ -77,8 +77,9 @@ Losing work is the one failure that matters, so every operation is built to be r
 - **Discarding saves first.** Before a discard touches anything, the files as they are on disk (bytes, modes,
   symlinks, untracked files) are committed on HEAD as `refs/legit/discarded/<time>`, whose second parent holds the
   files as the discard leaves them. Each file is compared byte for byte right before it's written, so an edit made in
-  the meantime stops the discard instead of being lost (and the error says where the snapshot is). The index is never
-  touched. Files over 20 MB aren't put in git: they go to the macOS Trash, and if that fails they're left alone.
+  the meantime stops the discard instead of being lost (and the error says where the snapshot is). Discarding unstaged
+  changes never touches the index; discarding staged ones also saves the index entries before and after (the third
+  and fourth parents), and only updates the index if nothing restaged those files meanwhile. Files over 20 MB aren't put in git: they go to the macOS Trash, and if that fails they're left alone.
   Restoring refuses files that changed since the discard unless you confirm, and then saves them first.
 - **The final snapshot can't change unless you're dropping commits.** Edit, split, squash and reorder only restructure
   history. If the rewritten tip's tree isn't byte-identical to the current one, the operation is aborted.
@@ -112,6 +113,7 @@ git stash store -m 'back' refs/legit/stashes/<time>-drop  # or put it back in th
 git for-each-ref refs/legit/discarded     # every discard, newest last
 git diff <ref>^2 <ref>                    # what it threw away, as a patch (pipe it to `git apply`)
 git show <ref>:<path> > <path>            # one file back, byte for byte
+git show <ref>^3:<path>                   # for a discard of staged changes: what was staged
 ```
 
 ## Development

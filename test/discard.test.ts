@@ -151,11 +151,6 @@ test('refuses files that changed since they were shown, and partial untracked fi
   await assert.rejects(discard(repo, { key: unstaged.sha, selection: { u: [0] } }), /only be discarded as a whole file/);
   assert.equal(read('u'), 'a\nb\n');
   assert.deepEqual(await discarded(repo.git), []);
-  // A staged snapshot's key isn't accepted.
-  git('add', 'u');
-  const { staged } = await repo.work();
-  await assert.rejects(discard(repo, { key: staged.sha, selection: { u: 'all' } }), /out of date/);
-  assert.equal(read('u'), 'a\nb\n');
 });
 
 test('restore refuses files changed since the discard unless told to overwrite, saving them first', async () => {
@@ -230,4 +225,71 @@ test('big files go to the Trash instead of into git, and are refused if they can
   } finally {
     Object.assign(trashing, saved);
   }
+});
+
+const stagedFile = async (repo: Repo, path: string) => {
+  const { staged } = await repo.work();
+  return { key: staged.sha, f: staged.files.find((x) => x.path === path)! };
+};
+const changedLines = (h: { lines: { i?: number }[] }) => h.lines.filter((l) => l.i !== undefined).map((l) => l.i!);
+
+test('discard staged lines: out of the index and the file, unstaged changes kept, and back', async () => {
+  commit('base', { f: lines(() => {}) });
+  write('f', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
+  git('add', 'f');
+  write('f', lines((l) => { l[1] = 'B'; l[8] = 'I'; l[15] = 'P'; }));
+  const indexBefore = git('ls-files', '-s');
+  const repo = await Repo.open(dir);
+  const { key, f } = await stagedFile(repo, 'f');
+  const r = await discard(repo, { key, selection: { f: changedLines(f.hunks[1]) } });
+  assert.equal(git('show', ':f') + '\n', lines((l) => { l[1] = 'B'; }));
+  assert.equal(read('f'), lines((l) => { l[1] = 'B'; l[8] = 'I'; }));
+  assert.equal(git('for-each-ref', 'refs/legit/backups'), '');
+  // HEAD, the files as left, and the index before and after.
+  assert.equal(git('rev-list', '--no-walk', '--parents', r.ref!).split(' ').length, 5);
+  assert.equal(git('show', `${r.ref}^3:f`) + '\n', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
+  // Both the file and what was staged come back.
+  const back = await restoreDiscarded(repo, { ref: r.ref! });
+  assert.equal(back.restored, 1);
+  assert.equal(read('f'), lines((l) => { l[1] = 'B'; l[8] = 'I'; l[15] = 'P'; }));
+  assert.equal(git('ls-files', '-s'), indexBefore);
+});
+
+test('discard a staged new file and a staged deletion, then restore both', async () => {
+  commit('base', { gone: 'x\n', keep: 'k\n' });
+  write('new', 'n\n');
+  git('add', 'new');
+  git('rm', '-q', 'gone');
+  const indexBefore = git('ls-files', '-s');
+  const repo = await Repo.open(dir);
+  const { staged } = await repo.work();
+  const r = await discard(repo, { key: staged.sha, selection: { new: 'all', gone: 'all' } });
+  assert.equal(existsSync(join(dir, 'new')), false);
+  assert.equal(read('gone'), 'x\n');
+  assert.equal(git('status', '--porcelain'), '');
+  await restoreDiscarded(repo, { ref: r.ref! });
+  assert.equal(read('new'), 'n\n');
+  assert.equal(existsSync(join(dir, 'gone')), false);
+  assert.equal(git('ls-files', '-s'), indexBefore);
+});
+
+test('discarding staged lines is refused when unstaged changes overlap them, or the index moved', async () => {
+  commit('base', { f: lines(() => {}) });
+  write('f', lines((l) => { l[1] = 'B'; }));
+  git('add', 'f');
+  write('f', lines((l) => { l[1] = 'B2'; }));
+  const repo = await Repo.open(dir);
+  let { key, f } = await stagedFile(repo, 'f');
+  const state = () => [git('ls-files', '-s'), read('f'), git('for-each-ref', 'refs/legit')];
+  const was = state();
+  await assert.rejects(discard(repo, { key, selection: { f: changedLines(f.hunks[0]) } }), /overlap/);
+  assert.deepEqual(state(), was);
+
+  write('f', lines((l) => { l[1] = 'B'; }));
+  ({ key, f } = await stagedFile(repo, 'f'));
+  write('f', lines((l) => { l[1] = 'B'; l[3] = 'D'; }));
+  git('add', 'f');
+  const was2 = state();
+  await assert.rejects(discard(repo, { key, selection: { f: 'all' } }), /changed since it was shown/);
+  assert.deepEqual(state(), was2);
 });
