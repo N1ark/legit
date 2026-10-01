@@ -27,7 +27,7 @@
     "@types/node": "^26.6.3",
     "@types/prismjs": "^1.26.6",
     "prismjs": "^1.30.0",
-    "purr": "github:N1ark/purr#v0.2.1",
+    "purr": "github:N1ark/purr#v0.3.0",
     "rolldown": "^1.2.11",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
