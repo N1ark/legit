@@ -6,11 +6,13 @@
     IconButton,
     Kbd,
     MOD,
+    ResizeEdge,
     ShortcutsOverlay,
     Spinner,
     ToastHost,
     createKeymap,
     isTyping,
+    persisted,
     type Binding,
   } from 'purr';
   import { ArrowUUpLeft, ArrowUUpRight, Warning } from 'purr/icons';
@@ -33,6 +35,11 @@
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
+
+  // The commit list's width: dragged live, remembered when the drag ends.
+  const LIST_WIDTH = 440;
+  const savedListWidth = persisted('legit:list-width', LIST_WIDTH);
+  let listWidth = $state(savedListWidth.value);
 
   // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
   const typing = () => isTyping(document.activeElement);
@@ -140,8 +147,18 @@
     </div>
   {/if}
 
-  <main>
+  <main style:grid-template-columns="min({listWidth}px, 70%) 1fr">
     <aside>
+      <ResizeEdge
+        side="left"
+        label="Resize the commit list"
+        size={listWidth}
+        min={260}
+        max={900}
+        preset={LIST_WIDTH}
+        onresize={(w) => (listWidth = w)}
+        oncommit={(w) => (savedListWidth.value = w)}
+      />
       <StashBanner />
       <CommitList />
       <footer class="muted">
@@ -233,11 +250,11 @@
   main {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(300px, 34%) 1fr;
     min-height: 0;
   }
 
   aside {
+    position: relative;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);
