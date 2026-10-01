@@ -6,6 +6,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { extname, join, normalize } from 'node:path';
 import { fileContent, summarize } from './diff.ts';
 import { avatars } from './avatars.ts';
+import {
+  checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
+} from './branches.ts';
+import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { openInZed } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
@@ -113,6 +117,16 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     resolve: (b) => markResolved(repo, b),
     continue: () => continueOp(repo),
     abort: () => abortOp(repo),
+    createBranch: (b) => createBranch(repo, b),
+    renameBranch: (b) => renameBranch(repo, b),
+    deleteBranch: (b) => deleteBranch(repo, b),
+    deleteRemoteBranch: (b) => deleteRemoteBranch(repo, b),
+    restoreBranch: (b) => restoreBranch(repo, b),
+    checkoutRemote: (b) => checkoutRemote(repo, b),
+    stash: () => stash(repo),
+    stashApply: (b) => stashApply(repo, b),
+    stashPop: (b) => stashPop(repo, b),
+    stashDrop: (b) => stashDrop(repo, b),
   };
 
   let origin = '';
@@ -134,6 +148,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
     if (path === '/api/branches') return send(res, 200, await repo.branches());
+    if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo));
+    if (path === '/api/branches/deleted') return send(res, 200, await deletedBranches(repo));
+    if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write(': hi\n\n');

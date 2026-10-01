@@ -11,11 +11,13 @@ import { randomBytes } from 'node:crypto';
 import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, CommitRequest, DropRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RepoState, ReorderRequest, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
+import { switchBranch } from './branches.ts';
 import { applyLines, commitDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
 import { syncState } from './sync.ts';
+import { stashFor } from './stash.ts';
 import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
@@ -45,7 +47,7 @@ interface Move {
 export class Repo {
   readonly git: Git;
   /** Undo/redo history per branch (or detached HEAD). */
-  private history = new Map<string, { undo: Move[]; redo: Move[] }>();
+  history = new Map<string, { undo: Move[]; redo: Move[] }>();
   private diffs = new Map<string, CommitDiff>();
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
@@ -108,6 +110,7 @@ export class Repo {
       push: head && branch ? await this.pushInfo(branch) : null,
       work: await workCounts(this.git),
       ...(await syncState(this)),
+      stashed: await stashFor(this.git, branch || null),
     };
     if (!head) return state;
 
@@ -282,7 +285,7 @@ export class Repo {
     }
   }
 
-  private backupPrefix(branch: string | null) {
+  backupPrefix(branch: string | null) {
     return `${BACKUPS}/${branch ?? '_detached'}/`;
   }
 
@@ -782,17 +785,11 @@ export class Repo {
       });
   }
 
-  /** `git switch`: refuses (rather than overwriting anything) if local changes are in the way. */
-  switchBranch(req: { branch: string }): Promise<OpResult> {
-    return this.exclusive(async () => {
-      const why = this.blocked();
-      if (why) throw new GitError(why);
-      const ref = `refs/heads/${req.branch}`;
-      const exists = await this.git.run(['show-ref', '--verify', '--quiet', ref], { allowFail: true });
-      if (exists.code !== 0) throw new GitError(`No local branch named ${req.branch}.`);
-      const r = await this.git.run(['switch', '--no-guess', req.branch], { allowFail: true });
-      if (r.code !== 0) throw new GitError(`Couldn't switch to ${req.branch}; nothing was changed.\n${r.err.trim()}`);
-      return { state: await this.state(), renamed: {}, focus: [] };
-    });
+  /**
+   * `git switch`: refuses (rather than overwriting anything) if local changes are in the way.
+   * With `stash`, they're stashed first and stay with the branch being left (see branches.ts).
+   */
+  switchBranch(req: { branch: string; stash?: boolean }): Promise<OpResult> {
+    return switchBranch(this, req);
   }
 }

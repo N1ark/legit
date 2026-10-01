@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Avatar, Tag, formatRelative, isMac, menu } from 'purr';
-  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, DotsSixVertical, GitMerge, PencilSimpleLine, Users } from 'purr/icons';
+  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, DotsSixVertical, GitBranch, GitMerge, PencilSimpleLine, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
+  import { newBranch } from './lib/branches.svelte.ts';
 
   let dragging = $state<string[] | null>(null);
   let drop = $state<{ sha: string; after: boolean } | null>(null);
@@ -33,18 +34,24 @@
     }
     app.select(sha);
     const c = app.bySha.get(sha);
-    // The newest commit can be undone (its changes stay staged).
-    if (c && sha === app.repo?.head && c.editable && !c.merge && !app.repo?.blocked) {
-      menu.show(e, [
-        {
-          label: 'Undo commit (keep changes)',
-          icon: ArrowUUpLeft,
-          disabled: app.busy,
-          note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
-          run: () => app.uncommit(),
-        },
-      ]);
-    }
+    if (!c) return;
+    const blocked = !!app.repo?.blocked;
+    menu.show(e, [
+      // The newest commit can be undone (its changes stay staged).
+      sha === app.repo?.head && c.editable && !c.merge && !blocked && {
+        label: 'Undo commit (keep changes)',
+        icon: ArrowUUpLeft,
+        disabled: app.busy,
+        note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
+        run: () => app.uncommit(),
+      },
+      {
+        label: 'New branch from here…',
+        icon: GitBranch,
+        disabled: app.busy || blocked,
+        run: () => newBranch(c.sha, `"${c.subject}"`),
+      },
+    ]);
   }
 
   function ondragstart(e: DragEvent, sha: string) {

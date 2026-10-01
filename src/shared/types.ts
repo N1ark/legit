@@ -39,6 +39,8 @@ export interface RepoState {
   fetchedAt: number | null;
   /** A merge, rebase, cherry-pick or revert that stopped halfway (on conflicts, usually). */
   conflict: Conflict | null;
+  /** Changes legit stashed when leaving this branch, which can be brought back. */
+  stashed: StashEntry | null;
 }
 
 export interface PushInfo {
@@ -240,4 +242,70 @@ export interface ConflictFile {
 /** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */
 export interface SyncResult extends OpResult {
   message: string;
+}
+
+export interface CreateBranchRequest {
+  name: string;
+  /** Commit to start from; HEAD when absent. */
+  from?: string;
+  /** Switch to the new branch (`git switch -c`); otherwise only create it. */
+  checkout?: boolean;
+  /** Stash uncommitted changes first, leaving them on the current branch. */
+  stash?: boolean;
+}
+
+/** A remote-tracking branch with no local branch of its own. */
+export interface RemoteBranchInfo {
+  /** e.g. refs/remotes/origin/feature */
+  ref: string;
+  remote: string;
+  /** Branch name on the remote, e.g. feature. */
+  name: string;
+  sha: string;
+  subject: string;
+  /** Seconds since epoch. */
+  time: number;
+}
+
+/** A deleted branch, saved under refs/legit/deleted/<branch>/<time>[-<remote>]. */
+export interface DeletedBranch {
+  ref: string;
+  name: string;
+  sha: string;
+  subject: string;
+  /** When it was deleted, in milliseconds since epoch. */
+  time: number;
+  /** Set when it was deleted on a remote (this one) rather than locally. */
+  remote: string | null;
+}
+
+export interface StashEntry {
+  sha: string;
+  /** e.g. "On main: legit: on main". */
+  message: string;
+  /** The branch legit stashed it from; null for stashes legit didn't make. */
+  branch: string | null;
+  legit: boolean;
+  /** Milliseconds since epoch. */
+  time: number;
+  /** Paths it touches, untracked files included. */
+  files: string[];
+}
+
+/** A stash that left the stash list (popped or dropped), kept under refs/legit/stashes. */
+export interface DroppedStash {
+  ref: string;
+  sha: string;
+  message: string;
+  /** When it left the list, in milliseconds since epoch. */
+  time: number;
+  /** "pop" or "drop". */
+  label: string;
+}
+
+export interface Stashes {
+  /** The stash list, newest first. */
+  entries: StashEntry[];
+  /** Newest first. */
+  dropped: DroppedStash[];
 }
