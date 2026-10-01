@@ -178,7 +178,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
-    if (path === '/api/edit') return send(res, 200, await summary(await editChanges(repo)));
+    if (path === '/api/editing') return send(res, 200, await summary(await editChanges(repo)));
     const older = /^\/api\/older\/([0-9a-f]{40,64})$/.exec(path);
     if (older) return send(res, 200, await repo.older(older[1]));
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);

@@ -23,7 +23,7 @@
     }
     loading = true;
     try {
-      const res = await fetch('/api/edit');
+      const res = await fetch('/api/editing');
       const d: DiffSummary | { error: string } = await res.json();
       if ('error' in d) error = d.error;
       else {
