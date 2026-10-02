@@ -313,7 +313,6 @@
       summary={diff}
       {sel}
       {readonly}
-      tree
       initial={position}
       hint="Pick lines to split out or remove: click, drag, or shift-click; the left edge picks whole blocks. Double-click a line to edit it."
       onremove={remove}

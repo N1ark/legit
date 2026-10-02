@@ -46,7 +46,7 @@
     readonly,
     hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
     fileActions,
-    tree = false,
+    tree = true,
     initial = null,
     onremove,
     oneditline,
@@ -57,7 +57,7 @@
     hint?: string;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
-    /** Show the files as a folder tree beside the diff, to jump between them. */
+    /** Show the files as a folder tree beside the diff (with more than one), to jump between them. */
     tree?: boolean;
     /** Where to open, from `position()` of the view this one replaces. */
     initial?: DiffPosition | null;
