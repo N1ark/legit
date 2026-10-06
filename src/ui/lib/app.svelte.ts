@@ -1,8 +1,9 @@
 import { IS_TAURI, copyText, toast } from 'purr';
+import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
   CommitInfo, DiffSummary, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
-  SyncResult,
+  Stashes, SyncResult,
 } from '../../shared/types.ts';
 
 export async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -62,6 +63,69 @@ class App {
     }
     return [...seen.values()];
   });
+
+  /** First load: the state, and the view this window left the repo in, if it's been here before. */
+  async start() {
+    try {
+      await this.load();
+    } finally {
+      this.started = true;
+    }
+  }
+
+  /** Set once `start` is done. */
+  started = $state(false);
+
+  private async load() {
+    const kept = await recall<View>();
+    if (kept) {
+      this.kept = kept.views;
+      this.selected = kept.selected;
+      this.anchor = kept.anchor;
+    }
+    await this.refresh();
+    if (!kept || !this.repo) return;
+    // Commits listed under a merge only exist once it's expanded again.
+    const merges = kept.expanded.filter((s) => this.bySha.get(s)?.merge);
+    await Promise.all(merges.map((s) => this.toggleMerge(s, true)));
+    const sel = kept.selected.filter((s) => this.bySha.has(s));
+    if (merges.length && sel.length) [this.selected, this.anchor] = [sel, kept.anchor];
+    if (kept.stash) {
+      const s = await request<Stashes>('/api/stashes').catch(() => null);
+      if (s && [...s.entries, ...s.dropped].some((x) => x.sha === kept.stash?.sha)) this.stash = kept.stash;
+    }
+  }
+
+  /** What views asked to keep (see `keep`) and what they left (see `restore`). */
+  private keepers = new Map<string, () => unknown>();
+  private kept: Record<string, unknown> = {};
+
+  /** Have `get()` kept under `key` when the window switches repo. Returns the cleanup, for an $effect. */
+  keep(key: string, get: () => unknown) {
+    this.keepers.set(key, get);
+    return () => {
+      if (this.keepers.get(key) === get) this.keepers.delete(key);
+    };
+  }
+
+  /** What was kept under `key`, once (only if `fits` it). */
+  restore<T>(key: string, fits: (v: T) => boolean = () => true): T | undefined {
+    const v = this.kept[key] as T | undefined;
+    if (v === undefined || v === null || !fits(v)) return undefined;
+    delete this.kept[key];
+    return v;
+  }
+
+  /** The view to come back to (see lib/desktop.ts). */
+  snapshot(): View {
+    return {
+      selected: this.selected,
+      anchor: this.anchor,
+      stash: this.stash,
+      expanded: Object.keys(this.expanded),
+      views: Object.fromEntries([...this.keepers].map(([k, get]) => [k, get()])),
+    };
+  }
 
   async refresh() {
     const gen = ++this.gen;
@@ -503,6 +567,15 @@ export interface ShownStash {
   time: number;
   /** Dropped or popped (only under refs/legit/stashes): it can only be applied. */
   dropped: boolean;
+}
+
+/** What a window remembers of a repo while it shows another. */
+interface View {
+  selected: string[];
+  anchor: string | null;
+  stash: ShownStash | null;
+  expanded: string[];
+  views: Record<string, unknown>;
 }
 
 /** Selection key of the "Uncommitted changes" entry. */

@@ -92,19 +92,22 @@
     await load();
   }
 
-  // Commit form.
-  let subject = $state('');
-  let body = $state('');
-  let coauthors = $state<string[]>([]);
+  // Commit form, as it was left if the window has shown this repo before.
+  type Kept = { subject: string; body: string; coauthors: string[]; amend: boolean; typed: typeof typed };
+  const back = app.restore<Kept>('work');
+  let subject = $state(back?.subject ?? '');
+  let body = $state(back?.body ?? '');
+  let coauthors = $state<string[]>(back?.coauthors ?? []);
   const people = $derived(parsePeople(coauthors));
   const head = $derived(app.commits.find((c) => c.sha === app.repo?.head) ?? null);
-  let amend = $state(false);
+  let amend = $state(back?.amend ?? false);
   const canCommit = $derived(
     subject.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : !!work?.staged.files.length),
   );
 
   // Amending starts from the last commit's message; turning it off brings back what was typed.
-  let typed: { subject: string; body: string; coauthors: string[] } | null = null;
+  let typed: { subject: string; body: string; coauthors: string[] } | null = back?.typed ?? null;
+  $effect(() => app.keep('work', (): Kept => ({ subject, body, coauthors, amend, typed })));
   function toggleAmend() {
     if (!head) return;
     amend = !amend;

@@ -18,11 +18,24 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 struct Server {
     repo: PathBuf,
     child: Child,
+    /// The page's origin, "http://127.0.0.1:<port>".
+    origin: String,
 }
 
 /// Running servers, keyed by window label.
 #[derive(Default)]
 struct Servers(Mutex<HashMap<String, Server>>);
+
+impl Servers {
+    fn repo_at(&self, origin: &str) -> Option<PathBuf> {
+        self.0.lock().unwrap().values().find(|s| s.origin == origin).map(|s| s.repo.clone())
+    }
+}
+
+/// What each repository's page last asked to keep (selection, drafts, scroll), so a window that
+/// comes back to it finds things as they were. Memory only.
+#[derive(Default)]
+struct Views(Mutex<HashMap<PathBuf, String>>);
 
 static NEXT_WINDOW: AtomicUsize = AtomicUsize::new(1);
 
@@ -41,12 +54,15 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Servers::default())
         .manage(Recent::default())
+        .manage(Views::default())
         .menu(build_menu)
         .invoke_handler(tauri::generate_handler![
             commands::recent_repos,
             commands::open_repo,
             commands::pick_repo,
-            commands::forget_repo
+            commands::forget_repo,
+            commands::remember_view,
+            commands::recall_view
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => pick_repo(app, false, None),
@@ -224,6 +240,25 @@ mod commands {
     pub fn forget_repo(app: AppHandle, path: String) {
         update_recent(&app, |list| list.retain(|p| p != Path::new(&path)));
     }
+
+    /// Keep a page's view of its repository. By origin, so a page still unloading after its window
+    /// switched (its server gone) can't file it under the new repository.
+    #[tauri::command]
+    pub fn remember_view(app: AppHandle, origin: String, state: String) {
+        if state.len() > 1 << 20 {
+            return;
+        }
+        if let Some(repo) = app.state::<Servers>().repo_at(&origin) {
+            app.state::<Views>().0.lock().unwrap().insert(repo, state);
+        }
+    }
+
+    /// What was kept for the page's repository, once.
+    #[tauri::command]
+    pub fn recall_view(app: AppHandle, origin: String) -> Option<String> {
+        let repo = app.state::<Servers>().repo_at(&origin)?;
+        app.state::<Views>().0.lock().unwrap().remove(&repo)
+    }
 }
 
 /// `into`: the window to switch to the picked repository, rather than opening a new one.
@@ -318,7 +353,7 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
     match Url::parse(&url) {
         Ok(url) => Ok((child, url)),
         Err(e) => {
-            stop(Server { repo: repo.to_path_buf(), child });
+            stop(Server { repo: repo.to_path_buf(), child, origin: String::new() });
             Err(e.to_string())
         }
     }
@@ -326,7 +361,7 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
 
 fn start(app: &AppHandle, repo: &Path, into: Option<WebviewWindow>) -> Result<(), String> {
     let (child, url) = spawn_server(app, repo)?;
-    let server = Server { repo: repo.to_path_buf(), child };
+    let server = Server { repo: repo.to_path_buf(), child, origin: url.origin().ascii_serialization() };
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
     if let Some(window) = into {

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Repo windows load the local legit server. They drag the window by its header, and list, open (only from the recent list, or via the native folder picker) and forget recent repositories.",
+  "description": "Repo windows load the local legit server. They drag the window by its header, and list, open (only from the recent list, or via the native folder picker) and forget recent repositories, and keep what a page shows while the window switches to another.",
   "windows": ["repo*"],
   "remote": { "urls": ["http://127.0.0.1:*"] },
   "permissions": [
@@ -9,6 +9,8 @@
     "allow-recent-repos",
     "allow-open-repo",
     "allow-pick-repo",
-    "allow-forget-repo"
+    "allow-forget-repo",
+    "allow-remember-view",
+    "allow-recall-view"
   ]
 }

@@ -7,6 +7,12 @@
   import { newBranch } from './lib/branches.svelte.ts';
 
   let list = $state<HTMLOListElement>();
+
+  $effect(() => app.keep('list', () => list?.scrollTop ?? 0));
+  $effect(() => {
+    const top = app.started ? app.restore<number>('list') : undefined;
+    if (top) tick().then(() => list && (list.scrollTop = top));
+  });
   let dragging = $state<string[] | null>(null);
   let drop = $state<{ sha: string; after: boolean } | null>(null);
 

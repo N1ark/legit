@@ -15,7 +15,10 @@ the browser; `--port N` and `--no-open` apply there). In the app, click the repo
 to switch the window to another repo: it lists the last 30 you opened (filter them, remove one from the list) and
 **Open Repository…** for any other. <kbd>⌘↵</kbd> or <kbd>⌘</kbd>-click opens it in a new window instead, and a repo
 that's already open in another window brings that window to the front. **File ▸ Open Repository…** (<kbd>⌘O</kbd>)
-and **File ▸ Open Recent** always open a new window. Launching the app again reopens the last repo.
+and **File ▸ Open Recent** always open a new window. Coming back to a repo in a window finds it as you left it: the
+selected commits (or changes, or stash), unsaved messages, expanded merges, and where the list and diff were
+scrolled. That's kept in memory only, until the app quits (in the browser, reloading the page keeps it the same way).
+Launching the app again reopens the last repo.
 
 Needs Node ≥ 23.6 and a recent git (tested with 2.54; needs `merge-tree --stdin` with tree arguments). The app itself
 is self-contained: it doesn't use your installed Node, only `git`.
@@ -172,9 +175,10 @@ npm run check      # svelte-check + tsc
   the app is ~145 MB (almost all of it Node). The window loads the UI from that server. Switching a window to another repo starts a server for it, loads the page from that one (so nothing of
   the old repo's state carries over), and stops the old server. A server exits when its window closes, and only after
   any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list is
-  `recent-repos` in the app's config dir. The page can call only four app commands (`capabilities/default.json`):
+  `recent-repos` in the app's config dir. The page can call only six app commands (`capabilities/default.json`):
   list the recent repos, open one *from that list* (in that window or a new one), show the folder picker, and remove
-  one from the list.
+  one from the list, and keep or take back what it shows of its repo for when the window returns to it (by the page's
+  origin, so a page still unloading after a switch can't file it under the new repo).
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
   shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content

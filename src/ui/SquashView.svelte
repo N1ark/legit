@@ -17,13 +17,18 @@
   const editable = $derived(commits.every((c) => c.editable) && !app.repo?.blocked);
   const oldest = $derived(commits[commits.length - 1]);
 
-  let subject = $state('');
-  let body = $state('');
-  let coauthors = $state<string[]>([]);
-  let edited = $state(false);
+  const key = $derived(commits.map((c) => c.sha).join(' '));
+  // The message as it was edited, if the window comes back to this repo.
+  type Kept = { key: string; subject: string; body: string; coauthors: string[] };
+  const back = app.restore<Kept>('squash', (k) => k.key === untrack(() => key));
+
+  let subject = $state(back?.subject ?? '');
+  let body = $state(back?.body ?? '');
+  let coauthors = $state<string[]>(back?.coauthors ?? []);
+  let edited = $state(!!back);
   const people = $derived(parsePeople(coauthors));
   const valid = $derived(subject.trim() !== '' && people !== null);
-  const key = $derived(commits.map((c) => c.sha).join(' '));
+  $effect(() => app.keep('squash', () => (edited ? { key, subject, body, coauthors } : null)));
 
   function reset() {
     const f = squashFields(commits);

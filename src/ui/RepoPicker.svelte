@@ -5,6 +5,7 @@
   import { Highlight, IS_TAURI, IconButton, Kbd, Popover, rank, toast } from 'purr';
   import { CaretDown, Check, FolderOpen, X } from 'purr/icons';
   import { app } from './lib/app.svelte.ts';
+  import { invoke, remember } from './lib/desktop.ts';
 
   interface RecentRepo {
     path: string;
@@ -15,10 +16,6 @@
     /** Open in another window. */
     elsewhere: boolean;
   }
-
-  /** The desktop app's commands (src-tauri/src/main.rs `commands`). */
-  const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
-    (window as any).__TAURI_INTERNALS__.invoke(cmd, args);
 
   let open = $state(false);
   let list = $state<RecentRepo[] | null>(null);
@@ -52,6 +49,8 @@
     const r = shown[k]?.item;
     open = false;
     try {
+      // Coming back to this repo later finds it as it is now.
+      if (!newWindow) await remember(app.snapshot());
       if (!r) await invoke('pick_repo', { newWindow });
       else if (!r.current) await invoke('open_repo', { path: r.path, newWindow });
     } catch (e) {

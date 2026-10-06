@@ -8,19 +8,21 @@
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
   import { formatPerson, parsePeople } from './lib/people.ts';
-  import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
   const fmt = formatPerson;
 
-  // Metadata form, initialised from the commit (the view is re-created when the commit changes).
+  // Metadata form, initialised from the commit (the view is re-created when the commit changes), or
+  // as it was left when the window last showed this repo.
   const init = untrack(() => commit);
-  let subject = $state(init.subject);
-  let body = $state(init.body);
-  let authorName = $state(init.author.name);
-  let authorEmail = $state(init.author.email);
-  let coauthors = $state(init.coauthors.map(fmt));
+  const back = app.restore<Kept>('commit', (k) => k.sha === init.sha);
+  let subject = $state(back?.subject ?? init.subject);
+  let body = $state(back?.body ?? init.body);
+  let authorName = $state(back?.authorName ?? init.author.name);
+  let authorEmail = $state(back?.authorEmail ?? init.author.email);
+  let coauthors = $state(back?.coauthors ?? init.coauthors.map(fmt));
 
   const readonly = $derived(!commit.editable || !!app.repo?.blocked);
   const parsedCo = $derived(parsePeople(coauthors));
@@ -76,7 +78,7 @@
   let where = $state<'before' | 'after'>('after');
 
   // A new commit starts at the top; one rewritten from its own diff, where the old one was.
-  const position = app.takeDiffPosition(init.sha);
+  const position = app.takeDiffPosition(init.sha) ?? back?.position ?? null;
   let diffView = $state<DiffView>();
   onMount(() => {
     const scroller = document.querySelector('[data-scroller]');
@@ -138,6 +140,16 @@
   }
 
   const clear = () => Object.values(sel).forEach((s) => s.clear());
+
+  type Kept = {
+    sha: string; subject: string; body: string; authorName: string; authorEmail: string; coauthors: string[];
+    position: DiffPosition | null;
+  };
+  $effect(() =>
+    app.keep('commit', (): Kept => ({
+      sha: commit.sha, subject, body, authorName, authorEmail, coauthors, position: diffView?.position() ?? null,
+    })),
+  );
   const isHead = $derived(commit.sha === app.repo?.head);
 
   async function copySha() {

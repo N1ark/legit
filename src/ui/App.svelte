@@ -33,6 +33,7 @@
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
+  import { remember } from './lib/desktop.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -52,14 +53,17 @@
   };
 
   onMount(() => {
-    app.refresh();
+    app.start();
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     const focus = () => app.refresh();
+    const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
+    window.addEventListener('pagehide', leave);
     return () => {
       events.close();
       window.removeEventListener('focus', focus);
+      window.removeEventListener('pagehide', leave);
     };
   });
 
