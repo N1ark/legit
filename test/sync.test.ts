@@ -392,6 +392,26 @@ test('merge and rebase onto another local branch', async () => {
   void r;
 });
 
+test('the base to rebase on: the freshest of main and origin/main, with what a rebase would bring', async () => {
+  const repo = await Repo.open(dir);
+  assert.equal((await repo.state()).base, null);
+  git('switch', '-q', '-c', 'feature');
+  commit('mine', { m: '1\n' });
+  assert.deepEqual((await repo.state()).base, { name: 'origin/main', behind: 0 });
+  theyPush('theirs', { t: '1\n' });
+  await fetchRemote(repo);
+  assert.deepEqual((await repo.state()).base, { name: 'origin/main', behind: 1 });
+  // A local main with commits of its own that origin/main doesn't have yet is the fresher one.
+  git('switch', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'origin/main');
+  commit('local', { l: '1\n' });
+  git('switch', '-q', 'feature');
+  assert.deepEqual((await repo.state()).base, { name: 'main', behind: 2 });
+  await rebaseBranch(repo, { branch: 'main' });
+  assert.deepEqual(log(), ['mine', 'local', 'theirs', 'base']);
+  assert.deepEqual((await repo.state()).base, { name: 'main', behind: 0 });
+});
+
 test('diverged by rewriting pushed commits asks for a force push; by new remote commits, a pull', async () => {
   const pushed = commit('pushed', { m: '1\n' });
   git('push', '-q', 'origin', 'main');

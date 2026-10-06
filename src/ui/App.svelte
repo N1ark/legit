@@ -24,6 +24,7 @@
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
   import PushButton from './PushButton.svelte';
+  import RebaseOnBase from './RebaseOnBase.svelte';
   import RepoPicker from './RepoPicker.svelte';
   import Settings from './Settings.svelte';
   import CommitView from './CommitView.svelte';
@@ -34,6 +35,7 @@
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { remember } from './lib/desktop.ts';
+  import { rebaseOnBase } from './lib/integrate.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -45,11 +47,13 @@
   const savedListWidth = persisted('legit:list-width', LIST_WIDTH);
   let listWidth = $state(savedListWidth.value);
 
-  // Called by the desktop app's Edit ▸ Undo/Redo menu items, which take ⌘Z before the page sees it.
+  // Called by the desktop app's menu: Edit ▸ Undo/Redo, which take ⌘Z before the page sees it, and Branch.
   const typing = () => isTyping(document.activeElement);
   (window as any).__legit = {
     undo: () => (typing() ? document.execCommand('undo') : app.undo()),
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
+    branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
+    rebaseOnBase,
   };
 
   onMount(() => {
@@ -69,7 +73,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -90,6 +94,8 @@
     { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
     { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
     { keys: 'b', action: 'branch', label: 'Switch branch' },
+    { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
+    { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
@@ -112,6 +118,7 @@
     if (action === 'undo') app.undo();
     else if (action === 'redo') app.redo();
     else if (action === 'branch') branchPicker?.show();
+    else if (action === 'merge' || action === 'rebase') branchPicker?.show(action);
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
     else if (action === 'settings') settings = true;
@@ -137,6 +144,7 @@
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<Spinner label="Working" />{/if}
+    <RebaseOnBase />
     <PushButton />
     <IconButton label="Undo" shortcut="⌘Z" size="lg" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo}>
       <ArrowUUpLeft />

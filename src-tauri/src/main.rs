@@ -71,6 +71,10 @@ fn main() {
             "undo" => eval_focused(app, "window.__legit?.undo()"),
             "redo" => eval_focused(app, "window.__legit?.redo()"),
             "reload" => eval_focused(app, "location.reload()"),
+            "branch" => eval_focused(app, "window.__legit?.branch()"),
+            "merge" => eval_focused(app, "window.__legit?.branch('merge')"),
+            "rebase" => eval_focused(app, "window.__legit?.branch('rebase')"),
+            "rebase-base" => eval_focused(app, "window.__legit?.rebaseOnBase()"),
             _ => {}
         })
         .on_window_event(|window, event| {
@@ -493,6 +497,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],
     )?;
+    // The page's own keys (b, m, r) aren't accelerators here: they'd fire while typing in a field.
+    let branch = Submenu::with_items(
+        app,
+        "Branch",
+        true,
+        &[
+            &MenuItem::with_id(app, "branch", "Switch Branch…", true, None::<&str>)?,
+            &MenuItem::with_id(app, "merge", "Merge a Branch…", true, None::<&str>)?,
+            &MenuItem::with_id(app, "rebase", "Rebase on a Branch…", true, None::<&str>)?,
+            &sep()?,
+            &MenuItem::with_id(app, "rebase-base", "Rebase on the Default Branch", true, None::<&str>)?,
+        ],
+    )?;
     let window = Submenu::with_items(
         app,
         "Window",
@@ -501,5 +518,5 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
     #[cfg(target_os = "macos")]
     window.set_as_windows_menu_for_nsapp()?;
-    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &branch, &window])
 }

@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
+import { baseBranch } from './base.ts';
 import { switchBranch } from './branches.ts';
 import { DIFF_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
@@ -140,6 +141,7 @@ export class Repo {
       work: await workCounts(this.git),
       ...(await syncState(this)),
       stashed: await stashFor(this.git, branch || null),
+      base: await baseBranch(this.git, branch || null, head),
     };
     if (!head) return state;
 

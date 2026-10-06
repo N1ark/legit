@@ -1,10 +1,12 @@
 <script lang="ts">
   // The branch list: local branches, a "Create branch" entry for a new name, remote branches
   // without a local one, and recently deleted branches. Type to filter, ↑/↓ and ↵, or right-click
-  // a row for its menu.
-  import { Highlight, Popover, formatRelative, menu, rank, type MaybeEntry } from 'purr';
+  // a row for its menu. In merge or rebase mode it lists the branches to merge or rebase onto
+  // instead: local ones but the current one, and every remote one.
+  import { Button, Highlight, IconButton, Popover, formatRelative, menu, rank, toast, type MaybeEntry } from 'purr';
   import {
-    ArrowCounterClockwise, ArrowsLeftRight, CaretDown, Check, CloudArrowDown, Copy, GitBranch, PencilSimple, Plus, Trash,
+    ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, Check, CloudArrowDown, Copy, GitBranch, GitMerge, GitPullRequest,
+    PencilSimple, Plus, Trash,
   } from 'purr/icons';
   import type { BranchInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
@@ -21,6 +23,8 @@
   /** Deleted branches shown while the filter is empty. */
   const DELETED_SHOWN = 8;
 
+  type Mode = 'switch' | 'merge' | 'rebase';
+  let mode = $state<Mode>('switch');
   let open = $state(false);
   let local = $state<BranchInfo[] | null>(null);
   let remote = $state<RemoteBranchInfo[]>([]);
@@ -29,14 +33,21 @@
   let active = $state(0);
   let button = $state<HTMLButtonElement>();
   let listEl = $state<HTMLElement>();
+  let input = $state<HTMLInputElement>();
 
   const disabled = $derived(!!app.repo?.blocked || app.busy);
+  const here = $derived(app.repo?.branch ?? null);
   const names = $derived(new Set((local ?? []).map((b) => b.name)));
 
   const rows = $derived.by((): Row[] => {
     if (!local) return [];
     const typed = filter.trim();
-    const out: Row[] = rank(local, filter, { keys: [(b) => b.name] }).map(({ item, indices }) => ({ kind: 'local', b: item, indices }));
+    const shown = mode === 'switch' ? local : local.filter((b) => !b.current);
+    const out: Row[] = rank(shown, filter, { keys: [(b) => b.name] }).map(({ item, indices }) => ({ kind: 'local', b: item, indices }));
+    if (mode !== 'switch') {
+      for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) out.push({ kind: 'remote', b: item, indices });
+      return out;
+    }
     if (typed && !names.has(typed) && !/\s/.test(typed)) out.push({ kind: 'create', name: typed });
     for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) {
       out.push({ kind: 'remote', b: item, indices });
@@ -53,17 +64,26 @@
     const get = <T,>(path: string): Promise<T> => fetch(path).then((r) => r.json());
     [local, remote, deleted] = await Promise.all([
       get<BranchInfo[]>('/api/branches'),
-      get<RemoteBranchInfo[]>('/api/branches/remote'),
+      get<RemoteBranchInfo[]>(`/api/branches/remote${mode === 'switch' ? '' : '?all=1'}`),
       get<DeletedBranch[]>('/api/branches/deleted'),
     ]);
   }
 
-  export async function show() {
+  /** Open the list to switch branch, or to pick one to merge or rebase onto. */
+  export async function show(m: Mode = 'switch') {
     if (disabled) return;
+    if (m !== 'switch' && !here) return toast.error('HEAD is detached: switch to a branch first.');
     open = true;
     filter = '';
+    await setMode(m);
+  }
+
+  async function setMode(m: Mode) {
+    mode = m;
     active = 0;
+    local = null;
     await load();
+    input?.focus();
   }
 
   /** Run an action from the list; on success the list closes, or reloads with `stay`. */
@@ -75,7 +95,10 @@
 
   function choose(r: Row | undefined) {
     if (!r) return;
-    if (r.kind === 'local') {
+    if (mode !== 'switch' && (r.kind === 'local' || r.kind === 'remote')) {
+      open = false;
+      app.sync(mode, { branch: r.kind === 'local' ? r.b.name : `${r.b.remote}/${r.b.name}` });
+    } else if (r.kind === 'local') {
       if (r.b.current) open = false;
       else act(() => switchOp('switch', { branch: r.b.name }, r.b.name));
     } else if (r.kind === 'create') act(() => switchOp('createBranch', { name: r.name }, r.name));
@@ -180,18 +203,25 @@
 {#if open && button}
   <Popover
     anchor={button}
-    label="Branches"
+    label={mode === 'merge' ? 'Merge a branch' : mode === 'rebase' ? 'Rebase onto a branch' : 'Branches'}
     onclose={() => (open = false)}
     width="min(560px, calc(100vw - 32px))"
     padding="var(--gap-4)"
     autofocus
   >
     <div class="panel">
+      {#if mode !== 'switch'}
+        <div class="mode">
+          <IconButton label="Back to switching branches" size="sm" onclick={() => setMode('switch')}><ArrowLeft /></IconButton>
+          {#if mode === 'merge'}<GitMerge /> Merge a branch into <b class="mono">{here}</b>{:else}<GitPullRequest /> Rebase <b class="mono">{here}</b> onto a branch{/if}
+        </div>
+      {/if}
       <input
+        bind:this={input}
         bind:value={filter}
         oninput={() => (active = 0)}
         {onkeydown}
-        placeholder="Switch to or create a branch…"
+        placeholder={mode === 'merge' ? 'Branch to merge…' : mode === 'rebase' ? 'Branch to rebase onto…' : 'Switch to or create a branch…'}
         spellcheck="false"
         class="field-input mono"
       />
@@ -245,10 +275,30 @@
           {/each}
         </ol>
       {/if}
-      <p class="foot muted">
-        Right-click a branch to merge it, rebase onto it, rename or delete it. Switching with uncommitted changes asks whether to leave them on
-        this branch (stashed) or bring them along.
-      </p>
+      {#if mode === 'switch'}
+        <div class="modes">
+          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('merge')} title="Pick a branch to merge into this one (m)">
+            <GitMerge /> Merge…
+          </Button>
+          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('rebase')} title="Pick a branch to rebase this one onto (r)">
+            <GitPullRequest /> Rebase on…
+          </Button>
+        </div>
+        <p class="foot muted">
+          Right-click a branch to rename or delete it. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
+          bring them along.
+        </p>
+      {:else if mode === 'merge'}
+        <p class="foot muted">
+          A real <span class="mono">git merge</span>, which needs no uncommitted changes. If it conflicts, resolve the conflicts here or abort.
+          <span class="mono">⌘Z</span> undoes it.
+        </p>
+      {:else}
+        <p class="foot muted">
+          Replays the commits only on {here} on top of the branch, in memory: refused, changing nothing, if anything conflicts. Uncommitted
+          changes come along unless they'd be overwritten. <span class="mono">⌘Z</span> undoes it.
+        </p>
+      {/if}
     </div>
   </Popover>
 {/if}
@@ -335,5 +385,24 @@
 
   .foot {
     font-size: var(--fs-xs);
+  }
+
+  .mode {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    font-size: var(--fs-sm);
+    color: var(--color2);
+  }
+
+  .mode :global(svg) {
+    color: var(--theme2);
+  }
+
+  .modes {
+    display: flex;
+    gap: var(--gap-2);
+    padding-top: var(--gap-2);
+    border-top: 1px solid var(--border);
   }
 </style>

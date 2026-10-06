@@ -57,6 +57,15 @@ export interface RepoState {
   conflict: Conflict | null;
   /** Changes legit stashed when leaving this branch, which can be brought back. */
   stashed: StashEntry | null;
+  /** The default branch to rebase onto (see server/base.ts); null when on it, detached, or there's none. */
+  base: BaseBranch | null;
+}
+
+export interface BaseBranch {
+  /** As the rebase takes it: "main", or "origin/main". */
+  name: string;
+  /** Commits it has that HEAD doesn't: a rebase would change something. */
+  behind: number;
 }
 
 export interface PushInfo {

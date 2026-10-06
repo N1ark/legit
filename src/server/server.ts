@@ -176,7 +176,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/backups') return send(res, 200, await repo.backups());
     if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
-    if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo));
+    if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo, query.get('all') === '1'));
     if (path === '/api/branches/deleted') return send(res, 200, await deletedBranches(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {

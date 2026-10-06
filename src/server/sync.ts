@@ -194,7 +194,7 @@ async function networkEnv(git: Git): Promise<Record<string, string>> {
 }
 
 /** The remote to fetch: the current branch's upstream remote, else origin, else the first one. */
-async function remoteFor(git: Git, branch: string | null): Promise<string | null> {
+export async function remoteFor(git: Git, branch: string | null): Promise<string | null> {
   const [up, remotes] = await Promise.all([
     branch ? git.text(['for-each-ref', '--format=%(upstream:remotename)', `refs/heads/${branch}`]) : '',
     git.text(['remote']),

@@ -191,8 +191,8 @@ export function deleteRemoteBranch(repo: Repo, req: { ref: string }): Promise<Op
   });
 }
 
-/** Remote-tracking branches (not `<remote>/HEAD`) that no local branch tracks or shares a name with. */
-export async function remoteBranches(repo: Repo): Promise<RemoteBranchInfo[]> {
+/** Remote-tracking branches (not `<remote>/HEAD`) that no local branch tracks or shares a name with, or all of them. */
+export async function remoteBranches(repo: Repo, all = false): Promise<RemoteBranchInfo[]> {
   const [out, locals, names] = await Promise.all([
     repo.git.text([
       'for-each-ref', '--sort=-committerdate',
@@ -214,7 +214,7 @@ export async function remoteBranches(repo: Repo): Promise<RemoteBranchInfo[]> {
     const remote = names.find((r) => ref.startsWith(`refs/remotes/${r}/`));
     if (symref || !remote) continue;
     const name = ref.slice(`refs/remotes/${remote}/`.length);
-    if (name === 'HEAD' || local.has(ref) || local.has(name)) continue;
+    if (name === 'HEAD' || (!all && (local.has(ref) || local.has(name)))) continue;
     list.push({ ref, remote, name, sha, subject, time: Number(time) });
   }
   return list;
