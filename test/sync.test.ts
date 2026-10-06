@@ -77,6 +77,24 @@ test('fetch: updates remote-tracking refs and the fetch time, and fails cleanly'
   await assert.rejects(fetchRemote(repo), /no remote/);
 });
 
+test('fetch: every remote, and one that fails is named while the others still land', async () => {
+  const repo = await Repo.open(dir);
+  // An upstream the branch doesn't track, ahead of origin by one commit.
+  const up = tmp('upstream');
+  run(up, 'clone', '-q', '--bare', remote, '.');
+  git('remote', 'add', 'upstream', up);
+  const theirs = theyPush('theirs', { t: '1\n' });
+  og('push', '-q', up, 'main');
+  const r = await fetchRemote(repo);
+  assert.equal(r.message, 'Fetched origin and upstream.');
+  assert.equal(git('rev-parse', 'upstream/main'), theirs);
+
+  const next = theyPush('next', { t: '2\n' });
+  git('remote', 'set-url', 'upstream', 'ssh://git@nonexistent.invalid/x.git');
+  await assert.rejects(fetchRemote(repo), /Fetched origin, but:\nCouldn't fetch from upstream/);
+  assert.equal(git('rev-parse', 'origin/main'), next);
+});
+
 test('pull fast-forwards, carrying local changes along, and can be undone', async () => {
   const repo = await Repo.open(dir);
   const base = git('rev-parse', 'HEAD');

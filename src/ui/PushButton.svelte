@@ -51,7 +51,7 @@
   const fetchTitle = $derived(
     !info ? ''
     : app.fetchError ? `The last fetch failed:\n${app.fetchError}`
-    : `Fetch from ${info.remote}${fetched ? ` (last fetched ${formatFull(fetched)})` : ''}` +
+    : `Fetch from every remote${fetched ? ` (last fetched ${formatFull(fetched)})` : ''}` +
       (mode === 'done' ? `. Up to date with ${where} as of then.` : ''),
   );
 

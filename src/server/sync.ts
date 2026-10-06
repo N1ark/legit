@@ -233,12 +233,18 @@ function fetchFrom(git: Git, remote: string): Promise<void> {
   return p;
 }
 
+/** Every remote, at once; one that fails doesn't stop the others, and the error names it. */
 export async function fetchRemote(repo: Repo): Promise<SyncResult> {
-  const remote = await remoteFor(repo.git, await repo.currentBranch());
-  if (!remote) throw new GitError('This repository has no remote to fetch from.');
-  await fetchFrom(repo.git, remote);
-  return done(repo, `Fetched ${remote}.`);
+  const remotes = (await repo.git.text(['remote'])).split('\n').filter(Boolean);
+  if (!remotes.length) throw new GitError('This repository has no remote to fetch from.');
+  const results = await Promise.allSettled(remotes.map((r) => fetchFrom(repo.git, r)));
+  const fetched = remotes.filter((_, i) => results[i].status === 'fulfilled');
+  const failed = results.flatMap((r) => (r.status === 'rejected' ? [r.reason instanceof Error ? r.reason.message : String(r.reason)] : []));
+  if (failed.length) throw new GitError((fetched.length ? `Fetched ${list(fetched)}, but:\n` : '') + failed.join('\n'));
+  return done(repo, `Fetched ${list(fetched)}.`);
 }
+
+const list = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
 // ---- pull, merge, rebase ----
 
