@@ -11,14 +11,13 @@ legit [path]          # opens the repo at path (default: .) in Legit.app
 ```
 
 `legit` opens the app when it's installed and falls back to the browser otherwise (`--browser` forces
-the browser; `--port N` and `--no-open` apply there). In the app, click the repo name in the header (<kbd>⌘T</kbd>)
-to switch the window to another repo: it lists the last 30 you opened (filter them, remove one from the list) and
-**Open Repository…** for any other. <kbd>⌘↵</kbd> or <kbd>⌘</kbd>-click opens it in a new window instead, and a repo
-that's already open in another window brings that window to the front. **File ▸ Open Repository…** (<kbd>⌘O</kbd>)
-and **File ▸ Open Recent** always open a new window. Coming back to a repo in a window finds it as you left it: the
-selected commits (or changes, or stash), unsaved messages, expanded merges, and where the list and diff were
-scrolled. That's kept in memory only, until the app quits (in the browser, reloading the page keeps it the same way).
-Launching the app again reopens the last repo.
+the browser; `--port N` and `--no-open` apply there). The app is a single window showing one repo at a time. Click
+the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the last 30 you opened (filter them, remove
+one from the list) and **Open Repository…** for any other. **File ▸ Open Recent**, **File ▸ Open Repository…**
+(<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Coming back to a repo finds it as
+you left it: the selected commits (or changes, or stash), unsaved messages, expanded merges, and where the list and
+diff were scrolled. That's kept in memory only, until the app quits (in the browser, reloading the page keeps it the
+same way). Launching the app again reopens the last repo.
 
 Needs Node ≥ 23.6 and a recent git (tested with 2.54; needs `merge-tree --stdin` with tree arguments). The app itself
 is self-contained: it doesn't use your installed Node, only `git`.
@@ -170,15 +169,16 @@ npm run check      # svelte-check + tsc
   `branches.ts` creates, renames, deletes and restores branches and switches between them; `stash.ts` stashes and
   applies changes, and checks a stash can't conflict before applying it.
   `discard.ts` discards uncommitted changes and puts them back.
-- `src-tauri/` is the desktop shell (Tauri 2). Each window starts its own `legit-server` sidecar: the same engine,
-  built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable support, which is why
-  the app is ~145 MB (almost all of it Node). The window loads the UI from that server. Switching a window to another repo starts a server for it, loads the page from that one (so nothing of
-  the old repo's state carries over), and stops the old server. A server exits when its window closes, and only after
-  any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list is
-  `recent-repos` in the app's config dir. The page can call only six app commands (`capabilities/default.json`):
-  list the recent repos, open one *from that list* (in that window or a new one), show the folder picker, and remove
-  one from the list, and keep or take back what it shows of its repo for when the window returns to it (by the page's
-  origin, so a page still unloading after a switch can't file it under the new repo).
+- `src-tauri/` is the desktop shell (Tauri 2). Its one window is backed by a `legit-server` sidecar for the repo it
+  shows: the same engine, built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable
+  support, which is why the app is ~145 MB (almost all of it Node). The window loads the UI from that server.
+  Switching repo starts a server for the new one, loads the page from it (so nothing of the old repo's state carries
+  over, besides what the page asked the app to keep for coming back), and stops the old server. A server exits only
+  after any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list
+  is `recent-repos` in the app's config dir. The page can call only six app commands (`capabilities/default.json`):
+  list the recent repos, open one *from that list*, show the folder picker, remove one from the list, and keep or take
+  back what it shows of its repo (by the page's origin, so a page still unloading after a switch files it under its
+  own repo).
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
   shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content

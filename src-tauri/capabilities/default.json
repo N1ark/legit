@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Repo windows load the local legit server. They drag the window by its header, and list, open (only from the recent list, or via the native folder picker) and forget recent repositories, and keep what a page shows while the window switches to another.",
-  "windows": ["repo*"],
+  "description": "The window loads the local legit server. It drags the window by its header, lists, opens (only from the recent list, or via the native folder picker) and forgets recent repositories, and keeps what it shows of a repository while it shows another.",
+  "windows": ["repo"],
   "remote": { "urls": ["http://127.0.0.1:*"] },
   "permissions": [
     "core:window:allow-start-dragging",

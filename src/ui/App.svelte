@@ -46,13 +46,14 @@
   const savedListWidth = persisted('legit:list-width', LIST_WIDTH);
   let listWidth = $state(savedListWidth.value);
 
-  // Called by the desktop app's menu: Edit ▸ Undo/Redo, which take ⌘Z before the page sees it, and Branch.
+  // Called by the desktop app: its menu (Edit ▸ Undo/Redo take ⌘Z before the page sees it), and before switching repo.
   const typing = () => isTyping(document.activeElement);
   (window as any).__legit = {
     undo: () => (typing() ? document.execCommand('undo') : app.undo()),
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
+    remember: () => remember(app.snapshot()),
   };
 
   onMount(() => {

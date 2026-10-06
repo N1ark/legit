@@ -1,18 +1,17 @@
-// Native shell for legit: one window per repository, each backed by its own
-// `legit-server` sidecar (the Node engine compiled into a standalone binary). Switching a
-// window to another repository starts a server for it and stops the old one.
+// Native shell for legit: one window, backed by a `legit-server` sidecar (the Node engine
+// compiled into a standalone binary) for the repository it shows. Opening another repository
+// starts a server for it, points the window at it, and stops the old one.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 struct Server {
@@ -22,22 +21,27 @@ struct Server {
     origin: String,
 }
 
-/// Running servers, keyed by window label.
+/// The server of the window's repository.
 #[derive(Default)]
-struct Servers(Mutex<HashMap<String, Server>>);
+struct Current(Mutex<Option<Server>>);
 
-impl Servers {
-    fn repo_at(&self, origin: &str) -> Option<PathBuf> {
-        self.0.lock().unwrap().values().find(|s| s.origin == origin).map(|s| s.repo.clone())
+impl Current {
+    fn repo(&self) -> Option<PathBuf> {
+        self.0.lock().unwrap().as_ref().map(|s| s.repo.clone())
     }
 }
 
-/// What each repository's page last asked to keep (selection, drafts, scroll), so a window that
-/// comes back to it finds things as they were. Memory only.
+/// What each repository's page last asked to keep (selection, drafts, scroll), so coming back to
+/// it finds things as they were, by repository; and every server's origin, to know a page's
+/// repository even once it's been switched away from. Memory only.
 #[derive(Default)]
-struct Views(Mutex<HashMap<PathBuf, String>>);
+struct Views {
+    kept: Mutex<HashMap<PathBuf, String>>,
+    origins: Mutex<HashMap<String, PathBuf>>,
+}
 
-static NEXT_WINDOW: AtomicUsize = AtomicUsize::new(1);
+/// The one window's label (capabilities/default.json grants it the app's commands).
+const WINDOW: &str = "repo";
 
 /// How long a server gets to finish an in-flight operation before it's killed.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
@@ -45,14 +49,14 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            // `legit <path>` or a second launch: open the repo in this instance.
+            // `legit <path>` or a second launch: open the repo in this instance's window.
             match repo_arg(&argv, Path::new(&cwd)) {
-                Some(path) => open_repo(app, path, None),
+                Some(path) => open_repo(app, path),
                 None => focus_any(app),
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .manage(Servers::default())
+        .manage(Current::default())
         .manage(Recent::default())
         .manage(Views::default())
         .menu(build_menu)
@@ -65,9 +69,9 @@ fn main() {
             commands::recall_view
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => pick_repo(app, false, None),
+            "open" => pick_repo(app, false),
             "recent-clear" => update_recent(app, |list| list.clear()),
-            id if id.starts_with("recent:") => open_repo(app, PathBuf::from(&id["recent:".len()..]), None),
+            id if id.starts_with("recent:") => open_repo(app, PathBuf::from(&id["recent:".len()..])),
             "undo" => eval_focused(app, "window.__legit?.undo()"),
             "redo" => eval_focused(app, "window.__legit?.redo()"),
             "reload" => eval_focused(app, "location.reload()"),
@@ -79,7 +83,7 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                let server = window.state::<Servers>().0.lock().unwrap().remove(window.label());
+                let server = window.state::<Current>().0.lock().unwrap().take();
                 if let Some(server) = server {
                     thread::spawn(move || stop(server));
                 }
@@ -90,8 +94,8 @@ fn main() {
             let cwd = std::env::current_dir().unwrap_or_default();
             let args: Vec<String> = std::env::args().collect();
             match repo_arg(&args, &cwd).or_else(|| recent(&handle).into_iter().next()) {
-                Some(path) => open_repo(&handle, path, None),
-                None => pick_repo(&handle, true, None),
+                Some(path) => open_repo(&handle, path),
+                None => pick_repo(&handle, true),
             }
             Ok(())
         })
@@ -99,10 +103,8 @@ fn main() {
         .expect("failed to start legit")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                let servers: Vec<Server> = app.state::<Servers>().0.lock().unwrap().drain().map(|(_, s)| s).collect();
-                let stopping: Vec<_> = servers.into_iter().map(|s| thread::spawn(move || stop(s))).collect();
-                for t in stopping {
-                    let _ = t.join();
+                if let Some(server) = app.state::<Current>().0.lock().unwrap().take() {
+                    stop(server);
                 }
             }
         });
@@ -180,7 +182,7 @@ fn repo_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
 }
 
-/// What the repo windows' pages may call (see capabilities/default.json): the recent list, and
+/// What the window's page may call (see capabilities/default.json): the recent list, and
 /// opening only what's already in it, or what the user picks in the native dialog.
 mod commands {
     use super::*;
@@ -191,21 +193,13 @@ mod commands {
         name: String,
         /// Shortened for display: "~/code/legit".
         short: String,
-        /// Shown in the window asking.
+        /// Shown now.
         current: bool,
-        /// Shown in another window.
-        elsewhere: bool,
     }
 
     #[tauri::command]
-    pub fn recent_repos(app: AppHandle, window: tauri::WebviewWindow) -> Vec<RecentRepo> {
-        let (current, open) = {
-            let servers = app.state::<Servers>();
-            let servers = servers.0.lock().unwrap();
-            let open: Vec<PathBuf> =
-                servers.iter().filter(|(label, _)| *label != window.label()).map(|(_, s)| s.repo.clone()).collect();
-            (servers.get(window.label()).map(|s| s.repo.clone()), open)
-        };
+    pub fn recent_repos(app: AppHandle) -> Vec<RecentRepo> {
+        let current = app.state::<Current>().repo();
         recent(&app)
             .into_iter()
             .filter_map(|p| {
@@ -214,16 +208,14 @@ mod commands {
                     name: repo_name(&p),
                     short: short_path(&app, &p),
                     current: current.as_ref() == Some(&p),
-                    elsewhere: open.contains(&p),
                 })
             })
             .collect()
     }
 
-    /// Open a repository from the recent list (nothing else) in the asking window, or in a new one
-    /// with `new_window`. A repository open in another window focuses that window instead.
+    /// Open a repository from the recent list, nothing else.
     #[tauri::command]
-    pub fn open_repo(app: AppHandle, window: WebviewWindow, path: String, new_window: Option<bool>) -> Result<(), String> {
+    pub fn open_repo(app: AppHandle, path: String) -> Result<(), String> {
         let path = PathBuf::from(path);
         if !recent(&app).contains(&path) {
             return Err("That repository isn't in the recent list.".into());
@@ -231,13 +223,13 @@ mod commands {
         if !is_repo(&path) {
             return Err(format!("{} isn't a git repository anymore.", path.display()));
         }
-        super::open_repo(&app, path, (!new_window.unwrap_or(false)).then_some(window));
+        super::open_repo(&app, path);
         Ok(())
     }
 
     #[tauri::command]
-    pub fn pick_repo(app: AppHandle, window: WebviewWindow, new_window: Option<bool>) {
-        super::pick_repo(&app, false, (!new_window.unwrap_or(false)).then_some(window));
+    pub fn pick_repo(app: AppHandle) {
+        super::pick_repo(&app, false);
     }
 
     #[tauri::command]
@@ -245,32 +237,32 @@ mod commands {
         update_recent(&app, |list| list.retain(|p| p != Path::new(&path)));
     }
 
-    /// Keep a page's view of its repository. By origin, so a page still unloading after its window
-    /// switched (its server gone) can't file it under the new repository.
+    /// Keep a page's view of its repository. By origin, so a page still unloading after the window
+    /// switched files it under its own repository, not the new one.
     #[tauri::command]
     pub fn remember_view(app: AppHandle, origin: String, state: String) {
-        if state.len() > 1 << 20 {
-            return;
-        }
-        if let Some(repo) = app.state::<Servers>().repo_at(&origin) {
-            app.state::<Views>().0.lock().unwrap().insert(repo, state);
+        let views = app.state::<Views>();
+        let repo = views.origins.lock().unwrap().get(&origin).cloned();
+        if let Some(repo) = repo.filter(|_| state.len() <= 1 << 20) {
+            views.kept.lock().unwrap().insert(repo, state);
         }
     }
 
     /// What was kept for the page's repository, once.
     #[tauri::command]
     pub fn recall_view(app: AppHandle, origin: String) -> Option<String> {
-        let repo = app.state::<Servers>().repo_at(&origin)?;
-        app.state::<Views>().0.lock().unwrap().remove(&repo)
+        let views = app.state::<Views>();
+        let repo = views.origins.lock().unwrap().get(&origin).cloned()?;
+        let kept = views.kept.lock().unwrap().remove(&repo);
+        kept
     }
 }
 
-/// `into`: the window to switch to the picked repository, rather than opening a new one.
-fn pick_repo(app: &AppHandle, quit_if_cancelled: bool, into: Option<WebviewWindow>) {
+fn pick_repo(app: &AppHandle, quit_if_cancelled: bool) {
     let handle = app.clone();
     app.dialog().file().set_title("Open a git repository").pick_folder(move |folder| {
         match folder.and_then(|f| f.into_path().ok()) {
-            Some(path) => open_repo(&handle, path, into),
+            Some(path) => open_repo(&handle, path),
             None if quit_if_cancelled && handle.webview_windows().is_empty() => handle.exit(0),
             None => {}
         }
@@ -282,40 +274,35 @@ fn focus_any(app: &AppHandle) {
         Some(w) => {
             let _ = w.set_focus();
         }
-        None => pick_repo(app, true, None),
+        None => pick_repo(app, true),
     }
 }
 
-/// Start a server for `path` and open a window on it, or switch window `into` to it. A window
-/// that already has it is focused instead.
-fn open_repo(app: &AppHandle, path: PathBuf, into: Option<WebviewWindow>) {
+/// Show `path` in the window: start a server for it, then open the window on it, or switch the
+/// window to it (the page saves what it shows first, to find it again when it comes back).
+fn open_repo(app: &AppHandle, path: PathBuf) {
     let path = path.canonicalize().unwrap_or(path);
-    let existing = app
-        .state::<Servers>()
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|(_, s)| s.repo == path)
-        .map(|(label, _)| label.clone());
-    if let Some(window) = existing.and_then(|label| app.get_webview_window(&label)) {
+    let window = app.get_webview_window(WINDOW);
+    if let Some(window) = &window {
         let _ = window.unminimize();
         let _ = window.set_focus();
-        return;
+        if app.state::<Current>().repo().as_ref() == Some(&path) {
+            return;
+        }
+        let _ = window.eval("window.__legit?.remember()");
     }
 
     let app = app.clone();
     thread::spawn(move || {
-        if let Err(err) = start(&app, &path, into) {
+        if let Err(err) = start(&app, &path) {
             eprintln!("legit: couldn't open {}: {err}", path.display());
             app.dialog()
                 .message(err)
                 .title("Couldn't open repository")
                 .kind(MessageDialogKind::Error)
                 .show(move |_| {});
-            let quit = app.webview_windows().is_empty();
-            if quit {
-                pick_repo(&app, true, None);
+            if app.webview_windows().is_empty() {
+                pick_repo(&app, true);
             }
         }
     });
@@ -363,33 +350,28 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
     }
 }
 
-fn start(app: &AppHandle, repo: &Path, into: Option<WebviewWindow>) -> Result<(), String> {
+fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
     let (child, url) = spawn_server(app, repo)?;
     let server = Server { repo: repo.to_path_buf(), child, origin: url.origin().ascii_serialization() };
+    app.state::<Views>().origins.lock().unwrap().insert(server.origin.clone(), repo.to_path_buf());
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
-    if let Some(window) = into {
+    if let Some(window) = app.get_webview_window(WINDOW) {
         // The page loads afresh from the new server, so nothing of the old repository carries over.
         if let Err(e) = window.navigate(url) {
             stop(server);
             return Err(e.to_string());
         }
         let _ = window.set_title(&name);
-        let state = app.state::<Servers>();
-        let mut servers = state.0.lock().unwrap();
-        // If the window closed meanwhile, its server is gone already, and this one goes too.
-        let old = match servers.get_mut(window.label()) {
-            Some(slot) => std::mem::replace(slot, server),
-            None => server,
-        };
-        drop(servers);
-        thread::spawn(move || stop(old));
+        let old = app.state::<Current>().0.lock().unwrap().replace(server);
+        if let Some(old) = old {
+            thread::spawn(move || stop(old));
+        }
         update_recent(app, move |list| list.insert(0, opened));
         return Ok(());
     }
 
-    let label = format!("repo{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
-    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(url))
         .title(&name)
         .inner_size(1320.0, 860.0)
         .min_inner_size(760.0, 480.0)
@@ -403,7 +385,7 @@ fn start(app: &AppHandle, repo: &Path, into: Option<WebviewWindow>) -> Result<()
         stop(server);
         return Err(e.to_string());
     }
-    app.state::<Servers>().0.lock().unwrap().insert(label, server);
+    *app.state::<Current>().0.lock().unwrap() = Some(server);
     update_recent(app, move |list| list.insert(0, opened));
     Ok(())
 }
