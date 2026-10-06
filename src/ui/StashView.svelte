@@ -14,7 +14,7 @@
   let diff = $state.raw<DiffSummary | null>(null);
   let error = $state<string | null>(null);
   // Read-only, but DiffView wants a (never filled) selection per file.
-  let sel: Record<string, SvelteSet<number>> = {};
+  let sel = $state.raw<Record<string, SvelteSet<number>>>({});
 
   $effect(() => {
     const key = `s${stash.sha}`;
