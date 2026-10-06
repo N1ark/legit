@@ -1,4 +1,5 @@
 import { IS_TAURI, copyText, toast } from 'purr';
+import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
@@ -24,6 +25,8 @@ class App {
   selected = $state<string[]>([]);
   anchor: string | null = null;
   busy = $state(false);
+  /** The operation running while `busy` (its API name). */
+  running: string | null = null;
 
   private diffs = new Map<string, Promise<DiffSummary>>();
   private contents = new Map<string, Promise<HunkData[]>>();
@@ -263,6 +266,7 @@ class App {
     const gen = ++this.gen;
     const before = this.repo;
     this.busy = true;
+    this.running = name;
     optimistic?.();
     try {
       const r = await request<OpResult>(`/api/${name}`, body);
@@ -500,6 +504,7 @@ class App {
     if (this.busy) return null;
     const gen = ++this.gen;
     this.busy = true;
+    this.running = name;
     try {
       const r = await request<SyncResult>(`/api/${name}`, body);
       this.gen = Math.max(this.gen, gen);
@@ -533,6 +538,7 @@ class App {
 
   private async fetchNow(background: boolean): Promise<boolean> {
     this.fetching = true;
+    this.userFetching = !background;
     this.fetchTried = Date.now();
     try {
       await request<SyncResult>('/api/fetch', {});
@@ -543,7 +549,7 @@ class App {
       if (!background) toast.error(e);
       return false;
     } finally {
-      this.fetching = false;
+      this.fetching = this.userFetching = false;
       // The returned state may be older than one an operation applied meanwhile.
       await this.refresh();
     }
@@ -551,6 +557,15 @@ class App {
 
   /** Fetching for "Rebase on main", so its button shows it. */
   fetchingBase = $state(false);
+  private userFetching = $state(false);
+
+  /**
+   * Why the window can't switch repo now: an operation is running, or a fetch the user asked
+   * for (a background fetch is just dropped).
+   */
+  switchBlocker = $derived(
+    this.busy ? switchRefusal(this.running) : this.userFetching || this.fetchingBase ? switchRefusal('fetch') : null,
+  );
 
   /**
    * Rebase onto the default branch (see server/base.ts), fetched first so it's the latest. If the

@@ -17,6 +17,7 @@ export function names(list: string[], max = 3) {
 export async function discardChanges(key: string, selection: Selection): Promise<boolean> {
   if (app.busy || !Object.keys(selection).length) return false;
   app.busy = true;
+  app.running = 'discard';
   try {
     const r = await request<DiscardResult>('/api/discard', { key, selection });
     const trashed = r.trashed.length ? ` Too big to keep, ${names(r.trashed)} went to the Trash.` : '';
@@ -42,6 +43,7 @@ export async function discardChanges(key: string, selection: Selection): Promise
 export async function restoreDiscarded(ref: string, overwrite = false, offer = true): Promise<RestoreDiscardedResult | null> {
   if (app.busy) return null;
   app.busy = true;
+  app.running = 'restoreDiscarded';
   try {
     const r = await request<RestoreDiscardedResult>('/api/restoreDiscarded', { ref, overwrite });
     if (r.conflicts.length) {

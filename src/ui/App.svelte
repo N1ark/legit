@@ -10,6 +10,7 @@
     ShortcutsOverlay,
     Spinner,
     ToastHost,
+    toast,
     createKeymap,
     isTyping,
     persisted,
@@ -34,7 +35,7 @@
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
-  import { remember } from './lib/desktop.ts';
+  import { invoke, remember } from './lib/desktop.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -53,7 +54,13 @@
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
-    remember: () => remember(app.snapshot()),
+    // The app is about to switch repo: refuse while something runs, else keep what's shown.
+    leave: async (id: number) => {
+      const why = app.switchBlocker;
+      if (why) toast(why);
+      else await remember(app.snapshot());
+      invoke('answer_leave', { id, ok: !why });
+    },
   };
 
   onMount(() => {

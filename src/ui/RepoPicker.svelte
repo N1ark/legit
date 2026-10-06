@@ -4,7 +4,7 @@
   import { Highlight, IS_TAURI, IconButton, Popover, rank, toast } from 'purr';
   import { CaretDown, Check, FolderOpen, X } from 'purr/icons';
   import { app } from './lib/app.svelte.ts';
-  import { invoke, remember } from './lib/desktop.ts';
+  import { invoke } from './lib/desktop.ts';
 
   interface RecentRepo {
     path: string;
@@ -46,9 +46,9 @@
     const r = shown[k]?.item;
     open = false;
     if (r?.current) return;
+    if (app.switchBlocker) return toast(app.switchBlocker);
     try {
-      // Coming back to this repo later finds it as it is now.
-      await remember(app.snapshot());
+      // The app asks the page before switching (App.svelte `leave`), which keeps what it shows.
       if (!r) await invoke('pick_repo');
       else await invoke('open_repo', { path: r.path });
     } catch (e) {
@@ -108,6 +108,9 @@
           spellcheck="false"
           class="field-input"
         />
+        {#if app.switchBlocker}
+          <p class="blocked">{app.switchBlocker}</p>
+        {/if}
         {#if list === null}
           <p class="muted">Loading…</p>
         {:else if !shown.length}
@@ -120,8 +123,10 @@
               class="row-item"
               class:is-cursor={k === active}
               class:current={r.current}
+              class:disabled={!r.current && !!app.switchBlocker}
               role="option"
               aria-selected={k === active}
+              aria-disabled={!r.current && !!app.switchBlocker}
               onclick={() => choose(k)}
               onmousemove={() => (active = k)}
             >
@@ -139,8 +144,10 @@
           <li
             class="row-item open"
             class:is-cursor={active === shown.length}
+            class:disabled={!!app.switchBlocker}
             role="option"
             aria-selected={active === shown.length}
+            aria-disabled={!!app.switchBlocker}
             onclick={() => choose(shown.length)}
             onmousemove={() => (active = shown.length)}
           >
@@ -184,6 +191,16 @@
   li {
     cursor: pointer;
     font-size: var(--fs-base);
+  }
+
+  li.disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .blocked {
+    font-size: var(--fs-sm);
+    color: var(--warn);
   }
 
   li.open {

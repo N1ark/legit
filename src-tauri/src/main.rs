@@ -6,12 +6,13 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 struct Server {
@@ -40,6 +41,15 @@ struct Views {
     origins: Mutex<HashMap<String, PathBuf>>,
 }
 
+/// Questions to the page about leaving its repository, waiting for its `answer_leave`.
+#[derive(Default)]
+struct Leaving(Mutex<HashMap<u64, mpsc::Sender<bool>>>);
+
+static NEXT_ASK: AtomicU64 = AtomicU64::new(1);
+
+/// How long a page gets to answer; one that doesn't (hung, or still loading) doesn't hold up the switch.
+const ASK_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// The one window's label (capabilities/default.json grants it the app's commands).
 const WINDOW: &str = "repo";
 
@@ -59,6 +69,7 @@ fn main() {
         .manage(Current::default())
         .manage(Recent::default())
         .manage(Views::default())
+        .manage(Leaving::default())
         .menu(build_menu)
         .invoke_handler(tauri::generate_handler![
             commands::recent_repos,
@@ -66,7 +77,8 @@ fn main() {
             commands::pick_repo,
             commands::forget_repo,
             commands::remember_view,
-            commands::recall_view
+            commands::recall_view,
+            commands::answer_leave
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => pick_repo(app, false),
@@ -248,6 +260,14 @@ mod commands {
         }
     }
 
+    /// The page's answer to `page_allows_leaving`.
+    #[tauri::command]
+    pub fn answer_leave(app: AppHandle, id: u64, ok: bool) {
+        if let Some(tx) = app.state::<Leaving>().0.lock().unwrap().remove(&id) {
+            let _ = tx.send(ok);
+        }
+    }
+
     /// What was kept for the page's repository, once.
     #[tauri::command]
     pub fn recall_view(app: AppHandle, origin: String) -> Option<String> {
@@ -279,7 +299,7 @@ fn focus_any(app: &AppHandle) {
 }
 
 /// Show `path` in the window: start a server for it, then open the window on it, or switch the
-/// window to it (the page saves what it shows first, to find it again when it comes back).
+/// window to it once the page agrees (see `page_allows_leaving`).
 fn open_repo(app: &AppHandle, path: PathBuf) {
     let path = path.canonicalize().unwrap_or(path);
     let window = app.get_webview_window(WINDOW);
@@ -289,11 +309,13 @@ fn open_repo(app: &AppHandle, path: PathBuf) {
         if app.state::<Current>().repo().as_ref() == Some(&path) {
             return;
         }
-        let _ = window.eval("window.__legit?.remember()");
     }
 
     let app = app.clone();
     thread::spawn(move || {
+        if window.is_some_and(|w| !page_allows_leaving(&app, &w)) {
+            return;
+        }
         if let Err(err) = start(&app, &path) {
             eprintln!("legit: couldn't open {}: {err}", path.display());
             app.dialog()
@@ -306,6 +328,19 @@ fn open_repo(app: &AppHandle, path: PathBuf) {
             }
         }
     });
+}
+
+/// Ask the page whether it can leave its repository: it refuses while an operation it started is
+/// running (and says why), and otherwise keeps what it shows for coming back. The page is the one
+/// that knows: its server only sees operations once they reach it, and not fetches.
+fn page_allows_leaving(app: &AppHandle, window: &WebviewWindow) -> bool {
+    let id = NEXT_ASK.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = mpsc::channel();
+    app.state::<Leaving>().0.lock().unwrap().insert(id, tx);
+    let js = format!("window.__legit?.leave({id}) ?? window.__TAURI_INTERNALS__.invoke('answer_leave', {{ id: {id}, ok: true }})");
+    let ok = window.eval(&js).is_err() || rx.recv_timeout(ASK_TIMEOUT).unwrap_or(true);
+    app.state::<Leaving>().0.lock().unwrap().remove(&id);
+    ok
 }
 
 /// Start a server for `repo`; returns it and the URL it serves the UI on.

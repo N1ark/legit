@@ -14,7 +14,9 @@ legit [path]          # opens the repo at path (default: .) in Legit.app
 the browser; `--port N` and `--no-open` apply there). The app is a single window showing one repo at a time. Click
 the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the last 30 you opened (filter them, remove
 one from the list) and **Open Repository…** for any other. **File ▸ Open Recent**, **File ▸ Open Repository…**
-(<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Coming back to a repo finds it as
+(<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Switching is refused, saying
+why, while an operation you started is still running (a fetch you asked for included; a background fetch is simply
+dropped). Coming back to a repo finds it as
 you left it: the selected commits (or changes, or stash), unsaved messages, expanded merges, and where the list and
 diff were scrolled. That's kept in memory only, until the app quits (in the browser, reloading the page keeps it the
 same way). Launching the app again reopens the last repo.
@@ -175,10 +177,11 @@ npm run check      # svelte-check + tsc
   Switching repo starts a server for the new one, loads the page from it (so nothing of the old repo's state carries
   over, besides what the page asked the app to keep for coming back), and stops the old server. A server exits only
   after any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list
-  is `recent-repos` in the app's config dir. The page can call only six app commands (`capabilities/default.json`):
-  list the recent repos, open one *from that list*, show the folder picker, remove one from the list, and keep or take
+  is `recent-repos` in the app's config dir. The page can call only seven app commands (`capabilities/default.json`):
+  list the recent repos, open one *from that list*, show the folder picker, remove one from the list, keep or take
   back what it shows of its repo (by the page's origin, so a page still unloading after a switch files it under its
-  own repo).
+  own repo), and answer whether it can switch. Every switch, menu and CLI ones included, asks the page first, since
+  it's the one that knows what it has running; a page that doesn't answer within two seconds doesn't hold it up.
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
   shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
