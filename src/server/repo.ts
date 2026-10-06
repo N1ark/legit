@@ -12,7 +12,7 @@ import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { switchBranch } from './branches.ts';
-import { applyLines, commitDiff } from './diff.ts';
+import { DIFF_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
@@ -208,7 +208,10 @@ export class Repo {
     return i;
   }
 
-  /** A commit's diff, a stash's (`s<sha>`), or a working-tree snapshot (`w<n>`, from `work()`). */
+  /**
+   * A commit's diff, a stash's (`s<sha>`), a working-tree snapshot (`w<n>`, from `work()`), or what
+   * squashing some commits would make (`q…`, see `squashDiff`).
+   */
   async diff(sha: string): Promise<CommitDiff> {
     if (/^w\d+$/.test(sha)) {
       const snap = this.snapshots.get(sha);
@@ -218,11 +221,49 @@ export class Repo {
     let d = this.diffs.get(sha);
     if (!d) {
       // `s<sha>`: a stash's changes, untracked files included.
-      d = sha.startsWith('s') ? await stashDiff(this.git, sha.slice(1), sha) : await commitDiff(this.git, sha);
+      d = sha.startsWith('s')
+        ? await stashDiff(this.git, sha.slice(1), sha)
+        : sha.startsWith('q')
+          ? await this.squashDiff(sha)
+          : await commitDiff(this.git, sha);
       if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
       this.diffs.set(sha, d);
     }
     return d;
+  }
+
+  /**
+   * The diff of the commit squashing would make, for key `q<run>.<run>…`: runs of consecutive commits
+   * (`<newest>-<oldest>`, or one SHA), newest first. As in `squash`, the others' changes are picked onto
+   * the oldest in order, and the result is diffed against its parent.
+   */
+  private async squashDiff(key: string): Promise<CommitDiff> {
+    const list: RawCommit[] = [];
+    for (const run of key.slice(1).split('.').reverse()) {
+      const [newest, oldest = newest] = run.split('-');
+      const after = newest === oldest ? [] : (await this.git.text(['rev-list', '--first-parent', '--reverse', newest, `^${oldest}`])).split('\n');
+      const commits = await this.git.loadCommits([oldest, ...after]);
+      if (commits.some((c, i) => i && c.parents[0] !== commits[i - 1].sha)) throw new GitError('History changed; refresh.');
+      list.push(...commits);
+    }
+    let tree = list[0].tree;
+    const merger = this.git.merger();
+    try {
+      for (const c of list.slice(1)) {
+        const r = await merger.pick(await this.git.treeOf(c.parents[0] ?? null), tree, c.tree);
+        if (!('tree' in r)) {
+          const subject = parseMessage(toUtf8(c.message)).subject;
+          throw new GitError(
+            `These commits can't be squashed: ${c.sha.slice(0, 7)} "${subject}" conflicts with the ones before it, in ${r.conflicts.map(toUtf8).join(', ')}.`,
+          );
+        }
+        tree = r.tree;
+      }
+    } finally {
+      merger.close();
+    }
+    const { out } = await this.git.run(['diff-tree', ...DIFF_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
+    return parseDiff(out.toString('latin1'), key);
   }
 
   /**

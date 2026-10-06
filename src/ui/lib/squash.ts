@@ -25,3 +25,20 @@ export function squashFields(list: CommitInfo[]): SquashFields {
   }
   return { subject: first.subject, body, coauthors: [...people.values()] };
 }
+
+/**
+ * Diff key of what squashing `list` would make (see the server's `Repo.squashDiff`): its runs of
+ * consecutive commits in `all`, both newest first.
+ */
+export function squashDiffKey(list: CommitInfo[], all: CommitInfo[]): string {
+  const at = new Map(all.map((c, i) => [c.sha, i]));
+  const runs: string[][] = [];
+  let prev = -2;
+  for (const c of list) {
+    const i = at.get(c.sha) ?? -2;
+    if (i === prev + 1 && runs.length) runs[runs.length - 1].push(c.sha);
+    else runs.push([c.sha]);
+    prev = i;
+  }
+  return 'q' + runs.map((r) => (r.length > 1 ? `${r[0]}-${r[r.length - 1]}` : r[0])).join('.');
+}

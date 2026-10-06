@@ -125,6 +125,35 @@ test('squash non-adjacent commits, then undo and redo', async () => {
   assert.deepEqual(log(), ['mid', 'a+b', 'base']);
 });
 
+test('the diff of what squashing would make: consecutive runs, and commits with others between', async () => {
+  commit('base', { f: '1\n' });
+  const a = commit('a', { a: '1\n' });
+  const b = commit('b', { a: '1\n2\n', b: 'b\n' });
+  commit('mid', { m: '1\n' });
+  const c = commit('c', { a: '1\n2\n3\n' });
+  const head = git('rev-parse', 'HEAD');
+  const repo = await Repo.open(dir);
+  const files = (d: { files: { path: string; added: number; removed: number }[] }) =>
+    d.files.map((f) => `${f.path} +${f.added} -${f.removed}`);
+  assert.deepEqual(files(await repo.diff(`q${b}-${a}`)), ['a +2 -0', 'b +1 -0']);
+  const key = `q${c}.${b}-${a}`;
+  const d = await repo.diff(key);
+  assert.equal(d.sha, key);
+  assert.deepEqual(files(d), ['a +3 -0', 'b +1 -0']);
+  await repo.squash({ shas: [c, b, a], subject: 'abc', body: '', coauthors: [] });
+  assert.notEqual(git('rev-parse', 'HEAD'), head);
+  assert.deepEqual(files(await repo.diff(git('rev-parse', 'HEAD~1'))), files(d));
+});
+
+test('the diff of a squash that would conflict says so', async () => {
+  commit('base', { f: '1\n' });
+  const a = commit('a', { f: 'a\n' });
+  commit('mid', { f: 'm\n' });
+  const c = commit('c', { f: 'c\n' });
+  const repo = await Repo.open(dir);
+  await assert.rejects(repo.diff(`q${c}.${a}`), /can't be squashed/);
+});
+
 test('reordering updates a clean working tree and refuses to clobber changes', async () => {
   commit('base', { f: '1\n' });
   const a = commit('a', { f: '1\n2\n' });

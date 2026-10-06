@@ -61,6 +61,12 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
+/** Diff keys (see `Repo.diff`): a commit, a stash, a working-tree snapshot, or a squash's result. */
+const KEY = String.raw`(s?[0-9a-f]{40,64}|w\d+|q[0-9a-f]{40,64}(?:[-.][0-9a-f]{40,64})*)`;
+const DIFF = new RegExp(`^/api/diff/${KEY}$`);
+const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
+const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
+
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   const clients = new Set<ServerResponse>();
   const summaries = new Map<string, string>();
@@ -155,7 +161,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const work = /^w\d+$/.test(d.sha);
       const paths = d.files.map((f) => f.path);
       const settings = await effectiveSettings(repo.git);
-      const generated = await generatedPaths(repo.git, work ? null : d.sha.replace(/^s/, ''), paths, settings.collapse);
+      // A squash's attributes are its newest commit's.
+      const source = work ? null : d.sha.replace(/^[sq]/, '').split(/[-.]/)[0];
+      const generated = await generatedPaths(repo.git, source, paths, settings.collapse);
       json = JSON.stringify(summarize(d, generated, syntaxes(settings.syntax, paths)));
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
@@ -193,10 +201,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (older) return send(res, 200, await repo.older(older[1]));
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);
     if (merged) return send(res, 200, await repo.merged(merged[1]));
-    const diff = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)$/.exec(path);
+    const diff = DIFF.exec(path);
     if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.
-    const files = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)\/files$/.exec(path);
+    const files = DIFF_FILES.exec(path);
     if (files) {
       const d = await repo.diff(files[1]);
       const out: FileContents = {};
@@ -206,7 +214,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, out);
     }
     // /api/diff/<sha>/old?i=3: a modified file's old version, to show the lines between its hunks.
-    const old = /^\/api\/diff\/(s?[0-9a-f]{40,64}|w\d+)\/old$/.exec(path);
+    const old = DIFF_OLD.exec(path);
     if (old) {
       const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
       if (!f) return send(res, 404, { error: 'Not found' });
