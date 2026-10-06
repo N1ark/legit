@@ -1,6 +1,6 @@
 // Bringing another branch into the current one, for a branch's right-click menu.
 
-import { toast, type MenuEntry } from 'purr';
+import type { MenuEntry } from 'purr';
 import { GitMerge, GitPullRequest } from 'purr/icons';
 import { app } from './app.svelte.ts';
 
@@ -33,12 +33,4 @@ export function integrateEntries(name: string, current: boolean, close?: () => v
       run: go('rebase'),
     },
   ];
-}
-
-/** Rebase the current branch onto the repo's default branch (see server/base.ts), when that changes anything. */
-export function rebaseOnBase() {
-  const base = app.repo?.base;
-  if (!base) return toast("There's no default branch to rebase on, or you're on it.");
-  if (!base.behind) return toast(`${app.repo?.branch} already has everything on ${base.name}.`);
-  return app.sync('rebase', { branch: base.name });
 }

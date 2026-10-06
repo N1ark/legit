@@ -520,25 +520,66 @@ class App {
   fetchError = $state<string | null>(null);
   private fetchTried = 0;
 
+  private fetchRun: Promise<boolean> | null = null;
+
   /**
-   * Fetch the remote. It doesn't block other operations (a fetch only updates remote-tracking
-   * refs). In the background, a failure is only noted, not toasted.
+   * Fetch the remote (or wait for the fetch running), then refresh; true if it worked. It doesn't
+   * block other operations (a fetch only updates remote-tracking refs). In the background, a
+   * failure is only noted, not toasted.
    */
-  async fetchRemote(background = false) {
-    if (this.fetching) return;
+  fetchRemote(background = false): Promise<boolean> {
+    return (this.fetchRun ??= this.fetchNow(background).finally(() => (this.fetchRun = null)));
+  }
+
+  private async fetchNow(background: boolean): Promise<boolean> {
     this.fetching = true;
     this.fetchTried = Date.now();
     try {
       await request<SyncResult>('/api/fetch', {});
       this.fetchError = null;
+      return true;
     } catch (e) {
       this.fetchError = e instanceof Error ? e.message : String(e);
       if (!background) toast.error(e);
+      return false;
     } finally {
       this.fetching = false;
       // The returned state may be older than one an operation applied meanwhile.
       await this.refresh();
     }
+  }
+
+  /** Fetching for "Rebase on main", so its button shows it. */
+  fetchingBase = $state(false);
+
+  /**
+   * Rebase onto the default branch (see server/base.ts), fetched first so it's the latest. If the
+   * fetch fails, the toast says so and offers to rebase onto what was fetched before.
+   */
+  async rebaseOnBase() {
+    if (this.busy || this.fetchingBase) return;
+    const base = this.repo?.base;
+    if (!base) return toast("There's no default branch to rebase on, or you're on it.");
+    if (this.repo?.push) {
+      this.fetchingBase = true;
+      const fetched = await this.fetchRemote(true).finally(() => (this.fetchingBase = false));
+      if (!fetched) {
+        toast(`${base.name} may not be the latest: ${this.fetchError}`, {
+          kind: 'error',
+          timeout: 15_000,
+          action: { label: 'Rebase anyway', run: () => this.rebaseOnBaseNow() },
+        });
+        return;
+      }
+    }
+    return this.rebaseOnBaseNow();
+  }
+
+  private rebaseOnBaseNow() {
+    const base = this.repo?.base;
+    if (!base) return toast("There's no default branch to rebase on, or you're on it.");
+    if (!base.behind) return toast(`${this.repo?.branch} already has everything on ${base.name}.`);
+    return this.sync('rebase', { branch: base.name });
   }
 
   /** Fetch in the background when the last fetch (or attempt) is older than `ms`. */

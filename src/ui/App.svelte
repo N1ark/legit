@@ -35,7 +35,6 @@
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { remember } from './lib/desktop.ts';
-  import { rebaseOnBase } from './lib/integrate.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -53,7 +52,7 @@
     undo: () => (typing() ? document.execCommand('undo') : app.undo()),
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
-    rebaseOnBase,
+    rebaseOnBase: () => app.rebaseOnBase(),
   };
 
   onMount(() => {
