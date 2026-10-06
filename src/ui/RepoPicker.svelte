@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The repository name in the header. In the desktop app it opens the recent repositories:
-  // pick one to open (or focus) its window, or open another. In the browser it's just the name.
-  import { Highlight, IS_TAURI, IconButton, Popover, rank, toast } from 'purr';
+  // The repository name in the header. In the desktop app it opens the recent repositories: pick
+  // one to switch this window to it (⌘ for a new window; one already open elsewhere comes to the
+  // front), or open another. In the browser it's just the name.
+  import { Highlight, IS_TAURI, IconButton, Kbd, Popover, rank, toast } from 'purr';
   import { CaretDown, Check, FolderOpen, X } from 'purr/icons';
   import { app } from './lib/app.svelte.ts';
 
@@ -11,6 +12,8 @@
     /** "~/code/legit". */
     short: string;
     current: boolean;
+    /** Open in another window. */
+    elsewhere: boolean;
   }
 
   /** The desktop app's commands (src-tauri/src/main.rs `commands`). */
@@ -45,12 +48,12 @@
     load();
   }
 
-  async function choose(k: number) {
+  async function choose(k: number, newWindow = false) {
     const r = shown[k]?.item;
     open = false;
     try {
-      if (!r) await invoke('pick_repo');
-      else if (!r.current) await invoke('open_repo', { path: r.path });
+      if (!r) await invoke('pick_repo', { newWindow });
+      else if (!r.current) await invoke('open_repo', { path: r.path, newWindow });
     } catch (e) {
       toast.error(e);
     }
@@ -72,7 +75,7 @@
       listEl?.children[active]?.scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      choose(active);
+      choose(active, e.metaKey || e.ctrlKey);
     }
   }
 </script>
@@ -122,12 +125,13 @@
               class:current={r.current}
               role="option"
               aria-selected={k === active}
-              onclick={() => choose(k)}
+              onclick={(e) => choose(k, e.metaKey || e.ctrlKey)}
               onmousemove={() => (active = k)}
             >
               <span class="check">{#if r.current}<Check weight="bold" />{/if}</span>
               <span class="name"><Highlight text={r.name} {indices} /></span>
               <span class="path muted" title={r.path}>{r.short}</span>
+              {#if r.elsewhere}<span class="muted elsewhere" title="Open in another window, which comes to the front">open</span>{/if}
               <span class="forget">
                 <IconButton label="Remove from the list" size="sm" onclick={(e) => (e.stopPropagation(), forget(r))}>
                   <X />
@@ -141,13 +145,17 @@
             class:is-cursor={active === shown.length}
             role="option"
             aria-selected={active === shown.length}
-            onclick={() => choose(shown.length)}
+            onclick={(e) => choose(shown.length, e.metaKey || e.ctrlKey)}
             onmousemove={() => (active = shown.length)}
           >
             <span class="check"><FolderOpen /></span>
             <span class="name">Open Repository…</span>
           </li>
         </ol>
+        <p class="muted hint">
+          <span><Kbd hint="↩" /> switch this window</span>
+          <span><Kbd hint="⌘↩" /> or ⌘-click: open in a new window</span>
+        </p>
       </div>
     </Popover>
   {/if}
@@ -218,6 +226,24 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-sm);
+  }
+
+  .elsewhere {
+    font-size: var(--fs-xs);
+  }
+
+  .hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2) var(--sp-4);
+    margin-bottom: 0;
+    font-size: var(--fs-xs);
+  }
+
+  .hint span {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--gap-1);
   }
 
   .forget {
