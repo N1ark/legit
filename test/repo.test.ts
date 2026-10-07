@@ -145,13 +145,34 @@ test('the diff of what squashing would make: consecutive runs, and commits with 
   assert.deepEqual(files(await repo.diff(git('rev-parse', 'HEAD~1'))), files(d));
 });
 
+test('the combined diff of merges below the editable history: each brings in its first-parent changes', async () => {
+  commit('base', { f: '1\n' });
+  git('checkout', '-qb', 'one');
+  commit('pr one', { a: 'a\n' });
+  git('checkout', '-q', '-');
+  git('merge', '-q', '--no-ff', '-m', 'merge one', 'one');
+  const m1 = git('rev-parse', 'HEAD');
+  commit('direct', { d: 'd\n' });
+  git('checkout', '-qb', 'two');
+  commit('pr two', { b: 'b\n' });
+  git('checkout', '-q', '-');
+  git('merge', '-q', '--no-ff', '-m', 'merge two', 'two');
+  const m2 = git('rev-parse', 'HEAD');
+  commit('top', { t: 't\n' });
+  const repo = await Repo.open(dir);
+  const files = (d: { files: { path: string }[] }) => d.files.map((f) => f.path);
+  // Both merges as one run, then just the two merges with the commit between them left out.
+  assert.deepEqual(files(await repo.diff(`q${m2}-${m1}`)), ['a', 'b', 'd']);
+  assert.deepEqual(files(await repo.diff(`q${m2}.${m1}`)), ['a', 'b']);
+});
+
 test('the diff of a squash that would conflict says so', async () => {
   commit('base', { f: '1\n' });
   const a = commit('a', { f: 'a\n' });
   commit('mid', { f: 'm\n' });
   const c = commit('c', { f: 'c\n' });
   const repo = await Repo.open(dir);
-  await assert.rejects(repo.diff(`q${c}.${a}`), /can't be squashed/);
+  await assert.rejects(repo.diff(`q${c}.${a}`), /can't be combined/);
 });
 
 test('reordering updates a clean working tree and refuses to clobber changes', async () => {

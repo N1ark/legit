@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, Kbd, matches } from 'purr';
-  import { ArrowsMerge, Trash } from 'purr/icons';
+  import { ArrowsMerge, Stack, Trash } from 'purr/icons';
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary } from '../shared/types.ts';
@@ -80,11 +80,19 @@
 
 <div class="view">
   <div class="top">
-    <h2><ArrowsMerge /> Squash {commits.length} commits</h2>
-    <p class="muted">
-      Changes are combined into <span class="mono sha">{shortSha(oldest)}</span>, the oldest selected commit, keeping its
-      author and date. Commits in between are replayed on top. Below is what the squashed commit changes.
-    </p>
+    {#if editable}
+      <h2><ArrowsMerge /> Squash {commits.length} commits</h2>
+      <p class="muted">
+        Changes are combined into <span class="mono sha">{shortSha(oldest)}</span>, the oldest selected commit, keeping its
+        author and date. Commits in between are replayed on top. Below is what the squashed commit changes.
+      </p>
+    {:else}
+      <h2><Stack /> {commits.length} commits</h2>
+      <p class="muted">
+        {app.repo?.blocked ? "They can't be rewritten right now" : "Some of them can't be rewritten"}, but here is
+        everything they change together.
+      </p>
+    {/if}
 
     <ol class="picked">
       {#each commits.toReversed() as c (c.sha)}
@@ -128,8 +136,6 @@
           <Trash /> Drop all
         </ConfirmButton>
       </div>
-    {:else}
-      <p class="muted">Some of the selected commits can't be rewritten.</p>
     {/if}
   </div>
 

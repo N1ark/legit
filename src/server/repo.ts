@@ -256,7 +256,7 @@ export class Repo {
         if (!('tree' in r)) {
           const subject = parseMessage(toUtf8(c.message)).subject;
           throw new GitError(
-            `These commits can't be squashed: ${c.sha.slice(0, 7)} "${subject}" conflicts with the ones before it, in ${r.conflicts.map(toUtf8).join(', ')}.`,
+            `These commits' changes can't be combined: ${c.sha.slice(0, 7)} "${subject}" conflicts with the ones before it, in ${r.conflicts.map(toUtf8).join(', ')}.`,
           );
         }
         tree = r.tree;

@@ -81,7 +81,7 @@
   });
 
   function ondragstart(e: DragEvent, sha: string) {
-    if (!app.selected.includes(sha)) app.select(sha);
+    if (!app.selected.includes(sha) || app.selection.some((c) => !c.editable)) app.select(sha);
     dragging = app.editable.map((c) => c.sha).filter((s) => app.selected.includes(s));
     e.dataTransfer!.effectAllowed = 'move';
     e.dataTransfer!.setData('text/plain', dragging.join(' '));
@@ -246,6 +246,27 @@
 
   .row.is-current {
     background: var(--theme-soft);
+  }
+
+  /* Adjacent selected rows read as one block, with a thin divider between them. */
+  .row.is-current:has(+ .row.is-current) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .row.is-current + .row.is-current {
+    position: relative;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  .row.is-current + .row.is-current::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: var(--gap-3);
+    right: var(--gap-3);
+    border-top: 1px solid color-mix(in oklch, var(--theme2) 14%, transparent);
   }
 
   .row.is-current .subject {

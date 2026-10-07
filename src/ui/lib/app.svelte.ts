@@ -324,21 +324,26 @@ class App {
     return this.sync('editStart', { sha });
   }
 
-  /** Click on a commit: plain, toggle (cmd/ctrl) or range (shift). */
+  /**
+   * Click on a commit: plain, toggle (cmd/ctrl) or range (shift). Several commits of the branch's own
+   * history can be picked, rewritable or not (the panel then shows their combined changes); a merge's
+   * commits listed under it are only picked one at a time.
+   */
   select(sha: string, mode: 'set' | 'toggle' | 'range' = 'set') {
     const c = this.bySha.get(sha);
     if (!c) return;
     this.stash = null;
-    if (mode === 'toggle' && c.editable) {
+    const anchor = this.anchor ? this.bySha.get(this.anchor) : undefined;
+    if (mode === 'toggle' && !c.side) {
       this.selected = this.selected.includes(sha)
         ? this.selected.filter((s) => s !== sha)
-        : [...this.selected.filter((s) => this.bySha.get(s)?.editable), sha];
+        : [...this.selected.filter((s) => this.bySha.has(s) && !this.bySha.get(s)!.side), sha];
       if (!this.selected.length) this.selected = [sha];
-    } else if (mode === 'range' && this.anchor && c.editable) {
-      const a = this.commits.findIndex((x) => x.sha === this.anchor);
-      const b = this.commits.findIndex((x) => x.sha === sha);
+    } else if (mode === 'range' && anchor && !anchor.side && !c.side) {
+      const a = this.commits.indexOf(anchor);
+      const b = this.commits.indexOf(c);
       const [lo, hi] = a < b ? [a, b] : [b, a];
-      this.selected = this.commits.slice(lo, hi + 1).filter((x) => x.editable).map((x) => x.sha);
+      this.selected = this.commits.slice(lo, hi + 1).filter((x) => !x.side).map((x) => x.sha);
       return;
     } else {
       this.selected = [sha];
@@ -363,10 +368,13 @@ class App {
       document.querySelector('[data-sha="work"]')?.scrollIntoView({ block: 'nearest' });
       return;
     }
-    const next = this.commits[Math.max(0, Math.min(this.commits.length - 1, i + dir))];
+    let j = Math.max(0, Math.min(this.commits.length - 1, i + dir));
+    // Extending the selection skips over an expanded merge's commits.
+    if (extend) while (this.commits[j]?.side && this.commits[j + dir]) j += dir;
+    const next = this.commits[j];
     if (!next) return;
     if (extend) {
-      if (!next.editable) return;
+      if (next.side || this.bySha.get(cur)?.side) return;
       const keep = this.selected.includes(next.sha);
       this.selected = keep ? this.selected.filter((s) => s !== cur) : [...this.selected, next.sha];
       this.anchor = next.sha;
@@ -378,7 +386,7 @@ class App {
   move(dir: number) {
     const list = this.editable.map((c) => c.sha);
     const picked = list.filter((s) => this.selected.includes(s));
-    if (!picked.length) return;
+    if (!picked.length || this.selection.some((c) => !c.editable)) return;
     const rest = list.filter((s) => !picked.includes(s));
     const first = list.indexOf(picked[0]);
     const at = Math.max(0, Math.min(rest.length, first + dir));
