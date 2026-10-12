@@ -74,7 +74,7 @@
   const PAD = 4;
   const GAP = 10;
   /** Block strip + old/new line numbers + marker; keep in sync with .gutter's CSS width. */
-  const GUTTER = 98;
+  const GUTTER = 118;
   /** How far beyond the viewport to render, so scrolling rarely shows unrendered rows. */
   const OVERSCAN = 1200;
   /** Files past the viewport whose contents are fetched ahead of time. */
@@ -851,7 +851,7 @@
     );
     background-size: 60% 19px;
     background-repeat: repeat-y;
-    background-position: 100px 0;
+    background-position: 120px 0;
     opacity: 0.6;
   }
 
@@ -877,7 +877,7 @@
     left: 0;
     display: flex;
     flex-shrink: 0;
-    width: 98px;
+    width: 118px;
     background: var(--code-bg);
     color: var(--muted);
     user-select: none;
@@ -897,8 +897,9 @@
     padding: 0;
   }
 
+  /* Wide enough to hit easily; it only shows a thin bar until hovered. */
   .gutter > .blk {
-    width: 10px;
+    width: 30px;
     padding: 0;
   }
 
@@ -909,8 +910,8 @@
   }
 
   .lines:not(.readonly) :is(.ta, .td) .blk:hover,
-  .line.blkhover .blk {
-    box-shadow: inset 4px 0 0 var(--theme2);
+  .lines:not(.readonly) .line.blkhover .blk {
+    box-shadow: inset 5px 0 0 var(--theme2);
   }
 
   .line.blkhover .gutter {
