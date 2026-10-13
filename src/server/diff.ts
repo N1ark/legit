@@ -1,9 +1,12 @@
 // Commit diffs: parsing git's patch output, and rebuilding files from a subset of changed lines.
 
 import { createHash } from 'node:crypto';
+import { lstat, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { CONTEXT_LINES, expandable, moreAfter } from '../shared/context.ts';
 import { comparePaths } from '../shared/paths.ts';
 import type { CommitDiff, DiffLine, DiffSummary, FileDiff, FileLines, HunkData, Hunk } from '../shared/types.ts';
+import { imageType } from '../shared/files.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -11,11 +14,13 @@ const TEXT_MODES = new Set(['100644', '100755', '000000']);
 
 /** Options shared by every diff we parse: raw records + patch, no renames, no external tools. */
 export const DIFF_ARGS = ['-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--full-index', '--patch-with-raw', `-U${CONTEXT_LINES}`];
+/** The same, with renamed files found (as `git diff` does): commits, squashes and what's staged. */
+export const RENAME_ARGS = DIFF_ARGS.map((a) => (a === '--no-renames' ? '-M' : a));
 
 /** Diff of a commit against its first parent. All strings are byte strings. */
 export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
   const c = await git.commit(sha);
-  const { out } = await git.run(['diff-tree', ...DIFF_ARGS, c.parents[0] ?? git.emptyTree, sha]);
+  const { out } = await git.run(['diff-tree', ...RENAME_ARGS, c.parents[0] ?? git.emptyTree, sha]);
   return parseDiff(out.toString('latin1'), sha);
 }
 
@@ -24,16 +29,26 @@ export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
  * patch), so a later request can check that the file is still exactly what was shown.
  */
 export function parseDiff(data: string, sha: string): CommitDiff {
-  // Raw section: ":oldmode newmode oldsha newsha status\0path\0" records, then "\0", then the patch.
+  // Raw section: ":oldmode newmode oldsha newsha status\0path\0" records (a rename or copy has
+  // the old path, then the new one), then "\0", then the patch.
   const files: FileDiff[] = [];
   let pos = 0;
   while (data[pos] === ':') {
     const metaEnd = data.indexOf('\0', pos);
-    const pathEnd = data.indexOf('\0', metaEnd + 1);
+    let pathEnd = data.indexOf('\0', metaEnd + 1);
     const [oldMode, newMode, oldSha, newSha, status] = data.slice(pos + 1, metaEnd).split(' ');
+    let path = data.slice(metaEnd + 1, pathEnd);
+    let oldPath: string | undefined;
+    if (status[0] === 'R' || status[0] === 'C') {
+      oldPath = path;
+      const end = data.indexOf('\0', pathEnd + 1);
+      path = data.slice(pathEnd + 1, end);
+      pathEnd = end;
+    }
     files.push({
-      path: data.slice(metaEnd + 1, pathEnd),
+      path,
       status: status[0] as FileDiff['status'],
+      ...(oldPath === undefined ? {} : { oldPath }),
       oldMode, newMode, oldSha, newSha,
       binary: false, partial: false, hunks: [], added: 0, removed: 0,
     });
@@ -47,13 +62,13 @@ export function parseDiff(data: string, sha: string): CommitDiff {
   for (const f of files) {
     // A working-tree file listed (stat-dirty) but no different has a record and no patch.
     const next = chunks[ci] ?? '';
-    if (!next.startsWith('diff --git "') && !next.startsWith(`diff --git a/${f.path} b/`)) {
+    if (!next.startsWith('diff --git "') && !next.startsWith(`diff --git a/${f.oldPath ?? f.path} b/`)) {
       f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).digest('hex');
       continue;
     }
     const mine = f.status === 'T' ? chunks.slice(ci, ci + 2) : chunks.slice(ci, ci + 1);
     ci += mine.length;
-    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).update(mine.join('\n'), 'latin1').digest('hex');
+    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(mine.join('\n'), 'latin1').digest('hex');
     let idx = 0;
     for (const chunk of mine) {
       const lines = chunk.split('\n');
@@ -112,9 +127,51 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
       }
       const { token: _, ...rest } = f;
       const grammar = syntax.get(f.path);
-      return { ...rest, path: toUtf8(f.path), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
+      return { ...rest, path: toUtf8(f.path), ...(f.oldPath === undefined ? {} : { oldPath: toUtf8(f.oldPath) }), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
     }),
   };
+}
+
+const absent = (sha: string) => !sha || /^0+$/.test(sha);
+/** The file on disk, for a working-tree side (its byte-string path). */
+const onDisk = (git: Git, path: string) => join(git.root, Buffer.from(path, 'latin1').toString('utf8'));
+
+/** A file's bytes on one side of a diff: its blob, or the file on disk for working-tree changes; null where there's none. */
+export async function fileBytes(git: Git, f: FileDiff, side: 'old' | 'new'): Promise<Buffer | null> {
+  if (side === 'old' ? f.status === 'A' || absent(f.oldSha) : f.status === 'D') return null;
+  const sha = side === 'old' ? f.oldSha : f.newSha;
+  if (absent(sha)) return readFile(onDisk(git, f.path)).catch(() => null);
+  return (await git.readObjects([sha])).get(sha)?.data ?? null;
+}
+
+/** Sizes in bytes of binary files and images, on each side that has one, by file index. */
+export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { oldSize?: number; newSize?: number }>> {
+  const out = new Map<number, { oldSize?: number; newSize?: number }>();
+  const shas = new Set<string>();
+  const want = d.files.flatMap((f, k) => (f.binary || imageType(f.path) ? [k] : []));
+  for (const k of want) {
+    const f = d.files[k];
+    if (f.status !== 'A' && !absent(f.oldSha)) shas.add(f.oldSha);
+    if (f.status !== 'D' && !absent(f.newSha)) shas.add(f.newSha);
+  }
+  const sizes = new Map<string, number>();
+  if (shas.size) {
+    const { out: res } = await git.run(['cat-file', '--batch-check=%(objectname) %(objectsize)'], { input: [...shas].join('\n') + '\n' });
+    for (const l of res.toString('latin1').split('\n')) {
+      const [sha, n] = l.split(' ');
+      if (/^\d+$/.test(n ?? '')) sizes.set(sha, +n);
+    }
+  }
+  for (const k of want) {
+    const f = d.files[k];
+    const s: { oldSize?: number; newSize?: number } = {};
+    if (f.status !== 'A' && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
+    if (f.status !== 'D') {
+      s.newSize = absent(f.newSha) ? await lstat(onDisk(git, f.path)).then((st) => st.size, () => undefined) : sizes.get(f.newSha);
+    }
+    out.set(k, s);
+  }
+  return out;
 }
 
 /** A modified file's old version (utf8 for display), for the lines between its hunks. */

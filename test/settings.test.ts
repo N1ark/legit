@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Git } from '../src/server/git.ts';
-import { effectiveSettings, globalSettingsFile, readSettings, repoSettingsFile, saveSettings } from '../src/server/settings.ts';
+import { displaySettings, effectiveSettings, globalSettingsFile, readSettings, repoSettingsFile, saveSettings } from '../src/server/settings.ts';
 import { env, setup } from './util.ts';
 
 const t = setup();
@@ -64,5 +64,20 @@ test('settings: saved per scope, cleaned, and applied global first then the repo
     writeFileSync(repoSettingsFile(git), '{oops');
     await assert.rejects(readSettings(git), /Couldn't read the settings in .*settings\.json/);
     assert.equal(readFileSync(repoSettingsFile(git), 'utf8'), '{oops');
+  });
+});
+
+test("display settings: the repo's win where set, else all repos", async () => {
+  await withHome(async () => {
+    const git = await Git.open(t.dir);
+    assert.deepEqual(displaySettings(await readSettings(git)), { wrap: 'none', wrapColumn: 100, guides: [] });
+    await saveSettings(git, { scope: 'global', settings: { wrap: 'column', wrapColumn: 80, guides: [100, 80, 80, -1, 'x'] } });
+    await saveSettings(git, { scope: 'repo', settings: { wrap: 'window', wrapColumn: 0 } });
+    let s = await readSettings(git);
+    assert.deepEqual(s.global, { collapse: [], syntax: [], wrap: 'column', wrapColumn: 80, guides: [80, 100] });
+    assert.deepEqual(displaySettings(s), { wrap: 'window', wrapColumn: 80, guides: [80, 100] });
+    await saveSettings(git, { scope: 'repo', settings: { wrap: 'nope', guides: [] } });
+    s = await readSettings(git);
+    assert.deepEqual(displaySettings(s), { wrap: 'column', wrapColumn: 80, guides: [] });
   });
 });

@@ -6,7 +6,7 @@ import { app } from './app.svelte.ts';
 
 /**
  * "Merge <branch> into <current>" (`git merge`, which may stop on conflicts to resolve here)
- * and "Rebase <current> onto <branch>" (in memory, refused on any conflict). `name` is a local
+ * and "Rebase <current> onto <branch>" (in memory, or stopping at each conflict). `name` is a local
  * or remote-tracking branch; `close` runs first, e.g. to close the branch picker.
  */
 export function integrateEntries(name: string, current: boolean, close?: () => void): MenuEntry[] {
@@ -29,7 +29,7 @@ export function integrateEntries(name: string, current: boolean, close?: () => v
       label: `Rebase ${here} onto ${name}`,
       icon: GitPullRequest,
       disabled: !!why || app.busy,
-      note: why ?? `Replays the commits only on ${here} on top of ${name}. Refused if anything conflicts.`,
+      note: why ?? `Replays the commits only on ${here} on top of ${name}, stopping at each one that conflicts.`,
       run: go('rebase'),
     },
   ];

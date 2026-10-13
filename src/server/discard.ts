@@ -288,8 +288,16 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
       if (isBig(before.get(f.path)!)) throw new GitError(`${toUtf8(f.path)} is too big to discard line by line; discard the whole file. Nothing was discarded.`);
     }
 
+    // A renamed file goes back to its old path, which must be free.
+    const renamed = whole.filter((f) => f.oldPath !== undefined);
+    for (const f of renamed) {
+      const d = await readDisk(abs(git, f.oldPath!));
+      if (d.kind !== 'missing') throw new GitError(`${toUtf8(f.path)} was renamed from ${toUtf8(f.oldPath!)}, which is there again; nothing was discarded.`);
+      before.set(f.oldPath!, d);
+    }
+
     // What each file becomes (HEAD's version, or the changes not discarded), and its index entry.
-    const paths = files.map((f) => f.path);
+    const paths = [...files.map((f) => f.path), ...renamed.map((f) => f.oldPath!)];
     const indexBefore = await indexEntries(git, paths);
     const indexAfter = new Map<string, IndexEntry>();
     const after = new Map<string, Entry>();
@@ -297,9 +305,14 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
     const headOf = (f: FileDiff): IndexEntry => (f.untracked || /^0+$/.test(f.oldSha) ? null : { mode: f.oldMode, sha: f.oldSha });
     for (const f of whole) {
       const h = headOf(f);
-      if (!f.untracked) indexAfter.set(f.path, h);
-      if (h) records.push(`${h.mode} ${h.sha}\t${f.path}`);
-      else after.set(f.path, null);
+      const at = f.oldPath ?? f.path;
+      if (f.oldPath !== undefined) {
+        indexAfter.set(f.path, null);
+        after.set(f.path, null);
+      }
+      if (!f.untracked) indexAfter.set(at, h);
+      if (h) records.push(`${h.mode} ${h.sha}\t${at}`);
+      else after.set(at, null);
     }
     const heads = await git.readObjects(partial.flatMap(({ f }) => (headOf(f) ? [f.oldSha] : [])));
     for (const { f, picked } of partial) {

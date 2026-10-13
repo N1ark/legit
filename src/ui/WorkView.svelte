@@ -269,7 +269,7 @@
             summary={work.changes}
             sel={staged}
             readonly={false}
-            hint="Checked lines are staged: click a line, the strip beside a block, or a file's box. Right-click to discard."
+            hint="Checked lines are staged: click a line, the strip beside a block, or a file's box; drag down the line numbers for several. Right-click to discard."
             onstage={stage}
             changeActions={(f, line, block) => [
               {

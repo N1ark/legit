@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CommitDiff, FileDiff } from '../shared/types.ts';
-import { DIFF_ARGS, parseDiff, sortFiles } from './diff.ts';
+import { RENAME_ARGS, parseDiff, sortFiles } from './diff.ts';
 import type { Git } from './git.ts';
 import { type Position, type Staging, analyse, emit, positions } from './staging.ts';
 
@@ -19,7 +19,7 @@ const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 
 /** Files with staged changes, unstaged changes, and untracked files. */
 export async function workCounts(git: Git): Promise<{ staged: number; unstaged: number; untracked: number }> {
-  const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=normal', '--no-renames'], {
+  const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=normal'], {
     env: NO_LOCKS,
     allowFail: true,
   });
@@ -54,11 +54,15 @@ export interface LineStaging {
 }
 const lineStaging = new WeakMap<FileDiff, LineStaging>();
 
-/** Paths in a `--raw -z` listing, with their records. */
+/** Paths in a `--raw -z` listing, with their records; a rename's under its new path, with its old one last. */
 function rawRecords(out: Buffer): Map<string, string[]> {
   const parts = out.toString('latin1').split('\0');
   const map = new Map<string, string[]>();
-  for (let k = 0; k + 1 < parts.length; k += 2) map.set(parts[k + 1], parts[k].slice(1).split(' '));
+  for (let k = 0; k + 1 < parts.length; k += 2) {
+    const rec = parts[k].slice(1).split(' ');
+    if (rec[4]?.[0] === 'R' || rec[4]?.[0] === 'C') map.set(parts[k + 2], [...rec, parts[++k]]);
+    else map.set(parts[k + 1], rec);
+  }
   return map;
 }
 
@@ -76,8 +80,8 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const [tree, cached, files, others] = await Promise.all([
     // Unquoted paths, so each patch's header names its file (see parseDiff).
-    git.run(['-c', 'core.quotePath=false', 'diff-index', ...DIFF_ARGS, 'HEAD'], { env: NO_LOCKS }),
-    git.run(['diff-index', '--cached', '-r', '-z', '--no-renames', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
+    git.run(['-c', 'core.quotePath=false', 'diff-index', ...RENAME_ARGS, 'HEAD'], { env: NO_LOCKS }),
+    git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-files', '-r', '-z', '--no-renames', '--raw'], { env: NO_LOCKS }),
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
   ]);
@@ -85,10 +89,15 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
   const records = rawRecords(cached.out);
   const staged = new Map<string, Staged>();
-  for (const [path, [, mode, , sha, status]] of records) staged.set(path, { mode, sha, gone: status === 'D' });
+  for (const [path, [, mode, , sha, status, from]] of records) {
+    staged.set(path, { mode, sha, gone: status === 'D' });
+    // A staged rename's old path is a staged deletion.
+    if (status[0] === 'R') staged.set(from, { mode: '000000', sha: '0'.repeat(sha.length), gone: true });
+  }
   const unstaged = new Set(rawRecords(files.out).keys());
   const untrackedPaths = new Set(others.out.toString('latin1').split('\0').filter(Boolean));
   const shown = new Set(d.files.map((f) => f.path));
+  const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
 
   const partly: FileDiff[] = [];
   for (const f of d.files) {
@@ -100,6 +109,9 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
       Object.assign(f, { status: 'M', newMode: f.oldMode, binary: false, partial: false, hunks: [], added: 0, removed: 0 });
       f.stage = 'some';
       f.unshown = "Removed from the index (committing deletes it from the repo) but still in your files.";
+    } else if (f.oldPath !== undefined && unstaged.has(f.oldPath)) {
+      f.stage = 'some';
+      f.unshown = 'Its new name is staged, but its old one is still in the index.';
     } else if (!unstaged.has(f.path)) {
       f.stage = 'all';
       f.staged = allLines(f);
@@ -112,7 +124,7 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
 
   // Staged changes the working tree has undone since: nothing to show but the file.
   for (const path of staged.keys()) {
-    if (shown.has(path) || untrackedPaths.has(path)) continue;
+    if (shown.has(path) || renamed.has(path) || untrackedPaths.has(path)) continue;
     const r = records.get(path)!;
     d.files.push({
       path,

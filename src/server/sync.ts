@@ -4,7 +4,7 @@
 //
 // Fast-forwards and rebases happen in memory and move HEAD once, carrying uncommitted changes
 // along like `git switch` (git refuses, changing nothing, if they'd be overwritten). A rebase
-// that would conflict is refused. A merge is a real `git merge`, which may stop on conflicts;
+// that would conflict becomes a real `git rebase`, which stops at each conflict. A merge is a real `git merge`, which may stop on conflicts;
 // it only starts from a clean working tree, so aborting it can always get back.
 
 import { existsSync } from 'node:fs';
@@ -16,6 +16,7 @@ import type { CommitDiff, Conflict, ConflictFile, EditStop, RepoState, SyncResul
 import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
+import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
 
 type Kind = Conflict['kind'];
@@ -185,7 +186,7 @@ export async function editStop(git: Git): Promise<EditStop | null> {
 // ---- fetch ----
 
 /** Network settings: never wait for a password or a host-key prompt nobody can answer. */
-async function networkEnv(git: Git): Promise<Record<string, string>> {
+export async function networkEnv(git: Git): Promise<Record<string, string>> {
   // GIT_TERMINAL_PROMPT=0 (set for every git call) covers HTTPS; this covers SSH, unless
   // the user set up their own SSH command.
   if (process.env.GIT_SSH_COMMAND || process.env.GIT_SSH) return {};
@@ -213,12 +214,12 @@ const fetches = new Map<string, Promise<void>>();
  * a local branch, the index or the working tree. Operations that use a remote-tracking ref
  * read it once, so a fetch landing midway can't make them act on a mix of old and new.
  */
-function fetchFrom(git: Git, remote: string): Promise<void> {
+export function fetchFrom(git: Git, remote: string): Promise<void> {
   const key = `${git.root}\0${remote}`;
   let p = fetches.get(key);
   if (!p) {
     p = (async () => {
-      const r = await git.run(['fetch', remote], { allowFail: true, timeout: 120_000, env: await networkEnv(git) });
+      const r = await runWithProgress(git, 'fetch', remote, ['fetch', remote], { allowFail: true, timeout: 120_000, env: await networkEnv(git) });
       if (r.code === 0) return;
       const err = r.err.trim();
       const auth = /terminal prompts disabled|could not read Username|Authentication failed|Permission denied|Host key verification failed/i.test(err);
@@ -282,7 +283,7 @@ export function mergeBranch(repo: Repo, req: { branch: string }): Promise<SyncRe
   return repo.exclusive(async () => integrate(repo, { ...(await branchRef(repo.git, req.branch)), how: 'merge', label: 'merge' }));
 }
 
-/** Replay the current branch's own commits onto `branch`, in memory; refused on any conflict. */
+/** Replay the current branch's own commits onto `branch`: in memory, or as a `git rebase` that stops on conflicts. */
 export function rebaseBranch(repo: Repo, req: { branch: string }): Promise<SyncResult> {
   return repo.exclusive(async () => integrate(repo, { ...(await branchRef(repo.git, req.branch)), how: 'rebase', label: 'rebase' }));
 }
@@ -329,7 +330,7 @@ async function integrate(repo: Repo, t: Target): Promise<SyncResult> {
  * overwritten. The old tip is backed up first, HEAD moves with a compare-and-swap, and the move
  * can be undone.
  */
-async function carry(repo: Repo, from: string, to: string, label: string) {
+export async function carry(repo: Repo, from: string, to: string, label: string) {
   const git = repo.git;
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const r = await git.run(['read-tree', '-m', '-u', from, to], { allowFail: true });
@@ -349,7 +350,7 @@ async function carry(repo: Repo, from: string, to: string, label: string) {
 
 /**
  * Replay the commits only on HEAD onto `target`, like `git rebase`, but in memory through
- * merge-tree: any conflict refuses the whole thing. Commits whose changes are already in
+ * merge-tree; if one conflicts, it's done again as a real `git rebase` that stops there. Commits whose changes are already in
  * `target` become empty and are dropped, as `git rebase` does.
  */
 async function rebase(repo: Repo, head: string, target: string, t: Target, here: string): Promise<SyncResult> {
@@ -377,6 +378,7 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   const out: string[] = [];
   const renamed: Record<string, string> = {};
   let dropped = 0;
+  let conflict: string | null = null;
   try {
     for (const c of commits) {
       const base = await git.treeOf(c.parents[0] ?? null);
@@ -385,7 +387,8 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
         tree = await repo.pickOrThrow(merger, base, parentTree, c);
       } catch (e) {
         if (!(e instanceof GitError)) throw e;
-        throw new GitError(`Rebasing ${here} onto ${t.name} would conflict. ${e.message} Merge instead to resolve the conflicts by hand.`);
+        conflict = e.message.replace(/ Nothing was changed\.$/, '');
+        break;
       }
       if (tree === parentTree && c.tree !== base) {
         dropped++;
@@ -401,10 +404,46 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   } finally {
     merger.close();
   }
+  if (conflict) return rebaseStopping(repo, head, target, t, here, conflict);
   if (out.length) await repo.verify(target, parent, out);
   await carry(repo, head, parent, t.label);
   const skipped = dropped ? ` (${plural(dropped, 'commit')} already there ${dropped === 1 ? 'was' : 'were'} dropped)` : '';
   return done(repo, `Rebased ${plural(out.length, 'commit')} of ${here} onto ${t.name}${skipped}.`, [parent], renamed);
+}
+
+/**
+ * A rebase that conflicts, as a real `git rebase`: it stops at each commit that conflicts for the
+ * conflict view to resolve, then continues (or aborts, back to where it was). Like a merge, it only
+ * starts from a working tree without changes to tracked files, so aborting gets back exactly.
+ */
+async function rebaseStopping(repo: Repo, head: string, target: string, t: Target, here: string, conflict: string): Promise<SyncResult> {
+  const git = repo.git;
+  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
+  const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+  if (status) {
+    throw new GitError(
+      `Rebasing ${here} onto ${t.name} conflicts. ${conflict} Resolving that means stopping at each conflicting commit, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
+    );
+  }
+  await repo.backup(head, t.label);
+  const r = await git.run(
+    ['-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false', 'rebase', '--no-autosquash', '--no-fork-point', target],
+    { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } },
+  );
+  const output = (r.err + r.out.toString('utf8')).trim();
+  if (inProgress(git) === 'rebase') {
+    const n = (await unmergedPaths(git)).size;
+    return done(
+      repo,
+      `Rebasing ${here} onto ${t.name} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.`,
+    );
+  }
+  const after = await repo.head();
+  if (r.code !== 0 || !after || after === head) {
+    throw new GitError(after === head ? `Rebase failed; nothing was changed.\n${output}` : `Rebase failed.\n${output}`);
+  }
+  await repo.record({ label: t.label, before: head, after });
+  return done(repo, `Rebased ${here} onto ${t.name}.`, [after]);
 }
 
 /**
@@ -517,8 +556,9 @@ export async function continueNow(repo: Repo, label?: string): Promise<SyncResul
     }
     const head = await repo.head();
     const branch = await opBranch(repo, kind);
-    // A rebase moves the branch from where it was before the rebase started.
-    const before = kind === 'rebase' ? (await readGitFile(git, `${rebaseDir(git)}/orig-head`)) || head : head;
+    // A rebase moves the branch from where it was before it started; so does a series of cherry-picks or reverts.
+    const start = kind === 'rebase' ? `${rebaseDir(git)}/orig-head` : kind === 'cherry-pick' || kind === 'revert' ? 'sequencer/head' : '';
+    const before = (start && (await readGitFile(git, start))) || head;
     if (before) await backupOnce(repo, before, kind, branch);
 
     const r = await git.run(CONTINUE[kind], { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } });

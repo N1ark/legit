@@ -362,10 +362,10 @@ test('push: publish, fast-forward, and force push only with consent and never ov
 
   // Publish a branch with no upstream.
   let st = await repo.state();
-  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: true, ahead: 2, behind: 0, rewritten: false });
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: true, ahead: 2, behind: 0, rewritten: false, tip: null });
   st = (await repo.push({})).state;
   assert.equal(remoteHead(), a);
-  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: false, ahead: 0, behind: 0, rewritten: false });
+  assert.deepEqual(st.push, { remote: 'origin', branch: 'main', publish: false, ahead: 0, behind: 0, rewritten: false, tip: a });
   await assert.rejects(repo.push({}), /up to date/);
 
   // Fast-forward.
@@ -378,7 +378,7 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   await repo.edit({ sha: a, subject: 'A', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
   st = await repo.state();
   assert.deepEqual([st.push?.ahead, st.push?.behind, st.push?.rewritten], [2, 2, true]);
-  await assert.rejects(repo.push({}), /needs a force push/);
+  await assert.rejects(repo.push({}), /has 2 commits that aren't on your branch.*force push to replace them/);
   assert.equal(remoteHead(), b);
   await repo.push({ force: true });
   assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
@@ -394,13 +394,45 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   og('push', '-q', 'origin', 'main');
   const theirs = og('rev-parse', 'HEAD');
   await repo.edit({ sha: git('rev-parse', 'HEAD'), subject: 'B2', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
-  await assert.rejects(repo.push({ force: true }), /haven't fetched/);
-  assert.equal(remoteHead(), theirs);
 
   // Fetching (without integrating) isn't enough either: --force-if-includes refuses.
-  git('fetch', '-q', 'origin');
-  await assert.rejects(repo.push({ force: true }), /never integrated/);
+  await assert.rejects(repo.push({ force: true }), (e: any) => e.code === 'not-fetched' && /since you last fetched/.test(e.message));
+  // Overwriting what was last fetched is leased on it, so it refuses too.
+  await assert.rejects(repo.push({ force: 'overwrite' }), (e: any) => e.code === 'not-fetched');
   assert.equal(remoteHead(), theirs);
+
+  // Fetching (without integrating) isn't enough for a safe force push: --force-if-includes refuses.
+  git('fetch', '-q', 'origin');
+  st = await repo.state();
+  assert.deepEqual([st.push?.rewritten, st.push?.tip], [false, theirs]);
+  await assert.rejects(repo.push({ force: true }), (e: any) => e.code === 'not-integrated' && /never on your branch/.test(e.message));
+  assert.equal(remoteHead(), theirs);
+  // Overwriting it needs the tip that was shown, and then replaces it.
+  await assert.rejects(repo.push({ force: 'overwrite', expect: a }), /changed since this was shown/);
+  await repo.push({ force: 'overwrite', expect: theirs });
+  assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
+
+  // Someone pushes again; "fetch and force push" overwrites what it fetched.
+  og('fetch', '-q');
+  og('reset', '-q', '--hard', 'origin/main');
+  writeFileSync(join(other, 'again'), 'x\n');
+  og('add', 'again');
+  og('commit', '-qm', 'again');
+  og('push', '-q', 'origin', 'main');
+  commit('mine', { h: '1\n' });
+  await assert.rejects(repo.push({}), (e: any) => !e.code && /Fetch, then pull them in/.test(e.message));
+  await assert.rejects(repo.push({ force: 'overwrite' }), (e: any) => e.code === 'not-fetched');
+  await repo.push({ force: 'fetch' });
+  assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
+
+  // Only behind (commits dropped here after pushing): a force push takes the remote back.
+  const head = git('rev-parse', 'HEAD');
+  git('reset', '-q', '--hard', 'HEAD~1');
+  st = await repo.state();
+  assert.deepEqual([st.push?.ahead, st.push?.behind], [0, 1]);
+  await assert.rejects(repo.push({}), /normal push would be refused/);
+  await repo.push({ force: 'overwrite', expect: head });
+  assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
 });
 
 test('stage/unstage lines and files touch only the index; commit runs hooks', async () => {

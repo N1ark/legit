@@ -1,13 +1,13 @@
 <script lang="ts">
-  // legit's settings: which files diffs collapse, and which tree-sitter grammar highlights
-  // which files. Each list has a part for this repo and one for all repos; a change is saved
-  // as you type (shortly after), and the open diff is shown again with it.
-  import { Button, IconButton, Modal, SettingGroup, SettingsLayout, toast } from 'purr';
-  import { ArrowsInLineVertical, Palette, Plus, Warning, X } from 'purr/icons';
-  import type { Scope, ScopeSettings, SettingsInfo } from '../shared/types.ts';
+  // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
+  // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
+  // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts.
+  import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, type HelpGroup } from 'purr';
+  import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Warning, X } from 'purr/icons';
+  import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, shortcuts }: { onclose: () => void; shortcuts: readonly HelpGroup[] } = $props();
 
   let section = $state('syntax');
   let info = $state.raw<SettingsInfo | null>(null);
@@ -18,13 +18,47 @@
     try {
       const i = await request<SettingsInfo>('/api/settings');
       info = i;
-      if (first) draft = { repo: i.repo, global: i.global };
+      if (first) {
+        draft = { repo: i.repo, global: i.global };
+        guides = { repo: columnsText(i.repo.guides), global: columnsText(i.global.guides) };
+      }
     } catch (e) {
       toast.error(e);
       if (first) onclose();
     }
   }
   load(true);
+
+  // Guide columns as typed: "80, 120"; empty is unset (as for all repos), "none" is none.
+  let guides = $state<Record<Scope, string>>({ repo: '', global: '' });
+  const columnsText = (c: number[] | undefined) => (c === undefined ? '' : c.length ? c.join(', ') : 'none');
+
+  function setGuides(scope: Scope) {
+    const text = guides[scope].trim();
+    if (!text) delete draft![scope].guides;
+    else draft![scope].guides = /^none$/i.test(text) ? [] : text.split(/[\s,]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    changed(scope);
+  }
+
+  const WRAPS: { id: Wrap; label: string }[] = [
+    { id: 'none', label: 'No wrap' },
+    { id: 'window', label: 'To the window' },
+    { id: 'column', label: 'At a column' },
+  ];
+  const wrapOptions = (scope: Scope) => (scope === 'repo' ? [{ id: 'inherit' as const, label: 'As for all repos' }, ...WRAPS] : WRAPS);
+
+  function setWrap(scope: Scope, w: Wrap | 'inherit') {
+    if (w === 'inherit') delete draft![scope].wrap;
+    else draft![scope].wrap = w;
+    changed(scope);
+  }
+
+  function setWrapColumn(scope: Scope, value: string) {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0) draft![scope].wrapColumn = n;
+    else delete draft![scope].wrapColumn;
+    changed(scope);
+  }
 
   const timers: Partial<Record<Scope, ReturnType<typeof setTimeout>>> = {};
 
@@ -63,7 +97,11 @@
       sections: [
         { id: 'syntax', label: 'Syntax highlighting', icon: Palette },
         { id: 'collapse', label: 'Collapsed files', icon: ArrowsInLineVertical },
+        { id: 'lines', label: 'Lines', icon: Columns },
       ],
+    },
+    {
+      sections: [{ id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard }],
     },
   ];
 </script>
@@ -128,6 +166,45 @@
           <code>highlights.scm</code>; a relative one is in the repo. Patterns without a slash match the file name at any
           depth; the last matching rule wins.
         </p>
+      {:else if section === 'lines'}
+        {#each SCOPES as { scope, title, description } (scope)}
+          <SettingGroup {title} description={description()}>
+            <SettingRow label="Long lines" sub="Scroll sideways, or wrap them" stack>
+              <Segmented
+                label="Long lines"
+                size="sm"
+                options={wrapOptions(scope)}
+                value={draft[scope].wrap ?? (scope === 'repo' ? 'inherit' : 'none')}
+                onchange={(w) => setWrap(scope, w)}
+              />
+            </SettingRow>
+            <SettingRow label="Wrap column" sub="Where “At a column” wraps (or the window, if narrower)" for="column-{scope}">
+              <input
+                class="field-input mono narrow"
+                id="column-{scope}"
+                type="number"
+                min="1"
+                placeholder={scope === 'repo' ? 'As for all repos' : '100'}
+                value={draft[scope].wrapColumn ?? ''}
+                oninput={(e) => setWrapColumn(scope, e.currentTarget.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Guides" sub="Vertical lines at these columns, e.g. 80, 100" for="guides-{scope}">
+              <input
+                class="field-input mono narrow"
+                id="guides-{scope}"
+                placeholder={scope === 'repo' ? 'As for all repos' : 'None'}
+                spellcheck="false"
+                bind:value={guides[scope]}
+                oninput={() => setGuides(scope)}
+              />
+            </SettingRow>
+          </SettingGroup>
+        {/each}
+        <p class="note muted">Leave a field empty for this repo to use the one for all repos; <code>none</code> turns it off here.</p>
+      {:else if section === 'shortcuts'}
+        <p class="note muted lead">Press <Kbd hint="?" /> anywhere to see these over the app.</p>
+        <ShortcutList groups={shortcuts} />
       {:else}
         {#each SCOPES as { scope, title, description } (scope)}
           <SettingGroup {title} description={description()}>
@@ -165,9 +242,11 @@
           to them. Patterns without a slash match the file name at any depth.
         </p>
       {/if}
-      <p class="note muted files">
-        Saved in <code>{info.files.repo}</code> (this repo) and <code>{info.files.global}</code> (all repos).
-      </p>
+      {#if section !== 'shortcuts'}
+        <p class="note muted files">
+          Saved in <code>{info.files.repo}</code> (this repo) and <code>{info.files.global}</code> (all repos).
+        </p>
+      {/if}
     </SettingsLayout>
   {/if}
 </Modal>
@@ -195,6 +274,10 @@
     flex: none;
   }
 
+  .narrow {
+    width: 200px;
+  }
+
   .problem {
     display: inline-flex;
     flex: none;
@@ -214,5 +297,9 @@
 
   .files {
     margin-top: var(--sp-3);
+  }
+
+  .lead {
+    margin: 0 0 var(--sp-4);
   }
 </style>

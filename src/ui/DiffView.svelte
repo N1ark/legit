@@ -1,7 +1,9 @@
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
-  // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
+  // loads, nothing is ever measured, and nothing jumps. (When long lines wrap, a file with lines
+  // wider than the wrap takes its height from its contents once they're in, keeping the view
+  // where it was; the code breaks anywhere, so a line's rows follow from its length.) Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
@@ -18,13 +20,18 @@
     variableRange,
   } from 'purr';
   import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
-  import { flushSync, onMount, untrack } from 'svelte';
+  import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
+  import { formatSize, imageType } from '../shared/files.ts';
   import type { DiffSummary, FileSummary, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
+  import ImageDiff from './ImageDiff.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
+  import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
+  import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
+  import { finder } from './lib/finder.svelte.ts';
   import {
     ADDED,
     type Expansion,
@@ -44,7 +51,7 @@
     summary,
     sel,
     readonly,
-    hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
+    hint = 'Pick lines to split out: click, shift-click, or drag the line numbers; the left edge picks whole blocks.',
     fileActions,
     tree = true,
     initial = null,
@@ -83,13 +90,15 @@
   const PAD = 4;
   const GAP = 10;
   /** Block strip + old/new line numbers + marker; keep in sync with .gutter's CSS width. */
-  const GUTTER = 98;
+  const GUTTER = 118;
   /** How far beyond the viewport to render, so scrolling rarely shows unrendered rows. */
   const OVERSCAN = 1200;
   /** Files past the viewport whose contents are fetched ahead of time. */
   const PREFETCH = 4;
   /** Unchanged lines one click on a gap's arrow shows. */
   const STEP = 20;
+  /** An image file's before and after, above its lines if it has any. */
+  const IMG = 320;
 
   // Which files are collapsed as generated, and their grammars, come from the settings: when those
   // change, the summary's fetched again and those two taken from it, in place (nothing else can change).
@@ -147,12 +156,47 @@
   // grows by a row per line typed into it and pushes the rows below down.
   let editing = $state<{ i: number; r: number; text: string; orig: string } | null>(null);
   let saving = $state(false);
-  const editRows = $derived(editing ? editing.text.split('\n').length : 1);
+
+  // Wrapping long lines (settings): at the columns that fit the diff, or at most at a given one.
+  let charWidth = $state(0);
+  let paneWidth = $state(0);
+  const cols = $derived.by(() => {
+    const { wrap, wrapColumn } = app.display;
+    if (wrap === 'none' || !charWidth || !paneWidth) return 0;
+    const fit = Math.max(20, Math.floor((paneWidth - GUTTER - 20) / charWidth) - 1);
+    return wrap === 'column' ? Math.min(wrapColumn, fit) : fit;
+  });
+  const editRows = $derived(
+    editing ? editing.text.split('\n').reduce((n, l) => n + wrappedRows(l, cols), 0) : 1,
+  );
 
   /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
   const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows;
-  const bodyHeight = (i: number) =>
-    files[i].rows ? rowCount(i) * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0) : NOTE;
+  /** Where each of file i's rows starts, in rows, when some of its lines wrap; null when none can. */
+  const wrapCache = new WeakMap<FileRows, { cols: number; at: Uint32Array }>();
+  function wrapped(i: number): Uint32Array | null {
+    const rows = contents[i];
+    if (!cols || !rows || files[i].width <= cols) return null;
+    let w = wrapCache.get(rows);
+    if (w?.cols !== cols) wrapCache.set(rows, (w = { cols, at: wrappedOffsets(rows, cols) }));
+    return w.at;
+  }
+  /** Rows row r of file i takes (the one being edited: what its field needs). */
+  function rowSpan(i: number, r: number): number {
+    if (editing?.i === i && editing.r === r) return editRows;
+    const at = wrapped(i);
+    return at ? at[r + 1] - at[r] : 1;
+  }
+  /** Y of row r in file i's lines. */
+  function rowY(i: number, r: number): number {
+    const at = wrapped(i);
+    const y = (at ? at[r] : r) * ROW;
+    return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
+  }
+  /** Height of what comes before file i's lines: its images. */
+  const lead = (i: number) => (imageType(files[i].path) && files[i].oldSha !== files[i].newSha ? IMG : 0);
+  const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
+  const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
@@ -163,8 +207,11 @@
 
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
-    const y = tops[i] + HEAD;
-    const [a, b] = fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+    const y = tops[i] + HEAD + lead(i);
+    const at = wrapped(i);
+    const [a, b] = at
+      ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
+      : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
     return out;
@@ -178,6 +225,29 @@
     if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
       view = { top, bottom: top + scroller.clientHeight };
     }
+    if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
+    const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
+    held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
+  }
+
+  // With wrapping, files change height as their contents come in (or the width changes): the
+  // file at the top of the view stays where it was.
+  let held: { k: number; offset: number } | null = null;
+  $effect(() => {
+    const t = tops;
+    const a = held;
+    if (!cols || !a || !scroller || a.k >= files.length) return;
+    const drift = t[a.k] + Math.min(a.offset, t[a.k + 1] - t[a.k]) - untrack(() => view.top);
+    if (Math.abs(drift) >= 1) {
+      scroller.scrollTop += drift;
+      measure();
+    }
+  });
+
+  function measureChars(el: HTMLElement) {
+    const read = () => (charWidth = el.getBoundingClientRect().width / 100);
+    read();
+    document.fonts?.ready.then(() => alive && read());
   }
 
   onMount(() => {
@@ -185,6 +255,7 @@
     scroller.addEventListener('scroll', measure, { passive: true });
     const ro = new ResizeObserver(measure);
     ro.observe(scroller);
+    ro.observe(filesEl);
     ro.observe(scroller.firstElementChild ?? filesEl);
     measure();
     if (initial) {
@@ -271,6 +342,82 @@
     hoverBlock = null;
     contents = { ...contents, [i]: rows };
     queueHighlight(i, rows);
+  }
+
+  // ⌘F: matches of the find bar's query in every file's lines, collapsed files included (all
+  // contents are loaded for it), in order. The bar is App's; this view is one of its sources.
+  const query = $derived(finder.open ? finder.query : '');
+  const found = $derived.by(() => {
+    const out: { i: number; r: number; start: number }[] = [];
+    if (!query) return out;
+    const sensitive = caseSensitive(query);
+    files.forEach((_, i) => {
+      const rows = contents[i];
+      if (!rows) return;
+      for (let r = 0; r < rows.kind.length; r++) {
+        if (isHead(rows.kind[r])) continue;
+        for (const start of matchesIn(rows.text[r], query, sensitive)) out.push({ i, r, start });
+      }
+    });
+    return out;
+  });
+  /** Match starts by file, then row. */
+  const hits = $derived.by(() => {
+    const out = new Map<number, Map<number, number[]>>();
+    for (const { i, r, start } of found) {
+      let f = out.get(i);
+      if (!f) out.set(i, (f = new Map()));
+      const at = f.get(r);
+      if (at) at.push(start);
+      else f.set(r, [start]);
+    }
+    return out;
+  });
+  const source = {
+    get el() {
+      return filesEl;
+    },
+    count: () => found.length,
+    show: (k: number) => showMatch(found[k]),
+  };
+  const hitNow = $derived(found[finder.currentIn(source)] ?? null);
+
+  onMount(() => finder.register(source));
+
+  // Searching needs every file's lines: load the ones not loaded yet.
+  $effect(() => {
+    if (!query) return;
+    const want = untrack(() => files.flatMap((f, i) => (f.rows && !contents[i] && !requested.has(i) ? [i] : [])));
+    if (!want.length) return;
+    for (const i of want) requested.add(i);
+    app.fileContents(summary.sha, want).then(
+      (res) => {
+        if (!alive) return;
+        const next = { ...contents };
+        for (const i of want) if (!next[i]) next[i] = buildRows(res[i], expandable(files[i]));
+        contents = next;
+        for (const i of want) queueHighlight(i, next[i]);
+      },
+      (e) => {
+        for (const i of want) requested.delete(i);
+        toast.error(e);
+      },
+    );
+  });
+
+  async function showMatch(m: { i: number; r: number; start: number } | undefined) {
+    if (!m || !scroller) return;
+    if (collapsed[m.i]) {
+      collapsed[m.i] = false;
+      flushSync();
+    }
+    const y = tops[m.i] + HEAD + lead(m.i) + rowY(m.i, m.r);
+    if (y < view.top + HEAD + ROW || y > view.bottom - 2 * ROW) {
+      scroller.scrollTop += y - view.top - (view.bottom - view.top) / 3;
+      measure();
+    }
+    await tick();
+    filesEl.querySelector('mark.now')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
   // The file tree, beside the diff when there's room for it.
@@ -391,6 +538,10 @@
     return el ? Number(el.dataset.r) : -1;
   }
 
+  // Picking starts on the gutter (line numbers, strip), or with a plain click on the code; a drag
+  // over the code selects its text instead, to copy.
+  let pending: { i: number; r: number; x: number; y: number } | null = null;
+
   function down(e: MouseEvent, i: number) {
     if ((e.target as HTMLElement).closest('.editor, .xp')) return;
     const r = rowOf(e);
@@ -400,8 +551,12 @@
     if (rows.kind[r] === HUNK) return toggleHunk(i, r);
     const ci = rows.ci[r];
     if (ci < 0) return;
-    e.preventDefault();
     const f = files[i];
+    if (!e.shiftKey && f.partial && !(e.target as HTMLElement).closest('.gutter')) {
+      pending = { i, r, x: e.clientX, y: e.clientY };
+      return;
+    }
+    e.preventDefault();
     if (!f.partial) return toggleFile(f);
     const s = sel[f.path];
     const touched = new Set<number>();
@@ -428,6 +583,29 @@
     touched.add(ci);
     drag = { path: f.path, on, last: ci, block: false, touched };
     anchor = { path: f.path, ci };
+  }
+
+  function up(e: MouseEvent) {
+    endDrag();
+    const p = pending;
+    pending = null;
+    if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) return;
+    const rows = contents[p.i];
+    const ci = rows?.ci[p.r] ?? -1;
+    if (ci < 0) return;
+    const path = files[p.i].path;
+    const s = sel[path];
+    anchor = { path, ci };
+    // A line whose staged version is neither side's is staged with the rest of its block.
+    if (onstage && mixed.get(path)?.has(ci) && !s.has(ci)) {
+      const [a, b] = blockAt(rows, p.r);
+      const touched = new Set<number>();
+      setRange(path, rows.ci[a], rows.ci[b], true, touched);
+      return stageLines(path, touched, true);
+    }
+    const on = !s.has(ci);
+    on ? s.add(ci) : s.delete(ci);
+    stageLines(path, [ci], on);
   }
 
   function over(e: MouseEvent, i: number) {
@@ -589,15 +767,24 @@
     ]);
   }
 
-  const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed' };
-  const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined };
+  /** "12.3 KB → 14.1 KB", or the one side there is. */
+  function sizes(f: FileSummary): string {
+    const [a, b] = [f.oldSize, f.newSize].map((n) => (n === undefined ? null : formatSize(n)));
+    return a && b ? `${a} → ${b}` : b ? `added, ${b}` : a ? `deleted, ${a}` : '';
+  }
+
+  const imageUrl = (i: number, side: 'old' | 'new') => `/api/diff/${summary.sha}/image?i=${i}&side=${side}`;
+
+  const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed', R: 'renamed', C: 'copied' };
+  const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined, R: undefined, C: undefined };
   const MARK = [' ', ' ', '+', '-'];
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
-<svelte:window onmouseup={endDrag} />
+<svelte:window onmouseup={up} />
 
 <div class="diff">
+  <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
   <div class="summary muted">
     <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
     <span class="add">+{totals.a}</span>
@@ -655,8 +842,11 @@
               <Twisty open={!collapsed[i]} size={10} />
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <span class="path mono" title={f.status === 'D' ? f.path : `${f.path}\nDouble-click to open in Zed`} ondblclick={() => openFile(i)}
-              >{f.path}</span
+            <span
+              class="path mono"
+              title={(f.oldPath ? `${f.oldPath} → ${f.path}` : f.path) + (f.status === 'D' ? '' : '\nDouble-click to open in Zed')}
+              ondblclick={() => openFile(i)}
+              >{#if f.oldPath}<span class="old">{f.oldPath}</span> <span class="muted">→</span>{' '}{/if}{f.path}</span
             >
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
@@ -677,21 +867,38 @@
           </div>
 
           {#if !collapsed[i]}
-            {#if !f.rows}
+            {#if lead(i)}
+              {@const kind = f.path.slice(f.path.lastIndexOf('.') + 1).toUpperCase()}
+              <ImageDiff
+                before={f.status === 'A' ? null : imageUrl(i, 'old')}
+                after={f.status === 'D' ? null : imageUrl(i, 'new')}
+                note={sizes(f) ? `${kind} · ${sizes(f)}` : kind}
+                height={IMG}
+                last={!f.rows}
+              />
+            {/if}
+            {#if !f.rows && !lead(i)}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
-                {onstage && f.unshown ? f.unshown : f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
+                {onstage && f.unshown
+                  ? f.unshown
+                  : f.oldPath && f.oldSha === f.newSha && f.oldMode === f.newMode
+                  ? `${statusLabel[f.status][0].toUpperCase()}${statusLabel[f.status].slice(1)}, no changes`
+                  : f.binary ? `Binary file${sizes(f) ? ` · ${sizes(f)}` : ''}`
+                  : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
-            {:else}
-              <div class="body" class:loading={!rows} style:height="{bodyHeight(i)}px">
+            {:else if f.rows}
+              <div class="body" class:loading={!rows} style:height="{linesHeight(i)}px">
                 {#if rows}
                   {@const shown = rowRange(i)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="lines mono"
                     class:readonly
-                    style:top="{(shown[0] ?? 0) * ROW}px"
-                    style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
+                    class:wrap={cols > 0}
+                    style:--cols={cols}
+                    style:top="{rowY(i, shown[0] ?? 0)}px"
+                    style:min-width="max(100%, calc({GUTTER + 20}px + {cols ? Math.min(cols, f.width) : f.width}ch))"
                     onmousedown={(e) => down(e, i)}
                     onmouseover={(e) => over(e, i)}
                     onmouseleave={() => (hoverBlock = null)}
@@ -699,6 +906,9 @@
                     oncontextmenu={(e) => openMenu(e, i)}
                     onfocus={() => {}}
                   >
+                    {#each app.display.guides as col (col)}
+                      <span class="guide" style:left="calc({GUTTER + 8}px + {col}ch)"></span>
+                    {/each}
                     {#each shown as r (r)}
                       {#if isHead(rows.kind[r])}
                         {@const k = rows.gap[r]}
@@ -739,7 +949,7 @@
                           class:mixed={onstage && ci >= 0 && !sel[f.path].has(ci) && mixed.get(f.path)?.has(ci)}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
-                          style:height={edit ? `${editRows * ROW}px` : undefined}
+                          style:height={edit || cols ? `${rowSpan(i, r) * ROW}px` : undefined}
                           data-r={r}
                         >
                           <span class="gutter"
@@ -753,7 +963,7 @@
                               ><textarea
                                 class="editor"
                                 aria-label="Line {rows.n[r]}"
-                                wrap="off"
+                                wrap={cols ? 'soft' : 'off'}
                                 spellcheck="false"
                                 readonly={saving}
                                 bind:value={edit.text}
@@ -762,7 +972,9 @@
                                 {@attach attachEditor}
                               ></textarea></span
                             >{:else}<span class="code"
-                            >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
+                            >{#if hits.get(i)?.has(r)}{#each markSegments(tok ? segments(tok, r, rows.text[r]) : [{ t: rows.text[r], c: '' }], hits.get(i)!.get(r)!, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) as seg}{#if seg.m}<mark
+                                    class={['hit', seg.m === 2 && 'now', seg.c]}>{seg.t}</mark
+                                  >{:else if seg.c}<span class={seg.c}>{seg.t}</span>{:else}{seg.t}{/if}{/each}{:else if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
                                     >{seg.t}</span
                                   >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
                                 class="eof"
@@ -870,6 +1082,10 @@
     white-space: nowrap;
   }
 
+  .path .old {
+    color: var(--muted);
+  }
+
   .spacer {
     flex: 1;
   }
@@ -912,8 +1128,15 @@
     );
     background-size: 60% 19px;
     background-repeat: repeat-y;
-    background-position: 100px 0;
+    background-position: 120px 0;
     opacity: 0.6;
+  }
+
+  .measure {
+    position: absolute;
+    visibility: hidden;
+    font-size: var(--fs-sm);
+    white-space: pre;
   }
 
   .lines {
@@ -935,15 +1158,26 @@
 
   .gutter {
     position: sticky;
+    z-index: 1;
     left: 0;
     display: flex;
     flex-shrink: 0;
-    width: 98px;
+    width: 118px;
     background: var(--code-bg);
     color: var(--muted);
     user-select: none;
     font-size: var(--fs-xs);
     box-shadow: inset -1px 0 0 var(--border);
+  }
+
+  /* A guide column, under the gutter when scrolled sideways. */
+  .guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-strong);
+    pointer-events: none;
   }
 
   .gutter > span {
@@ -958,8 +1192,9 @@
     padding: 0;
   }
 
+  /* Wide enough to hit easily; it only shows a thin bar until hovered. */
   .gutter > .blk {
-    width: 10px;
+    width: 30px;
     padding: 0;
   }
 
@@ -970,8 +1205,8 @@
   }
 
   .lines:not(.readonly) :is(.ta, .td) .blk:hover,
-  .line.blkhover .blk {
-    box-shadow: inset 4px 0 0 var(--theme2);
+  .lines:not(.readonly) .line.blkhover .blk {
+    box-shadow: inset 5px 0 0 var(--theme2);
   }
 
   .line.blkhover .gutter {
@@ -985,6 +1220,25 @@
   .code {
     padding: 0 12px 0 8px;
     flex: 1;
+  }
+
+  /* Wrapping: the code breaks anywhere at --cols columns, so each line's rows are known. */
+  .lines.wrap .line .code {
+    flex: none;
+    box-sizing: content-box;
+    width: calc(var(--cols) * 1ch);
+    white-space: break-spaces;
+    word-break: break-all;
+  }
+
+  .lines.wrap .line.editing .code {
+    padding: 0 12px 0 8px;
+  }
+
+  .lines.wrap .hunk .code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .hunk {
@@ -1060,9 +1314,14 @@
     color: var(--del);
   }
 
-  .lines:not(.readonly) .ta,
-  .lines:not(.readonly) .td {
+  .lines:not(.readonly) :is(.ta, .td) .gutter {
     cursor: pointer;
+  }
+
+  /* Text that isn't the file's stays out of a copy. */
+  .hunk .code,
+  .eof {
+    user-select: none;
   }
 
   .lines:not(.readonly) .ta:not(.sel):hover .gutter,
@@ -1112,6 +1371,7 @@
     border-radius: 0;
     resize: none;
     overflow: hidden;
+    box-sizing: border-box;
     font: inherit;
     line-height: 19px;
     white-space: pre;
@@ -1122,8 +1382,24 @@
     outline: none;
   }
 
+  .lines.wrap .editor {
+    white-space: break-spaces;
+    word-break: break-all;
+  }
+
   .editor[readonly] {
     opacity: 0.6;
+  }
+
+  .hit {
+    border-radius: var(--radius-sm);
+    background: var(--theme-mid);
+    color: inherit;
+  }
+
+  .hit.now {
+    background: var(--theme2);
+    color: var(--on-accent2);
   }
 
   .eof {

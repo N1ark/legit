@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Scope, ScopeSettings, Settings } from '../shared/types.ts';
+import type { DisplaySettings, Scope, ScopeSettings, Settings } from '../shared/types.ts';
 import type { Git } from './git.ts';
 import { GitError } from './git.ts';
 
@@ -27,11 +27,26 @@ const empty = (): ScopeSettings => ({ collapse: [], syntax: [] });
 export function clean(s: unknown): ScopeSettings {
   const o = (s && typeof s === 'object' ? s : {}) as Record<string, unknown>;
   const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '');
-  return {
+  const column = (x: unknown) => (typeof x === 'number' && Number.isInteger(x) && x > 0 && x <= 1000 ? x : undefined);
+  const out: ScopeSettings = {
     collapse: (Array.isArray(o.collapse) ? o.collapse : []).map(str).filter(Boolean),
     syntax: (Array.isArray(o.syntax) ? o.syntax : [])
       .map((r) => ({ pattern: str(r?.pattern), grammar: str(r?.grammar) }))
       .filter((r) => r.pattern && r.grammar),
+  };
+  if (o.wrap === 'none' || o.wrap === 'window' || o.wrap === 'column') out.wrap = o.wrap;
+  const wrapColumn = column(o.wrapColumn);
+  if (wrapColumn) out.wrapColumn = wrapColumn;
+  if (Array.isArray(o.guides)) out.guides = [...new Set(o.guides.map(column).filter((x) => x !== undefined))].sort((a, b) => a - b);
+  return out;
+}
+
+/** How diffs are shown: the repo's choices, else those for all repos, else no wrapping and no guides. */
+export function displaySettings(s: Settings): DisplaySettings {
+  return {
+    wrap: s.repo.wrap ?? s.global.wrap ?? 'none',
+    wrapColumn: s.repo.wrapColumn ?? s.global.wrapColumn ?? 100,
+    guides: s.repo.guides ?? s.global.guides ?? [],
   };
 }
 

@@ -133,21 +133,27 @@ export function finishEdit(repo: Repo): Promise<SyncResult> {
 /** Stop editing without changing anything: the rebase is aborted, after the edits are saved. */
 export function cancelEdit(repo: Repo): Promise<SyncResult> {
   return repo.exclusive(async () => {
-    if (!(await editStop(repo.git))) throw new GitError('No commit is being edited (any more); nothing was changed.');
+    const stop = await editStop(repo.git);
+    if (!stop) throw new GitError('No commit is being edited (any more); nothing was changed.');
     const res = await abortNow(repo, await newFiles(repo));
     res.message = res.message.replace(/^Aborted the rebase\./, 'Stopped editing; nothing was changed.');
+    res.focus = [stop.sha];
     return res;
   });
 }
 
-/** The edits so far (tracked files, and files made while editing) as a snapshot for the diff view. */
-export async function editChanges(repo: Repo): Promise<CommitDiff> {
+/**
+ * The edits so far (tracked files, and files made while editing) as a snapshot for the diff view;
+ * with `whole`, the commit with them, as finishing would make it (from its parent).
+ */
+export async function editChanges(repo: Repo, whole = false): Promise<CommitDiff> {
   await repo.idle();
   const git = repo.git;
   const stop = await editStop(git);
   if (!stop) throw new GitError('No commit is being edited.');
   const paths = [...new Set([...(await changedPaths(git)), ...(await newFiles(repo))])];
   const tree = await worktreeTree(git, stop.sha, paths);
-  const { out } = await git.run(['diff-tree', ...DIFF_ARGS, await git.treeOf(stop.sha), tree]);
-  return repo.snapshot('edit', parseDiff(out.toString('latin1'), ''));
+  const base = whole ? ((await git.commit(stop.sha)).parents[0] ?? null) : stop.sha;
+  const { out } = await git.run(['diff-tree', ...DIFF_ARGS, await git.treeOf(base), tree]);
+  return repo.snapshot(whole ? 'edit-whole' : 'edit', parseDiff(out.toString('latin1'), ''));
 }

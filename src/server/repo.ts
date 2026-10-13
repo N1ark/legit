@@ -13,12 +13,13 @@ import type {
 } from '../shared/types.ts';
 import { baseBranch } from './base.ts';
 import { switchBranch } from './branches.ts';
-import { DIFF_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
+import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
+import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
-import { syncState } from './sync.ts';
+import { fetchFrom, networkEnv, syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
 import { stagingOf, workCounts, workDiff } from './work.ts';
 import { emit, restage } from './staging.ts';
@@ -51,10 +52,12 @@ interface Move {
   after: string;
   /** Only HEAD moves; the index and working tree are left as they are (commit, amend, uncommit). */
   soft?: boolean;
+  /** Another branch moved (refs/heads/<name>), not HEAD: commits copied to it. */
+  ref?: string;
 }
 
 /** What the commit list shows of a commit. `local`: SHAs not on any remote-tracking branch. */
-function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
+export function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
   const a = parseIdent(toUtf8(c.author));
   return {
     sha: c.sha,
@@ -135,8 +138,8 @@ export class Repo {
       head,
       commits: [],
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
-      canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
-      canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
+      canUndo: await this.applies(this.stacksFor(branch || null).undo.at(-1), 'after', head),
+      canRedo: await this.applies(this.stacksFor(branch || null).redo.at(-1), 'before', head),
       push,
       github: pickGithubRepo(remotes, push?.remote),
       work: await workCounts(this.git),
@@ -265,7 +268,7 @@ export class Repo {
     } finally {
       merger.close();
     }
-    const { out } = await this.git.run(['diff-tree', ...DIFF_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
+    const { out } = await this.git.run(['diff-tree', ...RENAME_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
     return parseDiff(out.toString('latin1'), key);
   }
 
@@ -626,6 +629,8 @@ export class Repo {
         if (!f.partial) throw new GitError(`${toUtf8(f.path)} can only be picked as a whole file.`);
         partial.push(f);
       }
+      // A renamed file moves with any of its changes (alone, when it has none).
+      if (f.status === 'R' && (all || count > 0)) records.push(`0 ${zero}\t${f.oldPath}`);
     }
     const oldBlobs = await this.git.readObjects(partial.filter((f) => f.status !== 'A').map((f) => f.oldSha));
     for (const f of partial) {
@@ -710,13 +715,28 @@ export class Repo {
     });
   }
 
+  /** `m` can be undone (`side` 'after') or redone ('before'): what it moved is still where it left it. */
+  private async applies(m: Move | undefined, side: 'before' | 'after', head: string | null): Promise<boolean> {
+    if (!m) return false;
+    if (!m.ref) return m[side] === head;
+    return (await this.git.text(['rev-parse', '-q', '--verify', m.ref], { allowFail: true })) === m[side];
+  }
+
+  /** Move another branch from `from` to `to` (after a backup of `from`), with a compare-and-swap. */
+  async moveRef(ref: string, from: string, to: string, label: string) {
+    await this.backup(from, label, ref.replace(/^refs\/heads\//, ''));
+    const r = await this.git.run(['update-ref', '-m', `legit: ${label}`, ref, to, from], { allowFail: true });
+    if (r.code !== 0) throw new GitError(`${ref.replace(/^refs\/heads\//, '')} moved in the meantime; nothing was changed. ${r.err.trim()}`);
+  }
+
   undo(): Promise<OpResult> {
     return this.exclusive(async () => {
       const h = await this.stacks();
       const m = h.undo.at(-1);
       const head = await this.head();
-      if (!m || m.after !== head) throw new GitError('Nothing to undo.');
-      if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
+      if (!(await this.applies(m, 'after', head)) || !m) throw new GitError('Nothing to undo.');
+      if (m.ref) await this.moveRef(m.ref, m.after, m.before, `undo ${m.label}`);
+      else if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
       else await this.moveHead(m.after, m.before, `undo ${m.label}`);
       h.redo.push(h.undo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
@@ -728,8 +748,9 @@ export class Repo {
       const h = await this.stacks();
       const m = h.redo.at(-1);
       const head = await this.head();
-      if (!m || m.before !== head) throw new GitError('Nothing to redo.');
-      if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
+      if (!(await this.applies(m, 'before', head)) || !m) throw new GitError('Nothing to redo.');
+      if (m.ref) await this.moveRef(m.ref, m.before, m.after, `redo ${m.label}`);
+      else if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
       else await this.moveHead(m.before, m.after, `redo ${m.label}`);
       h.undo.push(h.redo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
@@ -850,15 +871,23 @@ export class Repo {
         else records.push(`${s.mode} ${this.git.writeObject('blob', Buffer.from(next, 'latin1'))}\t${f.path}`);
       }
       await this.git.flush();
+      // A renamed file's old path goes with it: out of the index when it's staged, back when it's not.
+      const olds = (list: FileDiff[]) => list.flatMap((f) => (f.oldPath === undefined ? [] : [{ ...f, path: f.oldPath }]));
       if (add.length) {
         await this.git.run(['--literal-pathspecs', 'add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
           input: Repo.pathspecs(add),
         });
+        const gone = olds(add);
+        if (gone.length) {
+          await this.git.run(['--literal-pathspecs', 'rm', '-q', '--cached', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+            input: Repo.pathspecs(gone),
+          });
+        }
       }
       if (reset.length) {
         await this.git.run(
           ['--literal-pathspecs', 'restore', '--staged', '--source=HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'],
-          { input: Repo.pathspecs(reset) },
+          { input: Repo.pathspecs([...reset, ...olds(reset)]) },
         );
       }
       if (records.length) await this.updateIndex(records);
@@ -948,14 +977,17 @@ export class Repo {
     if (upstream && remote && remoteRef && track !== 'gone') {
       const n = (k: string) => Number(new RegExp(`${k} (\\d+)`).exec(track)?.[1] ?? 0);
       const [ahead, behind] = [n('ahead'), n('behind')];
-      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, upstream));
-      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten };
+      const [rewritten, tip] = await Promise.all([
+        ahead > 0 && behind > 0 && this.hadTip(branch, upstream),
+        this.git.text(['rev-parse', '-q', '--verify', `${upstream}^{commit}`], { allowFail: true }),
+      ]);
+      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip: tip || null };
     }
     const names = remotes.split('\n').filter(Boolean);
     const target = remote || (names.includes('origin') ? 'origin' : names[0]);
     if (!target) return null;
     const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
-    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false };
+    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
   }
 
   /**
@@ -975,36 +1007,66 @@ export class Repo {
   }
 
   /**
-   * Push the current branch. A branch whose pushed commits were rewritten needs a force push,
-   * which only happens when `force` is set, and then with --force-with-lease and
-   * --force-if-includes: git refuses if the remote has commits this repo hasn't seen.
+   * Push the current branch. When the remote has commits the branch doesn't, only a force push
+   * goes through, and only with `force`:
+   * - `true` (after rewriting pushed commits): --force-with-lease --force-if-includes, so git
+   *   refuses if the remote has commits this branch never had, fetched or not.
+   * - `'overwrite'`: replaces the remote branch as last fetched (`expect`, when given, must still
+   *   be that tip), leased on it, so commits pushed since the fetch are never lost.
+   * - `'fetch'`: fetches first, then overwrites whatever that brought, commits nobody here saw included.
    */
-  push(req: { force?: boolean }): Promise<OpResult> {
+  push(req: { force?: boolean | 'overwrite' | 'fetch'; expect?: string }): Promise<OpResult> {
     return this.exclusive(async () => {
       const why = this.blocked();
       if (why) throw new GitError(why);
       const branch = await this.currentBranch();
       if (!branch) throw new GitError("HEAD is detached; switch to a branch to push.");
-      const info = await this.pushInfo(branch);
+      const force = req.force === true || req.force === 'overwrite' || req.force === 'fetch' ? req.force : false;
+      let info = await this.pushInfo(branch);
       if (!info) throw new GitError('This repository has no remote to push to.');
+      if (force === 'fetch' && !info.publish) {
+        await fetchFrom(this.git, info.remote);
+        info = (await this.pushInfo(branch))!;
+      }
+      const where = `${info.remote}/${info.branch}`;
       const refspec = `refs/heads/${branch}:refs/heads/${info.branch}`;
+      const theirs = `${info.behind} commit${info.behind === 1 ? '' : 's'}`;
       let args: string[];
       if (info.publish) args = ['push', '--set-upstream', info.remote, refspec];
-      else if (info.ahead === 0) throw new GitError(info.behind ? 'Nothing to push: the remote is ahead of you.' : 'Already up to date.');
-      else if (info.behind === 0) args = ['push', info.remote, refspec];
-      else if (!req.force) throw new GitError('Your history differs from the remote; this needs a force push.');
-      else args = ['push', '--force-with-lease', '--force-if-includes', info.remote, refspec];
-      const r = await this.git.run(args, { allowFail: true, timeout: 120_000 });
-      if (r.code !== 0) {
-        const notFetched = /stale info|fetch first|non-fast-forward/i.test(r.err);
-        const notIntegrated = /updated since checkout/i.test(r.err);
+      else if (info.behind === 0) {
+        if (info.ahead === 0) throw new GitError('Already up to date.');
+        args = ['push', info.remote, refspec];
+      } else if (!force) {
         throw new GitError(
-          notIntegrated
-            ? `The remote has commits that aren't in your branch (fetched, but never integrated), so nothing was pushed.\n${r.err.trim()}`
-            : notFetched
-              ? `The remote has commits you haven't fetched, so nothing was pushed. Fetch and look at them first.\n${r.err.trim()}`
-              : `Push failed.\n${r.err.trim()}`,
+          `${where} has ${theirs} that ${info.behind === 1 ? "isn't" : "aren't"} on your branch, so a normal push would be refused. ` +
+            'Pull to bring them in, or force push to replace them with your branch. Nothing was pushed.',
         );
+      } else if (force === true) args = ['push', '--force-with-lease', '--force-if-includes', info.remote, refspec];
+      else {
+        if (req.expect && req.expect !== info.tip) {
+          throw new GitError(`${where} changed since this was shown; nothing was pushed. Look at it again, then force push.`);
+        }
+        args = ['push', `--force-with-lease=refs/heads/${info.branch}:${info.tip}`, info.remote, refspec];
+      }
+      const r = await runWithProgress(this.git, 'push', info.remote, args, { allowFail: true, timeout: 120_000, env: await networkEnv(this.git) });
+      if (r.code !== 0) {
+        const err = r.err.trim();
+        if (/updated since checkout/i.test(err)) {
+          throw new GitError(
+            `Nothing was pushed: ${where} has commits that were never on your branch (pushed by someone else, or by you from ` +
+              "somewhere else). They're fetched, so you can look at them in the branch list. A safe force push only replaces " +
+              "commits you've had; force push anyway to overwrite them too.",
+            'not-integrated',
+          );
+        }
+        if (/stale info|fetch first|non-fast-forward/i.test(err)) {
+          throw new GitError(
+            `Nothing was pushed: ${where} has new commits since you last fetched, which you haven't seen yet. ` +
+              (force ? 'Fetch to look at them, or fetch and force push anyway to overwrite them too.' : `Fetch, then pull them in.\n${err}`),
+            force ? 'not-fetched' : undefined,
+          );
+        }
+        throw new GitError(`Push failed.\n${err}`);
       }
       return { state: await this.state(), renamed: {}, focus: [] };
     });

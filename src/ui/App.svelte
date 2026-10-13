@@ -31,11 +31,13 @@
   import CommitView from './CommitView.svelte';
   import ConflictView from './ConflictView.svelte';
   import EditView from './EditView.svelte';
+  import FindBar from './FindBar.svelte';
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
+  import { finder } from './lib/finder.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -54,6 +56,7 @@
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
+    help: () => (help = true),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.
     leave: async (id: number) => {
       const why = app.switchBlocker;
@@ -67,6 +70,7 @@
     app.start();
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
+    events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
     const focus = () => app.refresh();
     const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
@@ -80,7 +84,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'find' | 'findNext' | 'findPrev';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -106,6 +110,9 @@
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
+    { keys: '⌘F', action: 'find', label: 'Find in the diff' },
+    { keys: '⌘G', action: 'findNext', label: 'Next match' },
+    { keys: '⇧⌘G', action: 'findPrev', label: 'Previous match' },
     { keys: '?', action: 'help', label: 'Show shortcuts' },
   ];
   const keymap = createKeymap(bindings);
@@ -117,6 +124,7 @@
       { label: "Remove picked changes from the commit", hints: ['⌫'] },
       { label: 'Editing a line (double-click it): save / add a line', hints: ['↩', '⇧↩'] },
       { label: 'Revert edits, clear picked changes', hints: ['Esc'] },
+      { label: "Branch list: a branch's commits to cherry-pick / pick them", hints: ['→', '⌘↩'] },
     ],
   });
 
@@ -128,6 +136,11 @@
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
     else if (action === 'settings') settings = true;
+    else if (action === 'find') finder.start();
+    else if (action === 'findNext' || action === 'findPrev') {
+      if (finder.open) finder.step(action === 'findNext' ? 1 : -1);
+      else finder.start();
+    }
     else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
     else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
     else if (action === 'open' || action === 'close') {
@@ -198,10 +211,13 @@
         <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
         <span><Kbd hint="⌥↑" /><Kbd hint="⌥↓" /> reorder</span>
         <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select many</span>
-        <span><Kbd hint="?" /> more</span>
+        <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> all shortcuts</button>
       </footer>
     </aside>
     <section data-scroller>
+      {#if finder.open}
+        <div class="find"><div class="bar"><FindBar /></div></div>
+      {/if}
       {#if app.stash}
         {#key app.stash.sha}
           <StashView stash={app.stash} />
@@ -230,7 +246,7 @@
 <SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
-  <Settings onclose={() => (settings = false)} />
+  <Settings {shortcuts} onclose={() => (settings = false)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
@@ -321,15 +337,37 @@
     font-size: var(--fs-xs);
   }
 
-  footer span {
+  footer span,
+  footer .more {
     display: inline-flex;
     align-items: baseline;
     gap: var(--gap-1);
   }
 
+  footer .more {
+    font-size: inherit;
+    color: inherit;
+  }
+
   section {
     overflow: auto;
     min-width: 0;
+  }
+
+  /* Over the diff's top right corner, wherever it's scrolled. */
+  .find {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-popover);
+    height: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding-right: var(--sp-5);
+  }
+
+  .bar {
+    margin-top: var(--gap-3);
   }
 
   .empty {

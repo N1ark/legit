@@ -11,6 +11,7 @@ const NAMES: Record<string, string> = {
   stashPop: 'restoring the stash', stashDrop: 'dropping the stash', switch: 'the branch switch',
   createBranch: 'creating the branch', checkoutRemote: 'the checkout', renameBranch: 'the rename',
   deleteBranch: 'deleting the branch', deleteRemoteBranch: 'deleting the remote branch', restoreBranch: 'restoring the branch',
+  cherryPick: 'the cherry-pick', copyTo: 'copying the commits',
 };
 
 /** Why the window can't switch repo while operation `op` (its API name) runs. */

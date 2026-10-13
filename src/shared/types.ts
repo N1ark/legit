@@ -83,6 +83,8 @@ export interface PushInfo {
    * commits, and pulling is.
    */
   rewritten: boolean;
+  /** The remote branch's tip as last fetched; null when publishing. A force push overwrites exactly this. */
+  tip: string | null;
 }
 
 export type LineKind = ' ' | '+' | '-';
@@ -109,7 +111,9 @@ export interface Hunk {
 
 export interface FileDiff {
   path: string;
-  status: 'A' | 'M' | 'D' | 'T';
+  /** R: renamed from `oldPath` (C: copied from it), with the content changes in `hunks`. */
+  status: 'A' | 'M' | 'D' | 'T' | 'R' | 'C';
+  oldPath?: string;
   oldMode: string;
   newMode: string;
   oldSha: string;
@@ -149,6 +153,9 @@ export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   rows: number;
   /** Widest line, in columns (tabs count as 4). */
   width: number;
+  /** Binary files and images: their size in bytes before and after (absent on a side without one). */
+  oldSize?: number;
+  newSize?: number;
 }
 
 export interface DiffSummary {
@@ -359,6 +366,19 @@ export interface ConflictFile {
   line: number | null;
 }
 
+/** How far a fetch or push has got, from git's --progress output; streamed to the UI as it runs. */
+export interface Progress {
+  op: 'fetch' | 'push';
+  remote: string;
+  /** git's words, e.g. "Receiving objects"; null once it's finished. */
+  phase: string | null;
+  /** The remote's side of the transfer ("remote: Compressing objects"). */
+  server: boolean;
+  percent: number | null;
+  /** Amount and speed ("3.11 MiB | 590.00 KiB/s"), or the count ("5/12"). */
+  detail: string | null;
+}
+
 /** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */
 export interface SyncResult extends OpResult {
   message: string;
@@ -438,6 +458,22 @@ export interface ScopeSettings {
   collapse: string[];
   /** Tree-sitter grammars to highlight files with, by glob; the last matching rule wins. */
   syntax: { pattern: string; grammar: string }[];
+  /** How diffs show long lines; this and the rest, unset in a repo's settings: as for all repos. */
+  wrap?: Wrap;
+  /** The column `wrap: 'column'` wraps at. */
+  wrapColumn?: number;
+  /** Columns to draw a guide line at, in diffs. */
+  guides?: number[];
+}
+
+/** Long lines: scrolled sideways, or wrapped to the window, or at a column (or the window if narrower). */
+export type Wrap = 'none' | 'window' | 'column';
+
+/** How diffs are shown, as the settings of both scopes make it. */
+export interface DisplaySettings {
+  wrap: Wrap;
+  wrapColumn: number;
+  guides: number[];
 }
 
 export interface Settings {
