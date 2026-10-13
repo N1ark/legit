@@ -10,7 +10,14 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
-export class GitError extends Error {}
+export class GitError extends Error {
+  /** Lets the UI offer a way out, e.g. 'not-integrated' for a force push it can retry. */
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 export const toUtf8 = (s: string) => Buffer.from(s, 'latin1').toString('utf8');
 export const fromUtf8 = (s: string) => Buffer.from(s, 'utf8').toString('latin1');

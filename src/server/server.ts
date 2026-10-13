@@ -290,7 +290,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     } catch (e) {
       const known = e instanceof GitError;
       if (!known) console.error(e);
-      send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e) });
+      send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e), ...(known && e.code ? { code: e.code } : {}) });
     }
   });
 

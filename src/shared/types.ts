@@ -83,6 +83,8 @@ export interface PushInfo {
    * commits, and pulling is.
    */
   rewritten: boolean;
+  /** The remote branch's tip as last fetched; null when publishing. A force push overwrites exactly this. */
+  tip: string | null;
 }
 
 export type LineKind = ' ' | '+' | '-';

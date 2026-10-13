@@ -18,7 +18,7 @@ import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, pars
 import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
-import { syncState } from './sync.ts';
+import { fetchFrom, networkEnv, syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
 import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
 
@@ -944,14 +944,17 @@ export class Repo {
     if (upstream && remote && remoteRef && track !== 'gone') {
       const n = (k: string) => Number(new RegExp(`${k} (\\d+)`).exec(track)?.[1] ?? 0);
       const [ahead, behind] = [n('ahead'), n('behind')];
-      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, upstream));
-      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten };
+      const [rewritten, tip] = await Promise.all([
+        ahead > 0 && behind > 0 && this.hadTip(branch, upstream),
+        this.git.text(['rev-parse', '-q', '--verify', `${upstream}^{commit}`], { allowFail: true }),
+      ]);
+      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip: tip || null };
     }
     const names = remotes.split('\n').filter(Boolean);
     const target = remote || (names.includes('origin') ? 'origin' : names[0]);
     if (!target) return null;
     const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
-    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false };
+    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
   }
 
   /**
@@ -971,36 +974,66 @@ export class Repo {
   }
 
   /**
-   * Push the current branch. A branch whose pushed commits were rewritten needs a force push,
-   * which only happens when `force` is set, and then with --force-with-lease and
-   * --force-if-includes: git refuses if the remote has commits this repo hasn't seen.
+   * Push the current branch. When the remote has commits the branch doesn't, only a force push
+   * goes through, and only with `force`:
+   * - `true` (after rewriting pushed commits): --force-with-lease --force-if-includes, so git
+   *   refuses if the remote has commits this branch never had, fetched or not.
+   * - `'overwrite'`: replaces the remote branch as last fetched (`expect`, when given, must still
+   *   be that tip), leased on it, so commits pushed since the fetch are never lost.
+   * - `'fetch'`: fetches first, then overwrites whatever that brought, commits nobody here saw included.
    */
-  push(req: { force?: boolean }): Promise<OpResult> {
+  push(req: { force?: boolean | 'overwrite' | 'fetch'; expect?: string }): Promise<OpResult> {
     return this.exclusive(async () => {
       const why = this.blocked();
       if (why) throw new GitError(why);
       const branch = await this.currentBranch();
       if (!branch) throw new GitError("HEAD is detached; switch to a branch to push.");
-      const info = await this.pushInfo(branch);
+      const force = req.force === true || req.force === 'overwrite' || req.force === 'fetch' ? req.force : false;
+      let info = await this.pushInfo(branch);
       if (!info) throw new GitError('This repository has no remote to push to.');
+      if (force === 'fetch' && !info.publish) {
+        await fetchFrom(this.git, info.remote);
+        info = (await this.pushInfo(branch))!;
+      }
+      const where = `${info.remote}/${info.branch}`;
       const refspec = `refs/heads/${branch}:refs/heads/${info.branch}`;
+      const theirs = `${info.behind} commit${info.behind === 1 ? '' : 's'}`;
       let args: string[];
       if (info.publish) args = ['push', '--set-upstream', info.remote, refspec];
-      else if (info.ahead === 0) throw new GitError(info.behind ? 'Nothing to push: the remote is ahead of you.' : 'Already up to date.');
-      else if (info.behind === 0) args = ['push', info.remote, refspec];
-      else if (!req.force) throw new GitError('Your history differs from the remote; this needs a force push.');
-      else args = ['push', '--force-with-lease', '--force-if-includes', info.remote, refspec];
-      const r = await this.git.run(args, { allowFail: true, timeout: 120_000 });
-      if (r.code !== 0) {
-        const notFetched = /stale info|fetch first|non-fast-forward/i.test(r.err);
-        const notIntegrated = /updated since checkout/i.test(r.err);
+      else if (info.behind === 0) {
+        if (info.ahead === 0) throw new GitError('Already up to date.');
+        args = ['push', info.remote, refspec];
+      } else if (!force) {
         throw new GitError(
-          notIntegrated
-            ? `The remote has commits that aren't in your branch (fetched, but never integrated), so nothing was pushed.\n${r.err.trim()}`
-            : notFetched
-              ? `The remote has commits you haven't fetched, so nothing was pushed. Fetch and look at them first.\n${r.err.trim()}`
-              : `Push failed.\n${r.err.trim()}`,
+          `${where} has ${theirs} that ${info.behind === 1 ? "isn't" : "aren't"} on your branch, so a normal push would be refused. ` +
+            'Pull to bring them in, or force push to replace them with your branch. Nothing was pushed.',
         );
+      } else if (force === true) args = ['push', '--force-with-lease', '--force-if-includes', info.remote, refspec];
+      else {
+        if (req.expect && req.expect !== info.tip) {
+          throw new GitError(`${where} changed since this was shown; nothing was pushed. Look at it again, then force push.`);
+        }
+        args = ['push', `--force-with-lease=refs/heads/${info.branch}:${info.tip}`, info.remote, refspec];
+      }
+      const r = await this.git.run(args, { allowFail: true, timeout: 120_000, env: await networkEnv(this.git) });
+      if (r.code !== 0) {
+        const err = r.err.trim();
+        if (/updated since checkout/i.test(err)) {
+          throw new GitError(
+            `Nothing was pushed: ${where} has commits that were never on your branch (pushed by someone else, or by you from ` +
+              "somewhere else). They're fetched, so you can look at them in the branch list. A safe force push only replaces " +
+              "commits you've had; force push anyway to overwrite them too.",
+            'not-integrated',
+          );
+        }
+        if (/stale info|fetch first|non-fast-forward/i.test(err)) {
+          throw new GitError(
+            `Nothing was pushed: ${where} has new commits since you last fetched, which you haven't seen yet. ` +
+              (force ? 'Fetch to look at them, or fetch and force push anyway to overwrite them too.' : `Fetch, then pull them in.\n${err}`),
+            force ? 'not-fetched' : undefined,
+          );
+        }
+        throw new GitError(`Push failed.\n${err}`);
       }
       return { state: await this.state(), renamed: {}, focus: [] };
     });

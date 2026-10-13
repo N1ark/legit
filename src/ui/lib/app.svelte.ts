@@ -15,7 +15,7 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
       : { method: 'POST', headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify(body) },
   );
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? res.statusText);
+  if (!res.ok) throw Object.assign(new Error(data.error ?? res.statusText), { code: data.code as string | undefined });
   return data;
 }
 
@@ -261,6 +261,8 @@ class App {
     body: unknown = {},
     optimistic?: () => void,
     prepare?: (r: OpResult) => Promise<unknown>,
+    /** Shows the error instead of the default toast; returns false to leave it to the toast. */
+    fail?: (e: Error & { code?: string }) => boolean,
   ): Promise<boolean> {
     if (this.busy) return false;
     const gen = ++this.gen;
@@ -276,7 +278,7 @@ class App {
       return true;
     } catch (e) {
       if (optimistic) this.repo = before;
-      toast.error(e);
+      if (!(e instanceof Error && fail?.(e))) toast.error(e);
       this.refresh();
       return false;
     } finally {
