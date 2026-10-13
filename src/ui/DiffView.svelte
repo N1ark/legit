@@ -564,8 +564,8 @@
     ]);
   }
 
-  const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed' };
-  const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined };
+  const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed', R: 'renamed', C: 'copied' };
+  const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined, R: undefined, C: undefined };
   const MARK = [' ', ' ', '+', '-'];
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
@@ -629,7 +629,13 @@
             >
               <Twisty open={!collapsed[i]} size={10} />
             </button>
-            <span class="path mono" title={f.path}>{f.path}</span>
+            {#if f.oldPath}
+              <span class="path mono" title="{f.oldPath} → {f.path}"
+                ><span class="old">{f.oldPath}</span> <span class="muted">→</span> {f.path}</span
+              >
+            {:else}
+              <span class="path mono" title={f.path}>{f.path}</span>
+            {/if}
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if f.generated}
@@ -644,7 +650,9 @@
             {#if !f.rows}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
-                {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
+                {f.oldPath && f.oldSha === f.newSha && f.oldMode === f.newMode
+                  ? `${statusLabel[f.status][0].toUpperCase()}${statusLabel[f.status].slice(1)}, no changes`
+                  : f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
             {:else}
               <div class="body" class:loading={!rows} style:height="{bodyHeight(i)}px">
@@ -829,6 +837,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .path .old {
+    color: var(--muted);
   }
 
   .spacer {

@@ -333,7 +333,9 @@
         !readonly && {
           label: 'Remove file from commit',
           icon: Eraser,
-          note: f.status === 'A' ? "The file won't be added" : f.status === 'D' ? 'The file stays' : 'It goes back to how it was before',
+          note:
+            f.status === 'A' || f.status === 'C' ? "The file won't be added" : f.status === 'D' ? 'The file stays'
+            : f.status === 'R' ? `It goes back to ${f.oldPath}, as it was` : 'It goes back to how it was before',
           run: () => remove({ [f.path]: 'all' }),
         },
       ]}

@@ -472,6 +472,9 @@ function discardStaged(repo: Repo, req: StageRequest): Promise<DiscardResult> {
       if (f.oldMode === '160000' || f.newMode === '160000') {
         throw new GitError(`${toUtf8(f.path)} is a submodule; legit can't discard changes inside it. Nothing was discarded.`);
       }
+      if (f.oldPath !== undefined) {
+        throw new GitError(`${toUtf8(f.path)} is a staged ${f.status === 'R' ? 'rename' : 'copy'} of ${toUtf8(f.oldPath)}; unstage it first to discard it. Nothing was discarded.`);
+      }
     }
 
     // What the index has now (I) and will have (I').

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CommitDiff, FileDiff } from '../shared/types.ts';
-import { DIFF_ARGS, parseDiff } from './diff.ts';
+import { DIFF_ARGS, RENAME_ARGS, parseDiff } from './diff.ts';
 import type { Git } from './git.ts';
 
 /** Status without taking the index lock, so it never gets in the way of the user's git. */
@@ -18,7 +18,7 @@ const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 
 /** Files with staged changes, unstaged changes, and untracked files. */
 export async function workCounts(git: Git): Promise<{ staged: number; unstaged: number; untracked: number }> {
-  const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=normal', '--no-renames'], {
+  const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=normal'], {
     env: NO_LOCKS,
     allowFail: true,
   });
@@ -35,9 +35,9 @@ export async function workCounts(git: Git): Promise<{ staged: number; unstaged: 
   return counts;
 }
 
-/** Index vs HEAD. */
+/** Index vs HEAD, renames found. */
 export async function stagedDiff(git: Git, key: string): Promise<CommitDiff> {
-  const { out } = await git.run(['diff-index', '--cached', ...DIFF_ARGS, 'HEAD'], { env: NO_LOCKS });
+  const { out } = await git.run(['diff-index', '--cached', ...RENAME_ARGS, 'HEAD'], { env: NO_LOCKS });
   return parseDiff(out.toString('latin1'), key);
 }
 

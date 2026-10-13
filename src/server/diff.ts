@@ -10,11 +10,13 @@ const TEXT_MODES = new Set(['100644', '100755', '000000']);
 
 /** Options shared by every diff we parse: raw records + patch, no renames, no external tools. */
 export const DIFF_ARGS = ['-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--full-index', '--patch-with-raw', `-U${CONTEXT_LINES}`];
+/** The same, with renamed files found (as `git diff` does): commits, squashes and what's staged. */
+export const RENAME_ARGS = DIFF_ARGS.map((a) => (a === '--no-renames' ? '-M' : a));
 
 /** Diff of a commit against its first parent. All strings are byte strings. */
 export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
   const c = await git.commit(sha);
-  const { out } = await git.run(['diff-tree', ...DIFF_ARGS, c.parents[0] ?? git.emptyTree, sha]);
+  const { out } = await git.run(['diff-tree', ...RENAME_ARGS, c.parents[0] ?? git.emptyTree, sha]);
   return parseDiff(out.toString('latin1'), sha);
 }
 
@@ -23,16 +25,26 @@ export async function commitDiff(git: Git, sha: string): Promise<CommitDiff> {
  * patch), so a later request can check that the file is still exactly what was shown.
  */
 export function parseDiff(data: string, sha: string): CommitDiff {
-  // Raw section: ":oldmode newmode oldsha newsha status\0path\0" records, then "\0", then the patch.
+  // Raw section: ":oldmode newmode oldsha newsha status\0path\0" records (a rename or copy has
+  // the old path, then the new one), then "\0", then the patch.
   const files: FileDiff[] = [];
   let pos = 0;
   while (data[pos] === ':') {
     const metaEnd = data.indexOf('\0', pos);
-    const pathEnd = data.indexOf('\0', metaEnd + 1);
+    let pathEnd = data.indexOf('\0', metaEnd + 1);
     const [oldMode, newMode, oldSha, newSha, status] = data.slice(pos + 1, metaEnd).split(' ');
+    let path = data.slice(metaEnd + 1, pathEnd);
+    let oldPath: string | undefined;
+    if (status[0] === 'R' || status[0] === 'C') {
+      oldPath = path;
+      const end = data.indexOf('\0', pathEnd + 1);
+      path = data.slice(pathEnd + 1, end);
+      pathEnd = end;
+    }
     files.push({
-      path: data.slice(metaEnd + 1, pathEnd),
+      path,
       status: status[0] as FileDiff['status'],
+      ...(oldPath === undefined ? {} : { oldPath }),
       oldMode, newMode, oldSha, newSha,
       binary: false, partial: false, hunks: [], added: 0, removed: 0,
     });
@@ -46,7 +58,7 @@ export function parseDiff(data: string, sha: string): CommitDiff {
   for (const f of files) {
     const mine = f.status === 'T' ? chunks.slice(ci, ci + 2) : chunks.slice(ci, ci + 1);
     ci += mine.length;
-    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).update(mine.join('\n'), 'latin1').digest('hex');
+    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(mine.join('\n'), 'latin1').digest('hex');
     let idx = 0;
     for (const chunk of mine) {
       const lines = chunk.split('\n');
@@ -102,7 +114,7 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
       }
       const { token: _, ...rest } = f;
       const grammar = syntax.get(f.path);
-      return { ...rest, path: toUtf8(f.path), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
+      return { ...rest, path: toUtf8(f.path), ...(f.oldPath === undefined ? {} : { oldPath: toUtf8(f.oldPath) }), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
     }),
   };
 }

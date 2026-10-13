@@ -34,8 +34,15 @@
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + row.offsetHeight;
   });
 
-  const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T' };
-  const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed' };
+  const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
+  const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed', R: 'renamed', C: 'copied' };
+
+  /** Where a renamed file came from: its old name, or its old path when it moved folders. */
+  function source(f: FileSummary): string {
+    const old = f.oldPath!;
+    const dir = (p: string) => p.slice(0, p.lastIndexOf('/') + 1);
+    return dir(old) === dir(f.path) ? old.slice(dir(old).length) : old;
+  }
 </script>
 
 <div class="tree" bind:this={list} role="tree" aria-label="Changed files">
@@ -61,11 +68,13 @@
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
-        title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}, +{f.added} −{f.removed}"
+        title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}{f.oldPath ? ` from ${f.oldPath}` : ''}, +{f.added} −{f.removed}"
         onclick={() => onpick(r.index)}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >
-        <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}>{r.name}</span>
+        <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
+          >{r.name}{#if f.oldPath}<span class="from">← {source(f)}</span>{/if}</span
+        >
         <span class="status mono" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
           >{f.untracked ? 'U' : STATUS[f.status]}</span
         >
@@ -128,8 +137,13 @@
     white-space: nowrap;
   }
 
-  .dir .name {
+  .dir .name,
+  .from {
     color: var(--muted);
+  }
+
+  .from {
+    margin-left: var(--gap-2);
   }
 
   .status {

@@ -13,7 +13,7 @@ import type {
 } from '../shared/types.ts';
 import { baseBranch } from './base.ts';
 import { switchBranch } from './branches.ts';
-import { DIFF_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
+import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
@@ -264,7 +264,7 @@ export class Repo {
     } finally {
       merger.close();
     }
-    const { out } = await this.git.run(['diff-tree', ...DIFF_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
+    const { out } = await this.git.run(['diff-tree', ...RENAME_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
     return parseDiff(out.toString('latin1'), key);
   }
 
@@ -625,6 +625,8 @@ export class Repo {
         if (!f.partial) throw new GitError(`${toUtf8(f.path)} can only be picked as a whole file.`);
         partial.push(f);
       }
+      // A renamed file moves with any of its changes (alone, when it has none).
+      if (f.status === 'R' && (all || count > 0)) records.push(`0 ${zero}\t${f.oldPath}`);
     }
     const oldBlobs = await this.git.readObjects(partial.filter((f) => f.status !== 'A').map((f) => f.oldSha));
     for (const f of partial) {
@@ -852,9 +854,11 @@ export class Repo {
       }
       await this.git.flush();
       if (whole.length) {
+        // A rename's old path comes back too.
+        const paths = whole.flatMap((f) => (f.status === 'R' ? [f, { ...f, path: f.oldPath! }] : [f]));
         await this.git.run(
           ['--literal-pathspecs', 'restore', '--staged', '--source=HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'],
-          { input: Repo.pathspecs(whole) },
+          { input: Repo.pathspecs(paths) },
         );
       }
       if (records.length) await this.updateIndex(records);

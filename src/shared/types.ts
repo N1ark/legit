@@ -109,7 +109,9 @@ export interface Hunk {
 
 export interface FileDiff {
   path: string;
-  status: 'A' | 'M' | 'D' | 'T';
+  /** R: renamed from `oldPath` (C: copied from it), with the content changes in `hunks`. */
+  status: 'A' | 'M' | 'D' | 'T' | 'R' | 'C';
+  oldPath?: string;
   oldMode: string;
   newMode: string;
   oldSha: string;

@@ -4,10 +4,10 @@
 export const CONTEXT_LINES = 3;
 
 /**
- * A file whose unchanged lines between hunks can be shown: it was modified, so both sides exist
- * and read the same outside the hunks.
+ * A file whose unchanged lines between hunks can be shown: it was modified (maybe renamed or
+ * copied too), so both sides exist and read the same outside the hunks.
  */
-export const expandable = (f: { status: string; binary: boolean }) => f.status === 'M' && !f.binary;
+export const expandable = (f: { status: string; binary: boolean }) => 'MRC'.includes(f.status) && !f.binary;
 
 /**
  * Whether a modified file may go on past the diff's last hunk (its line kinds, and whether its
