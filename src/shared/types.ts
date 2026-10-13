@@ -264,6 +264,8 @@ export interface BranchInfo {
   /** e.g. "ahead 2, behind 1" or "gone". */
   track: string | null;
   current: boolean;
+  /** The other worktree it's checked out in, if any (it can't be switched to here). */
+  worktree: string | null;
 }
 
 /**
@@ -392,6 +394,36 @@ export interface CreateBranchRequest {
   checkout?: boolean;
   /** Stash uncommitted changes first, leaving them on the current branch. */
   stash?: boolean;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  /** Its folder's name. */
+  name: string;
+  /** Shortened for display: "~/code/legit-feature". */
+  short: string;
+  /** Null when HEAD is detached. */
+  branch: string | null;
+  head: string | null;
+  /** The repository's own folder, listed first. */
+  main: boolean;
+  /** Shown now. */
+  current: boolean;
+  /** Why it's locked (may be empty), or null when it isn't. */
+  locked: string | null;
+  /** Its folder is gone: removing it only forgets it. */
+  missing: boolean;
+}
+
+export interface WorktreeRequest {
+  /** An existing local branch to check out, or the new branch to create. */
+  branch: string;
+  /** Its folder; next to the main worktree, as `<main>-<branch>`, when absent. */
+  path?: string;
+  /** Where the new branch starts (HEAD when absent). */
+  from?: string;
+  /** Make the new branch track `from`, a remote branch. */
+  track?: boolean;
 }
 
 /** A remote-tracking branch with no local branch of its own. */

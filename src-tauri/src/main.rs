@@ -74,6 +74,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::recent_repos,
             commands::open_repo,
+            commands::open_worktree,
             commands::pick_repo,
             commands::forget_repo,
             commands::remember_view,
@@ -91,6 +92,7 @@ fn main() {
             "merge" => eval_focused(app, "window.__legit?.branch('merge')"),
             "rebase" => eval_focused(app, "window.__legit?.branch('rebase')"),
             "rebase-base" => eval_focused(app, "window.__legit?.rebaseOnBase()"),
+            "worktree" => eval_focused(app, "window.__legit?.newWorktree()"),
             "shortcuts" => eval_focused(app, "window.__legit?.help()"),
             _ => {}
         })
@@ -183,6 +185,28 @@ fn is_repo(path: &Path) -> bool {
     path.is_dir() && path.join(".git").exists()
 }
 
+/// Apps launched from Finder get a minimal PATH; find git where a terminal would.
+fn git_path() -> String {
+    format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default())
+}
+
+/// The worktrees of the repository at `repo` (`git worktree list`), main one first.
+fn worktrees(repo: &Path) -> Vec<PathBuf> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .env("PATH", git_path())
+        .stdin(Stdio::null())
+        .output();
+    let Ok(out) = out.map(|o| o.stdout) else { return Vec::new() };
+    String::from_utf8_lossy(&out)
+        .split('\0')
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(|p| PathBuf::from(p).canonicalize().unwrap_or_else(|_| PathBuf::from(p)))
+        .collect()
+}
+
 /// "~/code/legit" for a path under the home directory.
 fn short_path(app: &AppHandle, path: &Path) -> String {
     match app.path().home_dir().ok().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
@@ -235,6 +259,22 @@ mod commands {
         }
         if !is_repo(&path) {
             return Err(format!("{} isn't a git repository anymore.", path.display()));
+        }
+        super::open_repo(&app, path);
+        Ok(())
+    }
+
+    /// Open another worktree of the repository shown, nothing else.
+    #[tauri::command]
+    pub fn open_worktree(app: AppHandle, path: String) -> Result<(), String> {
+        let current = app.state::<Current>().repo().ok_or("No repository is open.")?;
+        let path = PathBuf::from(path);
+        let path = path.canonicalize().unwrap_or(path);
+        if !worktrees(&current).contains(&path) {
+            return Err(format!("{} isn't a worktree of this repository.", path.display()));
+        }
+        if !is_repo(&path) {
+            return Err(format!("{} isn't a git worktree anymore.", path.display()));
         }
         super::open_repo(&app, path);
         Ok(())
@@ -349,14 +389,11 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let sidecar = exe.with_file_name("legit-server");
     let dist = app.path().resource_dir().map_err(|e| e.to_string())?.join("dist");
-    // Apps launched from Finder get a minimal PATH; find git where a terminal would.
-    let path_env = format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default());
-
     let mut child = Command::new(&sidecar)
         .arg(repo)
         .arg("--dist")
         .arg(&dist)
-        .env("PATH", path_env)
+        .env("PATH", git_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -526,6 +563,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, "rebase", "Rebase on a Branch…", true, None::<&str>)?,
             &sep()?,
             &MenuItem::with_id(app, "rebase-base", "Rebase on the Default Branch", true, None::<&str>)?,
+            &sep()?,
+            &MenuItem::with_id(app, "worktree", "New Worktree…", true, None::<&str>)?,
         ],
     )?;
     let window = Submenu::with_items(

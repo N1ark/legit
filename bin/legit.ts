@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { Repo } from '../src/server/repo.ts';
-import { serve } from '../src/server/server.ts';
+import { serve, type ServeOpts } from '../src/server/server.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const { values, positionals } = parseArgs({
@@ -50,18 +50,29 @@ if (!values.dev && !existsSync(join(root, 'dist', 'index.html'))) {
   console.error(`The UI isn't built yet: run \`npm run build\` in ${root}`);
   process.exit(1);
 }
-let dev;
+let dev: ServeOpts['dev'];
 if (values.dev) {
   const { createServer } = await import('vite');
   const vite = await createServer({ root, server: { middlewareMode: true } });
   dev = vite.middlewares;
 }
 
+// Another worktree gets its own server, on another port, started once.
+const servers = new Map<string, Promise<string>>();
+const open = (path: string): Promise<string> => {
+  if (!servers.has(path)) {
+    const started = Repo.open(path).then(async (r) => (await serve(r, { port: 0, dist: join(root, 'dist'), dev, open })).url);
+    servers.set(path, started.catch((e) => (servers.delete(path), Promise.reject(e))));
+  }
+  return servers.get(path)!;
+};
 const { url } = await serve(repo, {
   port: Number(values.port),
   dist: join(root, 'dist'),
   dev,
+  open,
 });
+servers.set(repo.git.root, Promise.resolve(url));
 console.log(`legit · ${repo.git.root}\n${url}`);
 
 if (!values['no-open']) {

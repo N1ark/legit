@@ -13,7 +13,7 @@ legit [path]          # opens the repo at path (default: .) in Legit.app
 `legit` opens the app when it's installed and falls back to the browser otherwise (`--browser` forces
 the browser; `--port N` and `--no-open` apply there). The app is a single window showing one repo at a time. Click
 the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the last 30 you opened (filter them, remove
-one from the list) and **Open Repository…** for any other. **File ▸ Open Recent**, **File ▸ Open Repository…**
+one from the list) and **Open Repository…** for any other, under the repo's own worktrees. **File ▸ Open Recent**, **File ▸ Open Repository…**
 (<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Switching is refused, saying
 why, while an operation you started is still running (a fetch you asked for included; a background fetch is simply
 dropped). Coming back to a repo finds it as
@@ -50,6 +50,7 @@ is self-contained: it doesn't use your installed Node, only `git`.
 | **Merge & rebase** | **Merge…** (<kbd>m</kbd>) and **Rebase on…** (<kbd>r</kbd>), at the bottom of the branch list or in the **Branch** menu, list the branches to pick from (local ones and every remote one): merging is a real `git merge`, which needs no uncommitted changes and may stop on conflicts to resolve here; rebasing replays the current branch's own commits on top of the one picked, in memory, with uncommitted changes coming along unless they'd be overwritten. When a commit conflicts, the rebase is a real `git rebase` instead: it stops at each conflicting commit, which you resolve in the conflict view and continue (or abort, back to where you were); that needs no uncommitted changes to tracked files, and it says so, changing nothing, if there are some. Right-clicking a branch offers both too. **Rebase on main** sits in the header when the default branch has commits yours doesn't: it's the branch `origin/HEAD` points to (else `main`, else `master`), and of the local branch and its remote-tracking one, whichever has everything the other has, so usually `origin/main` (when they've diverged, the remote's). It fetches first, and works out again whether there's anything to rebase; if the fetch fails, it says so and offers **Rebase anyway**. Both undo with <kbd>⌘Z</kbd>. |
 | **Conflicts** | When a merge, rebase, cherry-pick or revert stops halfway (here or in a terminal), *Uncommitted changes* becomes *Merge in progress* (etc.) and shows the conflicted files, each with **Open in Zed** (at the first conflict marker) and **Mark resolved** (`git add`; it asks again while the file still has `<<<<<<<`/`=======`/`>>>>>>>` lines), **Mark all resolved** for every one at once (asking the same way if any still has markers), plus the diff of what finishing would change. **Commit merge** / **Continue** (<kbd>⌘↵</kbd>) is enabled once nothing is conflicted; **Abort** (click twice) saves your files first. |
 | **Branches** | Click the branch name or press <kbd>b</kbd>, type to filter, <kbd>↵</kbd> to switch. Typing a new name offers **Create branch** (from HEAD); a commit's right-click menu has **New branch from here…**. Right-click a branch to **rename** it (its undo history and backups follow) or **delete** it (click twice; not the one you're on), and to delete its upstream on the remote, which is a separate confirmed action. **Remote branches** without a local one are listed too; choosing one checks it out as a local tracking branch. **Recently deleted** branches are listed for two weeks; choosing one brings it back. |
+| **Worktrees** | Click the repo name in the header (<kbd>⌘T</kbd>): when the repo has other worktrees, they're listed first (folder, branch, path), and choosing one shows it in the window (in the browser, in the tab, from a server of its own). **New worktree…** there, in the branch list or in the **Branch** menu, checks a branch out in a folder of its own: an existing local branch, or a new one from the current branch (right-click a branch for **New worktree for it…**, or a remote branch to check it out in one, tracking it). The folder defaults to one next to the repo named `<repo>-<branch>`; a relative one is from the current worktree's folder. In the branch list, a branch checked out in another worktree shows which, and choosing it switches to that worktree. The trash button on a worktree removes it: its folder goes (ignored files included) and its branch stays. It's refused for the main worktree, the one you're in, a locked one, or one with uncommitted changes, untracked files or a merge or rebase in progress; one whose folder is already gone is just forgotten. |
 | **Switching with changes** | If you have uncommitted changes, legit asks: **Leave my changes on** the current branch (they're stashed with `git stash push --include-untracked`) or **Bring my changes to** the new one (`git switch`, which refuses if they'd be overwritten). Coming back to a branch with changes left on it offers to **Restore** them. |
 | **Stashes** | The box icon in the header lists stashes: **Restore** (apply, then remove from the list), **Apply** (keep it), **Drop** (click twice), and **Stash all changes**. Click one (or **View** on the *Stashed changes* banner) to see its changes in place of the commit: staged and unstaged together, then its untracked files; <kbd>esc</kbd> closes it. Dropped and restored stashes stay listed for two weeks and can still be viewed and applied. |
 
@@ -102,6 +103,9 @@ Losing work is the one failure that matters, so every operation is built to be r
   branch on a remote saves the tip you last fetched as `refs/legit/deleted/<branch>/<time>-<remote>`, and the push is
   leased on it, so commits you haven't fetched are never deleted. Both are kept for two weeks and listed under
   *Recently deleted*; restoring recreates the branch in one transaction that refuses if the name is taken.
+- **Removing a worktree loses nothing.** Only clean worktrees are removed (`git worktree remove`, never `--force`), and
+  their branch stays. A detached HEAD with commits no branch, tag or remote branch has is first saved as
+  `refs/legit/deleted/<folder>/<time>`, so it's listed under *Recently deleted* branches for two weeks.
 - **Stashes only apply cleanly.** A stash is applied only if no uncommitted change touches its files, none of the files it
   creates already exist, and its changes merge onto HEAD without conflicts (checked in memory with `git merge-tree`);
   otherwise nothing is changed. Restoring (pop) removes it from the stash list only after a clean apply, and before
@@ -180,7 +184,8 @@ npm run check      # svelte-check + tsc
 - `src/server/git.ts` handles git access: `cat-file --batch` for reading, direct loose-object writes (so no process per
   commit), and a persistent `merge-tree --stdin` for cherry-picks.
 - `src/server/repo.ts` holds the operations, backups and safety checks. `sync.ts` fetches, pulls, merges and rebases onto other branches, and finishes or aborts conflicted operations. `diff.ts` parses diffs and rebuilds files from a subset of lines.
-  `branches.ts` creates, renames, deletes and restores branches and switches between them; `stash.ts` stashes and
+  `branches.ts` creates, renames, deletes and restores branches and switches between them; `worktrees.ts` lists, adds
+  and removes worktrees; `stash.ts` stashes and
   applies changes, and checks a stash can't conflict before applying it.
   `discard.ts` discards uncommitted changes and puts them back. `work.ts` lists uncommitted changes, and `staging.ts` works out
   which of their lines are staged (aligning the index with them) and what staging some of them makes.
@@ -190,8 +195,9 @@ npm run check      # svelte-check + tsc
   Switching repo starts a server for the new one, loads the page from it (so nothing of the old repo's state carries
   over, besides what the page asked the app to keep for coming back), and stops the old server. A server exits only
   after any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list
-  is `recent-repos` in the app's config dir. The page can call only seven app commands (`capabilities/default.json`):
-  list the recent repos, open one *from that list*, show the folder picker, remove one from the list, keep or take
+  is `recent-repos` in the app's config dir. The page can call only eight app commands (`capabilities/default.json`):
+  list the recent repos, open one *from that list*, open another of the shown repo's worktrees (as `git worktree list`
+  gives them), show the folder picker, remove one from the list, keep or take
   back what it shows of its repo (by the page's origin, so a page still unloading after a switch files it under its
   own repo), and answer whether it can switch. Every switch, menu and CLI ones included, asks the page first, since
   it's the one that knows what it has running; a page that doesn't answer within two seconds doesn't hold it up.

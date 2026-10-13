@@ -22,6 +22,7 @@ import { GitError } from './git.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
 import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
+import { addWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
@@ -42,6 +43,8 @@ export interface ServeOpts {
   dist: string;
   /** Vite dev middleware, when running in dev mode. */
   dev?: Middleware;
+  /** Serve another worktree of the repository, returning its URL (the browser version; the app switches its window itself). */
+  open?: (path: string) => Promise<string>;
 }
 
 function readBody(req: IncomingMessage): Promise<any> {
@@ -152,6 +155,12 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     deleteRemoteBranch: (b) => deleteRemoteBranch(repo, b),
     restoreBranch: (b) => restoreBranch(repo, b),
     checkoutRemote: (b) => checkoutRemote(repo, b),
+    addWorktree: (b) => addWorktree(repo, b),
+    removeWorktree: (b) => removeWorktree(repo, b),
+    openWorktree: async (b) => {
+      if (!opts.open) throw new GitError('Switching worktree is done by the app here.');
+      return { url: await opts.open((await findWorktree(repo, b.path)).path) };
+    },
     stash: () => stash(repo),
     stashApply: (b) => stashApply(repo, b),
     stashPop: (b) => stashPop(repo, b),
@@ -195,6 +204,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo, query.get('all') === '1'));
     if (path === '/api/branches/commits') return send(res, 200, await branchCommits(repo, query.get('branch') ?? ''));
     if (path === '/api/branches/deleted') return send(res, 200, await deletedBranches(repo));
+    if (path === '/api/worktrees') return send(res, 200, await worktrees(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

@@ -4,11 +4,11 @@
   // a row for its menu. In merge or rebase mode it lists the branches to merge or rebase onto
   // instead: local ones but the current one, and every remote one; in copy mode, the local ones to
   // cherry-pick commits onto. The arrow on a branch lists its commits the current one doesn't have,
-  // to cherry-pick some here.
+  // to cherry-pick some here. A branch checked out in another worktree switches to that worktree.
   import { Button, Highlight, IconButton, Kbd, Popover, formatRelative, menu, rank, toast, type MaybeEntry } from 'purr';
   import {
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, Copy, CopySimple,
-    GitBranch, GitMerge, GitPullRequest, PencilSimple, Plus, Square, Trash,
+    FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, PencilSimple, Plus, Square, Trash,
   } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
@@ -17,6 +17,7 @@
     copyRequest, deleteBranch, deleteRemoteBranch, newBranch, renameBranch, restoreBranch, switchOp,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
+  import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
 
   type Row =
@@ -158,8 +159,10 @@
       open = false;
       app.sync(mode, { branch: r.kind === 'local' ? r.b.name : `${r.b.remote}/${r.b.name}` });
     } else if (r.kind === 'local') {
-      if (r.b.current) open = false;
-      else act(() => switchOp('switch', { branch: r.b.name }, r.b.name));
+      const worktree = r.b.worktree;
+      if (r.b.current || worktree) open = false;
+      if (worktree) openWorktree(worktree);
+      else if (!r.b.current) act(() => switchOp('switch', { branch: r.b.name }, r.b.name));
     } else if (r.kind === 'create') act(() => switchOp('createBranch', { name: r.name }, r.name));
     else if (r.kind === 'remote') act(() => switchOp('checkoutRemote', { ref: r.b.ref }, r.b.name));
     else act(() => restoreBranch(r.b, names.has(r.b.name)), true);
@@ -167,12 +170,25 @@
 
   const copyName = (name: string): MaybeEntry => ({ label: 'Copy name', icon: Copy, run: () => app.copy(name, 'the branch name') });
 
+  /** The folder's name of a worktree's path. */
+  const folder = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
+
+  function addWorktree(start?: Parameters<typeof newWorktree>[0]) {
+    open = false;
+    newWorktree(start);
+  }
+
   /** A local branch's menu. Entries for other actions on a branch go in their own section. */
   function localMenu(b: BranchInfo): MaybeEntry[] {
     // Only a remote-tracking upstream (`<remote>/<branch>`); the server checks it names a remote.
     const upstream = b.upstream?.includes('/') && b.track !== 'gone' ? b.upstream : '';
     return [
-      !b.current && { label: 'Switch to it', icon: ArrowsLeftRight, run: () => choose({ kind: 'local', b, indices: [] }) },
+      !b.current && {
+        label: b.worktree ? `Switch to its worktree (${folder(b.worktree)})` : 'Switch to it',
+        icon: b.worktree ? FolderSimple : ArrowsLeftRight,
+        run: () => choose({ kind: 'local', b, indices: [] }),
+      },
+      !b.current && !b.worktree && { label: 'New worktree for it…', icon: FolderPlus, run: () => addWorktree({ branch: b.name }) },
       { label: 'New branch from here…', icon: Plus, run: () => act(() => newBranch(b.sha, b.name), true) },
       { label: 'Rename…', icon: PencilSimple, run: () => act(() => renameBranch(b.name), true) },
       !b.current && !!here && { label: 'Cherry-pick from it…', icon: CopySimple, run: () => browse(b.name) },
@@ -184,8 +200,12 @@
         label: 'Delete',
         icon: Trash,
         danger: true,
-        disabled: b.current,
-        note: b.current ? "You're on it; switch to another branch first." : 'Kept under Recently deleted for two weeks.',
+        disabled: b.current || !!b.worktree,
+        note: b.current
+          ? "You're on it; switch to another branch first."
+          : b.worktree
+            ? `It's checked out in ${folder(b.worktree)}; remove that worktree first.`
+            : 'Kept under Recently deleted for two weeks.',
         confirm: `Delete ${b.name}`,
         run: () => act(() => deleteBranch(b.name), true),
       },
@@ -204,6 +224,11 @@
     const short = `${b.remote}/${b.name}`;
     return [
       { label: `Check out as ${b.name}`, icon: CloudArrowDown, run: () => choose({ kind: 'remote', b, indices: [] }) },
+      {
+        label: `Check out as ${b.name} in a new worktree…`,
+        icon: FolderPlus,
+        run: () => addWorktree({ branch: b.name, from: short, what: short, track: true }),
+      },
       { label: 'New branch from here…', icon: Plus, run: () => act(() => newBranch(b.sha, short), true) },
       !!here && { label: 'Cherry-pick from it…', icon: CopySimple, run: () => browse(short) },
       copyName(short),
@@ -395,6 +420,11 @@
                 <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
                 <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
                 <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                {#if b.worktree}
+                  <span class="worktree muted" title="Checked out in {b.worktree}; choosing it switches to that worktree">
+                    <FolderSimple />{folder(b.worktree)}
+                  </span>
+                {/if}
                 {#if b.track}<span class="track">{b.track}</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
@@ -424,9 +454,12 @@
           <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('rebase')} title="Pick a branch to rebase this one onto (r)">
             <GitPullRequest /> Rebase on…
           </Button>
+          <Button size="sm" variant="ghost" onclick={() => addWorktree()} title="Check a branch out in a folder of its own">
+            <FolderPlus /> New worktree…
+          </Button>
         </div>
         <p class="foot muted">
-          Right-click a branch to rename or delete it; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
+          Right-click a branch to rename or delete it, or to open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
           bring them along.
         </p>
       {:else if mode === 'commits'}
@@ -544,6 +577,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-sm);
+  }
+
+  .worktree {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    font-size: var(--fs-xs);
+    flex-shrink: 0;
+    max-width: 25%;
+    overflow: hidden;
+    white-space: nowrap;
   }
 
   .track {

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Worktrees: switch between a repo's worktrees from the repo name in the header, create one for a branch, and remove one.
+
 ## 0.2.0 — 2026-10-13
 
 - ⌘F finds text in the diff, collapsed files included; ⌘G / ⇧⌘G or ↵ / ⇧↵ move between matches.

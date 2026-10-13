@@ -1077,7 +1077,7 @@ export class Repo {
     const [out, current] = await Promise.all([
       this.git.text([
         'for-each-ref', '--sort=-committerdate',
-        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)',
+        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)',
         'refs/heads',
       ]),
       this.currentBranch(),
@@ -1086,8 +1086,12 @@ export class Repo {
       .split('\n')
       .filter(Boolean)
       .map((line) => {
-        const [name, sha, subject, time, upstream, track] = line.split('\0');
-        return { name, sha, subject, time: Number(time), upstream: upstream || null, track: track || null, current: name === current };
+        const [name, sha, subject, time, upstream, track, worktree] = line.split('\0');
+        const here = name === current;
+        return {
+          name, sha, subject, time: Number(time), upstream: upstream || null, track: track || null, current: here,
+          worktree: !here && worktree ? worktree : null,
+        };
       });
   }
 

@@ -38,6 +38,7 @@
   import { WORK, app } from './lib/app.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
+  import { newWorktree } from './lib/worktrees.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -56,6 +57,7 @@
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
+    newWorktree: () => newWorktree(),
     help: () => (help = true),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.
     leave: async (id: number) => {
@@ -108,7 +110,7 @@
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
-    ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
+    ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository or worktree' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
     { keys: '⌘F', action: 'find', label: 'Find in the diff' },
     { keys: '⌘G', action: 'findNext', label: 'Next match' },
