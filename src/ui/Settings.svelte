@@ -1,13 +1,13 @@
 <script lang="ts">
   // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
   // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
-  // as you type (shortly after), and the open diff is shown again with it.
-  import { Button, IconButton, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, toast } from 'purr';
-  import { ArrowsInLineVertical, Columns, Palette, Plus, Warning, X } from 'purr/icons';
+  // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts.
+  import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, type HelpGroup } from 'purr';
+  import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Warning, X } from 'purr/icons';
   import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, shortcuts }: { onclose: () => void; shortcuts: readonly HelpGroup[] } = $props();
 
   let section = $state('syntax');
   let info = $state.raw<SettingsInfo | null>(null);
@@ -99,6 +99,9 @@
         { id: 'collapse', label: 'Collapsed files', icon: ArrowsInLineVertical },
         { id: 'lines', label: 'Lines', icon: Columns },
       ],
+    },
+    {
+      sections: [{ id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard }],
     },
   ];
 </script>
@@ -199,6 +202,9 @@
           </SettingGroup>
         {/each}
         <p class="note muted">Leave a field empty for this repo to use the one for all repos; <code>none</code> turns it off here.</p>
+      {:else if section === 'shortcuts'}
+        <p class="note muted lead">Press <Kbd hint="?" /> anywhere to see these over the app.</p>
+        <ShortcutList groups={shortcuts} />
       {:else}
         {#each SCOPES as { scope, title, description } (scope)}
           <SettingGroup {title} description={description()}>
@@ -236,9 +242,11 @@
           to them. Patterns without a slash match the file name at any depth.
         </p>
       {/if}
-      <p class="note muted files">
-        Saved in <code>{info.files.repo}</code> (this repo) and <code>{info.files.global}</code> (all repos).
-      </p>
+      {#if section !== 'shortcuts'}
+        <p class="note muted files">
+          Saved in <code>{info.files.repo}</code> (this repo) and <code>{info.files.global}</code> (all repos).
+        </p>
+      {/if}
     </SettingsLayout>
   {/if}
 </Modal>
@@ -289,5 +297,9 @@
 
   .files {
     margin-top: var(--sp-3);
+  }
+
+  .lead {
+    margin: 0 0 var(--sp-4);
   }
 </style>

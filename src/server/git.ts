@@ -10,7 +10,14 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
-export class GitError extends Error {}
+export class GitError extends Error {
+  /** Lets the UI offer a way out, e.g. 'not-integrated' for a force push it can retry. */
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 export const toUtf8 = (s: string) => Buffer.from(s, 'latin1').toString('utf8');
 export const fromUtf8 = (s: string) => Buffer.from(s, 'utf8').toString('latin1');
@@ -28,6 +35,8 @@ export interface RunOpts {
   allowFail?: boolean;
   /** Kill the process after this many ms (for network operations). */
   timeout?: number;
+  /** Called with stderr as it arrives (for progress). */
+  onErr?: (chunk: string) => void;
 }
 
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
@@ -39,7 +48,10 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     p.stdout.on('data', (d: Buffer) => out.push(d));
-    p.stderr.on('data', (d: Buffer) => err.push(d));
+    p.stderr.on('data', (d: Buffer) => {
+      err.push(d);
+      opts.onErr?.(d.toString('utf8'));
+    });
     p.stdin.on('error', () => {});
     const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
     p.on('error', fail);

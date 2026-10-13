@@ -19,6 +19,7 @@ import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
+import { onProgress } from './progress.ts';
 import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
@@ -93,6 +94,11 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       for (const c of clients) c.write('data: work\n\n');
     }, 250);
   };
+  // Fetches and pushes say how far they've got, as a `progress` event.
+  const stopProgress = onProgress((root, p) => {
+    if (root !== repo.git.root) return;
+    for (const c of clients) c.write(`event: progress\ndata: ${JSON.stringify(p)}\n\n`);
+  });
   const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
   const watchers = dirs.map((d) =>
@@ -323,7 +329,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     } catch (e) {
       const known = e instanceof GitError;
       if (!known) console.error(e);
-      send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e) });
+      send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e), ...(known && e.code ? { code: e.code } : {}) });
     }
   });
 
@@ -337,6 +343,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
         url: `http://${origin}/`,
         close: () => {
           watchers.forEach((w) => w.close());
+          stopProgress();
           for (const c of clients) c.end();
           server.close();
         },

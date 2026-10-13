@@ -16,6 +16,7 @@ import type { CommitDiff, Conflict, ConflictFile, EditStop, RepoState, SyncResul
 import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
+import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
 
 type Kind = Conflict['kind'];
@@ -185,7 +186,7 @@ export async function editStop(git: Git): Promise<EditStop | null> {
 // ---- fetch ----
 
 /** Network settings: never wait for a password or a host-key prompt nobody can answer. */
-async function networkEnv(git: Git): Promise<Record<string, string>> {
+export async function networkEnv(git: Git): Promise<Record<string, string>> {
   // GIT_TERMINAL_PROMPT=0 (set for every git call) covers HTTPS; this covers SSH, unless
   // the user set up their own SSH command.
   if (process.env.GIT_SSH_COMMAND || process.env.GIT_SSH) return {};
@@ -213,12 +214,12 @@ const fetches = new Map<string, Promise<void>>();
  * a local branch, the index or the working tree. Operations that use a remote-tracking ref
  * read it once, so a fetch landing midway can't make them act on a mix of old and new.
  */
-function fetchFrom(git: Git, remote: string): Promise<void> {
+export function fetchFrom(git: Git, remote: string): Promise<void> {
   const key = `${git.root}\0${remote}`;
   let p = fetches.get(key);
   if (!p) {
     p = (async () => {
-      const r = await git.run(['fetch', remote], { allowFail: true, timeout: 120_000, env: await networkEnv(git) });
+      const r = await runWithProgress(git, 'fetch', remote, ['fetch', remote], { allowFail: true, timeout: 120_000, env: await networkEnv(git) });
       if (r.code === 0) return;
       const err = r.err.trim();
       const auth = /terminal prompts disabled|could not read Username|Authentication failed|Permission denied|Host key verification failed/i.test(err);

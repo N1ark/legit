@@ -83,6 +83,8 @@ export interface PushInfo {
    * commits, and pulling is.
    */
   rewritten: boolean;
+  /** The remote branch's tip as last fetched; null when publishing. A force push overwrites exactly this. */
+  tip: string | null;
 }
 
 export type LineKind = ' ' | '+' | '-';
@@ -350,6 +352,19 @@ export interface ConflictFile {
   markers: boolean;
   /** Line of the first marker, to open the file at. */
   line: number | null;
+}
+
+/** How far a fetch or push has got, from git's --progress output; streamed to the UI as it runs. */
+export interface Progress {
+  op: 'fetch' | 'push';
+  remote: string;
+  /** git's words, e.g. "Receiving objects"; null once it's finished. */
+  phase: string | null;
+  /** The remote's side of the transfer ("remote: Compressing objects"). */
+  server: boolean;
+  percent: number | null;
+  /** Amount and speed ("3.11 MiB | 590.00 KiB/s"), or the count ("5/12"). */
+  detail: string | null;
 }
 
 /** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */

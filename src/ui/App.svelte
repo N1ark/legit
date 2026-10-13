@@ -56,6 +56,7 @@
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
+    help: () => (help = true),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.
     leave: async (id: number) => {
       const why = app.switchBlocker;
@@ -69,6 +70,7 @@
     app.start();
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
+    events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
     const focus = () => app.refresh();
     const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
@@ -210,7 +212,7 @@
         <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
         <span><Kbd hint="⌥↑" /><Kbd hint="⌥↓" /> reorder</span>
         <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select many</span>
-        <span><Kbd hint="?" /> more</span>
+        <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> all shortcuts</button>
       </footer>
     </aside>
     <section data-scroller>
@@ -245,7 +247,7 @@
 <SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
-  <Settings onclose={() => (settings = false)} />
+  <Settings {shortcuts} onclose={() => (settings = false)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
@@ -336,10 +338,16 @@
     font-size: var(--fs-xs);
   }
 
-  footer span {
+  footer span,
+  footer .more {
     display: inline-flex;
     align-items: baseline;
     gap: var(--gap-1);
+  }
+
+  footer .more {
+    font-size: inherit;
+    color: inherit;
   }
 
   section {
