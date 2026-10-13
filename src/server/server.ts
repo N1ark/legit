@@ -18,6 +18,7 @@ import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.t
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
+import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch } from './sync.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
@@ -130,6 +131,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     pull: (b) => pull(repo, b),
     merge: (b) => mergeBranch(repo, b),
     rebase: (b) => rebaseBranch(repo, b),
+    cherryPick: (b) => cherryPick(repo, b),
+    copyTo: (b) => copyTo(repo, b),
     resolve: (b) => markResolved(repo, b),
     continue: () => continueOp(repo),
     abort: () => abortOp(repo),
@@ -183,6 +186,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
     if (path === '/api/branches/remote') return send(res, 200, await remoteBranches(repo, query.get('all') === '1'));
+    if (path === '/api/branches/commits') return send(res, 200, await branchCommits(repo, query.get('branch') ?? ''));
     if (path === '/api/branches/deleted') return send(res, 200, await deletedBranches(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {
@@ -202,7 +206,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
-    if (path === '/api/editing') return send(res, 200, await summary(await editChanges(repo)));
+    if (path === '/api/editing') return send(res, 200, await summary(await editChanges(repo, query.get('whole') === '1')));
     const older = /^\/api\/older\/([0-9a-f]{40,64})$/.exec(path);
     if (older) return send(res, 200, await repo.older(older[1]));
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);

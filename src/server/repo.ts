@@ -50,10 +50,12 @@ interface Move {
   after: string;
   /** Only HEAD moves; the index and working tree are left as they are (commit, amend, uncommit). */
   soft?: boolean;
+  /** Another branch moved (refs/heads/<name>), not HEAD: commits copied to it. */
+  ref?: string;
 }
 
 /** What the commit list shows of a commit. `local`: SHAs not on any remote-tracking branch. */
-function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
+export function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
   const a = parseIdent(toUtf8(c.author));
   return {
     sha: c.sha,
@@ -134,8 +136,8 @@ export class Repo {
       head,
       commits: [],
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
-      canUndo: this.stacksFor(branch || null).undo.at(-1)?.after === head,
-      canRedo: this.stacksFor(branch || null).redo.at(-1)?.before === head,
+      canUndo: await this.applies(this.stacksFor(branch || null).undo.at(-1), 'after', head),
+      canRedo: await this.applies(this.stacksFor(branch || null).redo.at(-1), 'before', head),
       push,
       github: pickGithubRepo(remotes, push?.remote),
       work: await workCounts(this.git),
@@ -711,13 +713,28 @@ export class Repo {
     });
   }
 
+  /** `m` can be undone (`side` 'after') or redone ('before'): what it moved is still where it left it. */
+  private async applies(m: Move | undefined, side: 'before' | 'after', head: string | null): Promise<boolean> {
+    if (!m) return false;
+    if (!m.ref) return m[side] === head;
+    return (await this.git.text(['rev-parse', '-q', '--verify', m.ref], { allowFail: true })) === m[side];
+  }
+
+  /** Move another branch from `from` to `to` (after a backup of `from`), with a compare-and-swap. */
+  async moveRef(ref: string, from: string, to: string, label: string) {
+    await this.backup(from, label, ref.replace(/^refs\/heads\//, ''));
+    const r = await this.git.run(['update-ref', '-m', `legit: ${label}`, ref, to, from], { allowFail: true });
+    if (r.code !== 0) throw new GitError(`${ref.replace(/^refs\/heads\//, '')} moved in the meantime; nothing was changed. ${r.err.trim()}`);
+  }
+
   undo(): Promise<OpResult> {
     return this.exclusive(async () => {
       const h = await this.stacks();
       const m = h.undo.at(-1);
       const head = await this.head();
-      if (!m || m.after !== head) throw new GitError('Nothing to undo.');
-      if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
+      if (!(await this.applies(m, 'after', head)) || !m) throw new GitError('Nothing to undo.');
+      if (m.ref) await this.moveRef(m.ref, m.after, m.before, `undo ${m.label}`);
+      else if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
       else await this.moveHead(m.after, m.before, `undo ${m.label}`);
       h.redo.push(h.undo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };
@@ -729,8 +746,9 @@ export class Repo {
       const h = await this.stacks();
       const m = h.redo.at(-1);
       const head = await this.head();
-      if (!m || m.before !== head) throw new GitError('Nothing to redo.');
-      if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
+      if (!(await this.applies(m, 'before', head)) || !m) throw new GitError('Nothing to redo.');
+      if (m.ref) await this.moveRef(m.ref, m.before, m.after, `redo ${m.label}`);
+      else if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
       else await this.moveHead(m.before, m.after, `redo ${m.label}`);
       h.undo.push(h.redo.pop()!);
       return { state: await this.state(), renamed: {}, focus: [] };

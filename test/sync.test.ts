@@ -164,15 +164,49 @@ test('diverged: pull refuses to guess; rebase replays in memory, dropping commit
   assert.equal(git('rev-parse', 'HEAD'), before);
 });
 
-test('rebase refuses on a conflict or a merge among the local commits, changing nothing', async () => {
+test('a conflicting rebase stops at each conflict to resolve, continues and undoes in one step; refused with uncommitted changes', async () => {
   const repo = await Repo.open(dir);
-  theyPush('theirs', { f: 'theirs\n' });
+  theyPush('theirs', { f: 'theirs\n', g: 'theirs\n' });
   commit('mine', { f: 'mine\n' });
+  commit('clean', { h: 'h\n' });
+  commit('mine too', { g: 'mine\n' });
   const head = git('rev-parse', 'HEAD');
-  await assert.rejects(pull(repo, { how: 'rebase' }), /would conflict\. Conflict replaying .* "mine" in: f\. .*Merge instead/s);
+
+  write('h', 'dirty\n');
+  await assert.rejects(pull(repo, { how: 'rebase' }), /conflicts\. Conflict replaying .* "mine" in: f\. Resolving.*without uncommitted changes.*Nothing was changed/s);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(read('h'), 'dirty\n');
+  git('checkout', '-q', '--', 'h');
+
+  let r = await pull(repo, { how: 'rebase' });
+  assert.match(r.message, /Rebasing main onto origin\/main stopped with conflicts in 1 file/);
+  assert.equal(r.state.conflict?.kind, 'rebase');
+  assert.deepEqual(r.state.conflict?.files.map((f) => f.path), ['f']);
+  write('f', 'both\n');
+  await markResolved(repo, { path: 'f' });
+  r = await continueOp(repo);
+  assert.match(r.message, /stopped again with conflicts in 1 file/);
+  assert.deepEqual(r.state.conflict?.files.map((f) => f.path), ['g']);
+  write('g', 'both\n');
+  await markResolved(repo, { path: 'g' });
+  r = await continueOp(repo);
+  assert.equal(r.state.conflict, null);
+  assert.equal(r.state.branch, 'main');
+  assert.deepEqual(log(), ['mine too', 'clean', 'mine', 'theirs', 'base']);
+  assert.equal(read('f'), 'both\n');
+  assert.ok(r.state.canUndo);
+  await repo.undo();
   assert.equal(git('rev-parse', 'HEAD'), head);
   assert.equal(read('f'), 'mine\n');
+
+  // Aborting puts everything back; so does rebasing onto a branch the same way.
+  r = await rebaseBranch(repo, { branch: 'origin/main' });
+  assert.equal(r.state.conflict?.kind, 'rebase');
+  await abortOp(repo);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(git('symbolic-ref', '--short', 'HEAD'), 'main');
   assert.equal(git('status', '--porcelain'), '');
+  git('reset', '-q', '--hard', 'HEAD~2');
 
   git('reset', '-q', '--hard', 'HEAD~1');
   git('checkout', '-q', '-b', 'side');

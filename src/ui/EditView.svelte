@@ -2,18 +2,25 @@
   // A commit checked out to edit its files (a rebase stopped at it). The files are changed in an
   // editor; this shows what changed so far, and Finish amends it into the commit and replays the
   // commits after it (conflicts go to the conflict view), or Cancel puts everything back.
-  import { Button, ConfirmButton, Kbd, hasOverlay, matches } from 'purr';
+  import { Button, ConfirmButton, Kbd, Segmented, hasOverlay, matches } from 'purr';
   import { ArrowCounterClockwise, Check } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { type DiffPosition, EDITING, app, shortSha } from './lib/app.svelte.ts';
 
   const edit = $derived(app.repo?.conflict?.edit ?? null);
 
-  // The edits so far, straight from the working tree.
-  let diff = $state.raw<DiffSummary | null>(null);
+  // The commit as finishing would make it (its diff, with the edits), or only the edits so far,
+  // straight from the working tree. It opens where the commit's own view was.
+  let show = $state<'whole' | 'edits'>('whole');
+  let whole = $state.raw<DiffSummary | null>(null);
+  let edits = $state.raw<DiffSummary | null>(null);
   let error = $state<string | null>(null);
+  let diffView = $state<DiffView>();
+  // Each new diff (on every edit, or switching what's shown) opens where the last one was.
+  let at = $state.raw<DiffPosition | null>(app.takeDiffPosition(EDITING));
+  const diff = $derived(show === 'whole' ? whole : edits);
   let loading = false;
   let again = false;
   async function load() {
@@ -23,12 +30,15 @@
     }
     loading = true;
     try {
-      const res = await fetch('/api/editing');
-      const d: DiffSummary | { error: string } = await res.json();
-      if ('error' in d) error = d.error;
+      const get = (q: string): Promise<DiffSummary | { error: string }> => fetch(`/api/editing${q}`).then((r) => r.json());
+      const [w, e] = await Promise.all([get('?whole=1'), get('')]);
+      if ('error' in w || 'error' in e) error = 'error' in w ? w.error : (e as { error: string }).error;
       else {
         error = null;
-        if (d.sha !== diff?.sha) diff = d;
+        const next = { whole: w.sha !== whole?.sha ? w : whole, edits: e.sha !== edits?.sha ? e : edits };
+        if ((show === 'whole' ? next.whole : next.edits) !== diff) at = diffView?.position() ?? at;
+        whole = next.whole;
+        edits = next.edits;
       }
     } finally {
       loading = false;
@@ -37,6 +47,11 @@
         load();
       }
     }
+  }
+
+  function setShow(v: 'whole' | 'edits') {
+    at = diffView?.position() ?? at;
+    show = v;
   }
 
   $effect(() => {
@@ -49,8 +64,8 @@
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
   const SHOWN = 8;
 
-  const finish = () => app.sync('editFinish');
-  const cancel = () => app.sync('editCancel');
+  const finish = () => app.endEdit('editFinish', diffView?.position() ?? at);
+  const cancel = () => app.endEdit('editCancel', diffView?.position() ?? at);
 
   function onWindowKey(e: KeyboardEvent) {
     if (matches('⌘↩', e) && !hasOverlay() && !app.busy) {
@@ -105,7 +120,7 @@
         >
           <Check weight="bold" /> Finish editing <Kbd hint="⌘↩" />
         </Button>
-        {#if diff?.files.length}
+        {#if edits?.files.length}
           <ConfirmButton
             confirmLabel="Click to cancel. Your edits are saved first"
             onconfirm={cancel}
@@ -119,6 +134,16 @@
             <ArrowCounterClockwise /> Cancel
           </Button>
         {/if}
+        <span class="spacer"></span>
+        <Segmented
+          label="What the diff shows"
+          size="sm"
+          options={[
+            { id: 'whole', label: 'Whole commit' },
+            { id: 'edits', label: edits?.files.length ? `Your edits (${edits.files.length})` : 'Your edits' },
+          ]}
+          bind:value={() => show, setShow}
+        />
       </div>
     </div>
 
@@ -127,10 +152,10 @@
     {:else if !diff}
       <p class="muted empty">Loading changes…</p>
     {:else if !diff.files.length}
-      <p class="muted empty">No changes yet.</p>
+      <p class="muted empty">{show === 'edits' ? 'No changes yet.' : 'The commit changes nothing (yet).'}</p>
     {:else}
       {#key diff.sha}
-        <DiffView summary={diff} {sel} readonly={true} />
+        <DiffView bind:this={diffView} summary={diff} {sel} readonly={true} initial={at} />
       {/key}
     {/if}
   </div>
@@ -226,5 +251,9 @@
 
   .empty {
     padding: var(--sp-5);
+  }
+
+  .spacer {
+    flex: 1;
   }
 </style>

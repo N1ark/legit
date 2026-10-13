@@ -8,6 +8,7 @@
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
   import { formatPerson, parsePeople } from './lib/people.ts';
+  import { splitTitle } from './lib/split.ts';
   import { type DiffPosition, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
@@ -54,13 +55,13 @@
 
   function save() {
     if (!dirty || !valid || readonly) return;
-    app.op('edit', {
+    app.rewriteInPlace('edit', {
       sha: commit.sha,
       subject,
       body,
       author: { name: authorName, email: authorEmail },
       coauthors: parsedCo ?? [],
-    });
+    }, diffView?.position() ?? null);
   }
 
   function revert() {
@@ -114,9 +115,22 @@
     return out;
   }
 
+  // The new commit's title starts as a default (the original's, naming the picked files), until typed over.
+  let splitTyped = $state(false);
+  let keepSelected = false;
+  const splitDefault = $derived(splitTitle(commit.subject, Object.keys(sel).filter((p) => sel[p].size)));
+  const splitTitleNow = $derived(splitTyped ? splitMessage : splitDefault);
+  $effect(() => {
+    if (!picked.files) splitTyped = false;
+  });
+
   function split() {
-    if (!picked.files || !splitMessage.trim() || readonly) return;
-    app.op('split', { sha: commit.sha, selection: selection(), message: splitMessage, before: where === 'before' });
+    if (!picked.files || !splitTitleNow.trim() || readonly) return;
+    app.rewriteInPlace(
+      'split',
+      { sha: commit.sha, selection: selection(), message: splitTitleNow, before: where === 'before' },
+      diffView?.position() ?? null,
+    );
   }
 
   /**
@@ -239,7 +253,7 @@
         class="btn--danger"
         timeout={3000}
         confirmLabel="Click again to drop"
-        onconfirm={() => app.op('drop', { shas: [commit.sha] })}
+        onconfirm={() => app.drop([commit])}
         disabled={app.busy}
         title="Drop this commit"
         aria-label="Drop this commit"
@@ -361,8 +375,28 @@
         ]}
         bind:value={where}
       />
-      <input class="field-input msg" bind:value={splitMessage} placeholder="New commit title" onkeydown={onSplitKey} />
-      <Button variant="primary" onclick={split} disabled={!splitMessage.trim() || app.busy}>Split <Kbd hint="↩" /></Button>
+      <input
+        class="field-input msg"
+        value={splitTitleNow}
+        placeholder="New commit title"
+        aria-label="New commit title"
+        oninput={(e) => {
+          splitMessage = e.currentTarget.value;
+          splitTyped = true;
+        }}
+        onfocus={(e) => {
+          if (splitTyped) return;
+          e.currentTarget.select();
+          keepSelected = true;
+        }}
+        onmouseup={(e) => {
+          // A click's mouseup would put the caret in the default title it just selected.
+          if (keepSelected) e.preventDefault();
+          keepSelected = false;
+        }}
+        onkeydown={onSplitKey}
+      />
+      <Button variant="primary" onclick={split} disabled={!splitTitleNow.trim() || app.busy}>Split <Kbd hint="↩" /></Button>
       <Button
         onclick={() => remove(selection())}
         disabled={app.busy}

@@ -3,7 +3,7 @@ import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
-  CommitInfo, DiffSummary, DisplaySettings, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
+  CommitInfo, DiffSummary, DisplaySettings, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
   Stashes, SyncResult,
 } from '../../shared/types.ts';
 
@@ -285,25 +285,46 @@ class App {
     }
   }
 
-  /** Where to put the diff of a commit that was just rewritten from its own diff (see `editDiff`). */
+  /** Where to put the diff of a commit that was just rewritten from its own view (see `rewriteInPlace`). */
   diffPosition: { sha: string; at: DiffPosition } | null = null;
 
   /**
-   * Run an operation that edits commit `sha`'s diff (remove changes, edit a line). The rewritten
-   * commit's view opens where this one was (`at`), with its file list and the files that were in
-   * view already loaded, so it doesn't jump or flash.
+   * Run an operation that rewrites commit `sha` from its own view (edit its message or diff,
+   * split it). The rewritten commit's view opens where this one was (`at`), with its file list and
+   * the files that were in view already loaded, so it doesn't jump or flash.
    */
+  rewriteInPlace(
+    name: 'edit' | 'split' | 'removeChanges' | 'editLine',
+    body: EditRequest | SplitRequest | RemoveChangesRequest | EditLineRequest,
+    at: DiffPosition | null,
+  ) {
+    return this.op(name, body, undefined, async (r) => {
+      const sha = r.renamed[body.sha];
+      if (sha && !r.state.conflict) await this.placeDiff(sha, at);
+    });
+  }
+
+  /** Have the next view of `sha`'s diff (or of the commit being edited, `EDITING`) open at `at`. */
+  private async placeDiff(sha: string, at: DiffPosition | null) {
+    if (!at) return;
+    this.diffPosition = { sha, at };
+    if (sha === EDITING) return;
+    const d = await this.diff(sha);
+    const want = d.files.flatMap((f, i) => (f.rows && at.shown.includes(f.path) ? [i] : []));
+    if (want.length) await this.fileContents(sha, want);
+  }
+
+  /** Where the shown commit's diff is scrolled to, when `sha` is the one shown. */
+  private shownPosition(sha: string): DiffPosition | null {
+    const k = this.keepers.get('commit')?.() as { sha: string; position: DiffPosition | null } | undefined;
+    return k?.sha === sha ? k.position : null;
+  }
+
+  /** Remove changes from commit `sha`'s diff or edit one of its lines, staying where its view was. */
   async editDiff(
     ...[name, body, at]: ['removeChanges', RemoveChangesRequest, DiffPosition | null] | ['editLine', EditLineRequest, DiffPosition | null]
   ): Promise<boolean> {
-    const ok = await this.op(name, body, undefined, async (r) => {
-      const sha = r.renamed[body.sha];
-      if (!sha || !at || r.state.conflict) return;
-      this.diffPosition = { sha, at };
-      const d = await this.diff(sha);
-      const want = d.files.flatMap((f, i) => (f.rows && at.shown.includes(f.path) ? [i] : []));
-      if (want.length) await this.fileContents(sha, want);
-    });
+    const ok = await this.rewriteInPlace(name, body, at);
     // A later commit conflicted with the change, and the rebase replaying them stopped there.
     if (ok && this.repo?.conflict) {
       toast('A later commit conflicts with that change. Resolve the conflicts and continue, or abort to put everything back.', {
@@ -315,14 +336,24 @@ class App {
 
   /** The position saved for `sha`'s diff, once. */
   takeDiffPosition(sha: string): DiffPosition | null {
-    const p = this.diffPosition?.sha === sha ? this.diffPosition.at : null;
+    // Another view may open first (a refresh landing mid-operation): the position waits for its own.
+    if (this.diffPosition?.sha !== sha) return null;
+    const p = this.diffPosition.at;
     this.diffPosition = null;
     return p;
   }
 
-  /** Check out commit `sha` to edit its files (see EditView). */
+  /** Check out commit `sha` to edit its files (see EditView), which opens where its diff was. */
   editCommit(sha: string) {
-    return this.sync('editStart', { sha });
+    const at = this.shownPosition(sha);
+    return this.sync('editStart', { sha }, () => this.placeDiff(EDITING, at));
+  }
+
+  /** Finish or cancel editing a commit; its view then opens where the editing view (`at`) was. */
+  endEdit(how: 'editFinish' | 'editCancel', at: DiffPosition | null) {
+    return this.sync(how, {}, async (r) => {
+      if (!r.state.conflict && r.focus.length === 1) await this.placeDiff(r.focus[0], at);
+    });
   }
 
   /**
@@ -444,6 +475,14 @@ class App {
     return this.op('squash', { shas: newestFirst.map((c) => c.sha), subject, body, coauthors });
   }
 
+  /** Drop commits (the files lose their changes too); the toast offers to undo it. */
+  async drop(commits: CommitInfo[]) {
+    if (!commits.length || !(await this.op('drop', { shas: commits.map((c) => c.sha) }))) return;
+    const what = commits.length === 1 ? `"${commits[0].subject}"` : `${commits.length} commits`;
+    const undo = async () => (await this.undo()) && this.select(commits[0].sha);
+    toast(`Dropped ${what}.`, { timeout: 8000, action: { label: 'Undo', run: undo } });
+  }
+
   /** Anything staged, unstaged or untracked, or a merge (rebase...) in progress. */
   hasWork = $derived(
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
@@ -517,16 +556,24 @@ class App {
    * Run a sync operation (pull, merge, rebase, resolve, continue, abort) and toast what
    * happened. Returns the result, or null if it failed.
    */
-  async sync(name: string, body: unknown = {}): Promise<SyncResult | null> {
+  async sync(
+    name: string,
+    body: unknown = {},
+    prepare?: (r: SyncResult) => Promise<unknown>,
+    undoable = false,
+  ): Promise<SyncResult | null> {
     if (this.busy) return null;
     const gen = ++this.gen;
     this.busy = true;
     this.running = name;
     try {
       const r = await request<SyncResult>(`/api/${name}`, body);
+      await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
       this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
-      if (r.message) toast(r.message, { timeout: r.message.length > 80 ? 10_000 : undefined });
+      // The toast's Undo only once it's finished (not stopped on a conflict).
+      const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : undefined;
+      if (r.message) toast(r.message, { timeout: r.message.length > 80 || undo ? 10_000 : undefined, action: undo });
       return r;
     } catch (e) {
       toast.error(e);
@@ -653,6 +700,8 @@ interface View {
 
 /** Selection key of the "Uncommitted changes" entry. */
 export const WORK = 'work';
+/** `diffPosition` key of the view of the commit being edited (see EditView). */
+export const EDITING = 'editing';
 
 export const app = new App();
 

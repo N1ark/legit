@@ -11,8 +11,8 @@
     !base ? ''
     : app.repo?.blocked ? `${app.repo.blocked} Finish or abort it first.`
     : `${base.name} has ${commits(base.behind)} that ${app.repo?.branch} doesn't: fetch, then replay the commits only on ${app.repo?.branch} ` +
-      `on top of it, in memory. Refused, changing nothing, if anything conflicts. Uncommitted changes come along unless they'd be ` +
-      `overwritten. ⌘Z undoes it.`,
+      `on top of it, in memory; uncommitted changes come along unless they'd be overwritten. If a commit conflicts, it stops there ` +
+      `for you to resolve (that needs no uncommitted changes). ⌘Z undoes it.`,
   );
 </script>
 

@@ -74,7 +74,7 @@
         {
           label: `Rebase onto ${where}`,
           icon: GitPullRequest,
-          note: `Replays your ${commits(info.ahead)} on top. Refused if anything conflicts.`,
+          note: `Replays your ${commits(info.ahead)} on top, stopping at each one that conflicts for you to resolve.`,
           run: () => app.sync('pull', { how: 'rebase' }),
         },
         {
