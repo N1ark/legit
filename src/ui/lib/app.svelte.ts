@@ -547,7 +547,12 @@ class App {
    * Run a sync operation (pull, merge, rebase, resolve, continue, abort) and toast what
    * happened. Returns the result, or null if it failed.
    */
-  async sync(name: string, body: unknown = {}, prepare?: (r: SyncResult) => Promise<unknown>): Promise<SyncResult | null> {
+  async sync(
+    name: string,
+    body: unknown = {},
+    prepare?: (r: SyncResult) => Promise<unknown>,
+    undoable = false,
+  ): Promise<SyncResult | null> {
     if (this.busy) return null;
     const gen = ++this.gen;
     this.busy = true;
@@ -557,7 +562,9 @@ class App {
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
       this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
-      if (r.message) toast(r.message, { timeout: r.message.length > 80 ? 10_000 : undefined });
+      // The toast's Undo only once it's finished (not stopped on a conflict).
+      const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : undefined;
+      if (r.message) toast(r.message, { timeout: r.message.length > 80 || undo ? 10_000 : undefined, action: undo });
       return r;
     } catch (e) {
       toast.error(e);

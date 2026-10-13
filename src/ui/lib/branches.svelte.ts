@@ -29,6 +29,18 @@ class SwitchQuestion {
 
 export const question = new SwitchQuestion();
 
+/** Commits waiting for the branch picker to pick the branch to copy them to (see `copyToBranch`). */
+class CopyRequest {
+  shas = $state<string[] | null>(null);
+}
+
+export const copyRequest = new CopyRequest();
+
+/** Open the branch picker to cherry-pick `shas` onto another branch. */
+export function copyToBranch(shas: string[]) {
+  copyRequest.shas = shas;
+}
+
 /**
  * Run a switching op (`switch`, `createBranch`, `checkoutRemote`) to branch `to`, asking about
  * uncommitted changes first. Returns true on success.

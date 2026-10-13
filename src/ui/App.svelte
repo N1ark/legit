@@ -118,6 +118,7 @@
       { label: "Remove picked changes from the commit", hints: ['⌫'] },
       { label: 'Editing a line (double-click it): save / add a line', hints: ['↩', '⇧↩'] },
       { label: 'Revert edits, clear picked changes', hints: ['Esc'] },
+      { label: "Branch list: a branch's commits to cherry-pick / pick them", hints: ['→', '⌘↩'] },
     ],
   });
 

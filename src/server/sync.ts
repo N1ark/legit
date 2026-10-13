@@ -329,7 +329,7 @@ async function integrate(repo: Repo, t: Target): Promise<SyncResult> {
  * overwritten. The old tip is backed up first, HEAD moves with a compare-and-swap, and the move
  * can be undone.
  */
-async function carry(repo: Repo, from: string, to: string, label: string) {
+export async function carry(repo: Repo, from: string, to: string, label: string) {
   const git = repo.git;
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const r = await git.run(['read-tree', '-m', '-u', from, to], { allowFail: true });
@@ -507,8 +507,9 @@ export async function continueNow(repo: Repo, label?: string): Promise<SyncResul
     }
     const head = await repo.head();
     const branch = await opBranch(repo, kind);
-    // A rebase moves the branch from where it was before the rebase started.
-    const before = kind === 'rebase' ? (await readGitFile(git, `${rebaseDir(git)}/orig-head`)) || head : head;
+    // A rebase moves the branch from where it was before it started; so does a series of cherry-picks or reverts.
+    const start = kind === 'rebase' ? `${rebaseDir(git)}/orig-head` : kind === 'cherry-pick' || kind === 'revert' ? 'sequencer/head' : '';
+    const before = (start && (await readGitFile(git, start))) || head;
     if (before) await backupOnce(repo, before, kind, branch);
 
     const r = await git.run(CONTINUE[kind], { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } });
