@@ -1,8 +1,11 @@
 // Commit diffs: parsing git's patch output, and rebuilding files from a subset of changed lines.
 
 import { createHash } from 'node:crypto';
+import { lstat, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { CONTEXT_LINES, expandable, moreAfter } from '../shared/context.ts';
 import type { CommitDiff, DiffLine, DiffSummary, FileDiff, FileLines, HunkData, Hunk } from '../shared/types.ts';
+import { imageType } from '../shared/files.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -117,6 +120,48 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
       return { ...rest, path: toUtf8(f.path), ...(f.oldPath === undefined ? {} : { oldPath: toUtf8(f.oldPath) }), rows, width, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
     }),
   };
+}
+
+const absent = (sha: string) => !sha || /^0+$/.test(sha);
+/** The file on disk, for a working-tree side (its byte-string path). */
+const onDisk = (git: Git, path: string) => join(git.root, Buffer.from(path, 'latin1').toString('utf8'));
+
+/** A file's bytes on one side of a diff: its blob, or the file on disk for working-tree changes; null where there's none. */
+export async function fileBytes(git: Git, f: FileDiff, side: 'old' | 'new'): Promise<Buffer | null> {
+  if (side === 'old' ? f.status === 'A' || absent(f.oldSha) : f.status === 'D') return null;
+  const sha = side === 'old' ? f.oldSha : f.newSha;
+  if (absent(sha)) return readFile(onDisk(git, f.path)).catch(() => null);
+  return (await git.readObjects([sha])).get(sha)?.data ?? null;
+}
+
+/** Sizes in bytes of binary files and images, on each side that has one, by file index. */
+export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { oldSize?: number; newSize?: number }>> {
+  const out = new Map<number, { oldSize?: number; newSize?: number }>();
+  const shas = new Set<string>();
+  const want = d.files.flatMap((f, k) => (f.binary || imageType(f.path) ? [k] : []));
+  for (const k of want) {
+    const f = d.files[k];
+    if (f.status !== 'A' && !absent(f.oldSha)) shas.add(f.oldSha);
+    if (f.status !== 'D' && !absent(f.newSha)) shas.add(f.newSha);
+  }
+  const sizes = new Map<string, number>();
+  if (shas.size) {
+    const { out: res } = await git.run(['cat-file', '--batch-check=%(objectname) %(objectsize)'], { input: [...shas].join('\n') + '\n' });
+    for (const l of res.toString('latin1').split('\n')) {
+      const [sha, n] = l.split(' ');
+      if (/^\d+$/.test(n ?? '')) sizes.set(sha, +n);
+    }
+  }
+  for (const k of want) {
+    const f = d.files[k];
+    const s: { oldSize?: number; newSize?: number } = {};
+    if (f.status !== 'A' && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
+    if (f.status !== 'D') {
+      s.newSize = absent(f.newSha) ? await lstat(onDisk(git, f.path)).then((st) => st.size, () => undefined) : sizes.get(f.newSha);
+    }
+    out.set(k, s);
+  }
+  return out;
 }
 
 /** A modified file's old version (utf8 for display), for the lines between its hunks. */

@@ -143,6 +143,9 @@ export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   rows: number;
   /** Widest line, in columns (tabs count as 4). */
   width: number;
+  /** Binary files and images: their size in bytes before and after (absent on a side without one). */
+  oldSize?: number;
+  newSize?: number;
 }
 
 export interface DiffSummary {

@@ -4,7 +4,8 @@ import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
-import { fileContent, oldLines, summarize } from './diff.ts';
+import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
+import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
@@ -66,6 +67,9 @@ const KEY = String.raw`(s?[0-9a-f]{40,64}|w\d+|q[0-9a-f]{40,64}(?:[-.][0-9a-f]{4
 const DIFF = new RegExp(`^/api/diff/${KEY}$`);
 const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
+const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
+/** Images bigger than this aren't shown. */
+const MAX_IMAGE = 50 * 1024 * 1024;
 
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   const clients = new Set<ServerResponse>();
@@ -164,7 +168,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       // A squash's attributes are its newest commit's.
       const source = work ? null : d.sha.replace(/^[sq]/, '').split(/[-.]/)[0];
       const generated = await generatedPaths(repo.git, source, paths, settings.collapse);
-      json = JSON.stringify(summarize(d, generated, syntaxes(settings.syntax, paths)));
+      const s = summarize(d, generated, syntaxes(settings.syntax, paths));
+      for (const [k, sizes] of await fileSizes(repo.git, d)) Object.assign(s.files[k], sizes);
+      json = JSON.stringify(s);
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
     }
@@ -219,6 +225,28 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
       if (!f) return send(res, 404, { error: 'Not found' });
       return send(res, 200, await oldLines(repo.git, f));
+    }
+    // /api/diff/<sha>/image?i=3&side=old: an image file as it was or is, for an <img> of this page only.
+    const image = DIFF_IMAGE.exec(path);
+    if (image) {
+      const site = req.headers['sec-fetch-site'];
+      if (site && site !== 'same-origin' && site !== 'none') return send(res, 403, { error: 'Forbidden' });
+      const f = (await repo.diff(image[1])).files[Number(query.get('i'))];
+      const type = f && imageType(f.path);
+      if (!type) return send(res, 404, { error: 'Not found' });
+      const data = await fileBytes(repo.git, f, query.get('side') === 'old' ? 'old' : 'new');
+      if (!data) return send(res, 404, { error: 'Not found' });
+      if (data.length > MAX_IMAGE) return send(res, 413, { error: 'Too big to show' });
+      res.writeHead(200, {
+        'content-type': type,
+        // Commits and stashes never change; working-tree snapshots' files might.
+        'cache-control': /^w\d+$/.test(image[1]) ? 'no-store' : 'private, max-age=3600',
+        'x-content-type-options': 'nosniff',
+        'cross-origin-resource-policy': 'same-origin',
+        // An SVG opened on its own runs no script and loads nothing.
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      });
+      return res.end(data);
     }
     if (path === '/api/settings') {
       const s = await readSettings(repo.git);

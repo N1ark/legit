@@ -21,8 +21,10 @@
   import { flushSync, onMount, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
+  import { formatSize, imageType } from '../shared/files.ts';
   import type { DiffSummary, FileSummary, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
+  import ImageDiff from './ImageDiff.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import {
@@ -81,6 +83,8 @@
   const PREFETCH = 4;
   /** Unchanged lines one click on a gap's arrow shows. */
   const STEP = 20;
+  /** An image file's before and after, above its lines if it has any. */
+  const IMG = 320;
 
   // Which files are collapsed as generated, and their grammars, come from the settings: when those
   // change, the summary's fetched again and those two taken from it, in place (nothing else can change).
@@ -142,8 +146,10 @@
 
   /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
   const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows;
-  const bodyHeight = (i: number) =>
-    files[i].rows ? rowCount(i) * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0) : NOTE;
+  /** Height of what comes before file i's lines: its images. */
+  const lead = (i: number) => (imageType(files[i].path) && files[i].oldSha !== files[i].newSha ? IMG : 0);
+  const linesHeight = (i: number) => rowCount(i) * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0);
+  const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
@@ -154,7 +160,7 @@
 
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
-    const y = tops[i] + HEAD;
+    const y = tops[i] + HEAD + lead(i);
     const [a, b] = fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
@@ -564,6 +570,14 @@
     ]);
   }
 
+  /** "12.3 KB → 14.1 KB", or the one side there is. */
+  function sizes(f: FileSummary): string {
+    const [a, b] = [f.oldSize, f.newSize].map((n) => (n === undefined ? null : formatSize(n)));
+    return a && b ? `${a} → ${b}` : b ? `added, ${b}` : a ? `deleted, ${a}` : '';
+  }
+
+  const imageUrl = (i: number, side: 'old' | 'new') => `/api/diff/${summary.sha}/image?i=${i}&side=${side}`;
+
   const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed', R: 'renamed', C: 'copied' };
   const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined, R: undefined, C: undefined };
   const MARK = [' ', ' ', '+', '-'];
@@ -647,15 +661,26 @@
           </div>
 
           {#if !collapsed[i]}
-            {#if !f.rows}
+            {#if lead(i)}
+              {@const kind = f.path.slice(f.path.lastIndexOf('.') + 1).toUpperCase()}
+              <ImageDiff
+                before={f.status === 'A' ? null : imageUrl(i, 'old')}
+                after={f.status === 'D' ? null : imageUrl(i, 'new')}
+                note={sizes(f) ? `${kind} · ${sizes(f)}` : kind}
+                height={IMG}
+                last={!f.rows}
+              />
+            {/if}
+            {#if !f.rows && !lead(i)}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
                 {f.oldPath && f.oldSha === f.newSha && f.oldMode === f.newMode
                   ? `${statusLabel[f.status][0].toUpperCase()}${statusLabel[f.status].slice(1)}, no changes`
-                  : f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
+                  : f.binary ? `Binary file${sizes(f) ? ` · ${sizes(f)}` : ''}`
+                  : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
-            {:else}
-              <div class="body" class:loading={!rows} style:height="{bodyHeight(i)}px">
+            {:else if f.rows}
+              <div class="body" class:loading={!rows} style:height="{linesHeight(i)}px">
                 {#if rows}
                   {@const shown = rowRange(i)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
