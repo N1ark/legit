@@ -1,9 +1,9 @@
 <script lang="ts">
-  // legit's settings: which files diffs collapse, and which tree-sitter grammar highlights
-  // which files. Each list has a part for this repo and one for all repos; a change is saved
+  // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
+  // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
   // as you type (shortly after), and the open diff is shown again with it.
-  import { Button, IconButton, Modal, SettingGroup, SettingsLayout, toast } from 'purr';
-  import { ArrowsInLineVertical, Palette, Plus, Warning, X } from 'purr/icons';
+  import { Button, IconButton, Modal, SettingGroup, SettingRow, SettingsLayout, toast } from 'purr';
+  import { ArrowsInLineVertical, Columns, Palette, Plus, Warning, X } from 'purr/icons';
   import type { Scope, ScopeSettings, SettingsInfo } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
 
@@ -18,13 +18,27 @@
     try {
       const i = await request<SettingsInfo>('/api/settings');
       info = i;
-      if (first) draft = { repo: i.repo, global: i.global };
+      if (first) {
+        draft = { repo: i.repo, global: i.global };
+        guides = { repo: columnsText(i.repo.guides), global: columnsText(i.global.guides) };
+      }
     } catch (e) {
       toast.error(e);
       if (first) onclose();
     }
   }
   load(true);
+
+  // Guide columns as typed: "80, 120"; empty is unset (as for all repos), "none" is none.
+  let guides = $state<Record<Scope, string>>({ repo: '', global: '' });
+  const columnsText = (c: number[] | undefined) => (c === undefined ? '' : c.length ? c.join(', ') : 'none');
+
+  function setGuides(scope: Scope) {
+    const text = guides[scope].trim();
+    if (!text) delete draft![scope].guides;
+    else draft![scope].guides = /^none$/i.test(text) ? [] : text.split(/[\s,]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    changed(scope);
+  }
 
   const timers: Partial<Record<Scope, ReturnType<typeof setTimeout>>> = {};
 
@@ -63,6 +77,7 @@
       sections: [
         { id: 'syntax', label: 'Syntax highlighting', icon: Palette },
         { id: 'collapse', label: 'Collapsed files', icon: ArrowsInLineVertical },
+        { id: 'lines', label: 'Lines', icon: Columns },
       ],
     },
   ];
@@ -128,6 +143,22 @@
           <code>highlights.scm</code>; a relative one is in the repo. Patterns without a slash match the file name at any
           depth; the last matching rule wins.
         </p>
+      {:else if section === 'lines'}
+        {#each SCOPES as { scope, title, description } (scope)}
+          <SettingGroup {title} description={description()}>
+            <SettingRow label="Guides" sub="Vertical lines at these columns, e.g. 80, 100" for="guides-{scope}">
+              <input
+                class="field-input mono narrow"
+                id="guides-{scope}"
+                placeholder={scope === 'repo' ? 'As for all repos' : 'None'}
+                spellcheck="false"
+                bind:value={guides[scope]}
+                oninput={() => setGuides(scope)}
+              />
+            </SettingRow>
+          </SettingGroup>
+        {/each}
+        <p class="note muted">Leave a field empty for this repo to use the one for all repos; <code>none</code> turns it off here.</p>
       {:else}
         {#each SCOPES as { scope, title, description } (scope)}
           <SettingGroup {title} description={description()}>
@@ -193,6 +224,10 @@
 
   .arrow {
     flex: none;
+  }
+
+  .narrow {
+    width: 200px;
   }
 
   .problem {

@@ -13,7 +13,7 @@ import {
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
 import { cancelEdit, editChanges, finishEdit, startEdit } from './edit.ts';
-import { globalSettingsFile, effectiveSettings, readSettings, repoSettingsFile, saveSettings } from './settings.ts';
+import { displaySettings, globalSettingsFile, effectiveSettings, readSettings, repoSettingsFile, saveSettings } from './settings.ts';
 import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
@@ -248,6 +248,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       });
       return res.end(data);
     }
+    if (path === '/api/display') return send(res, 200, displaySettings(await readSettings(repo.git)));
     if (path === '/api/settings') {
       const s = await readSettings(repo.git);
       const [grammars, problems] = await Promise.all([

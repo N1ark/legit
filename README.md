@@ -66,6 +66,7 @@ the open diff takes them right away.
   (the field suggests them), or a folder with a compiled grammar (`*.wasm`, from `tree-sitter build --wasm`) and its
   `highlights.scm` (at the top, in `queries/`, or in `languages/*/`, as in a Zed extension). A grammar that can't be
   found gets a warning next to it; one that won't load falls back to Prism. The last matching rule wins.
+- **Lines**: **Guides**, vertical lines drawn in diffs at the columns given (e.g. `80, 100`).
 
 Patterns without a slash match the file name at any depth.
 

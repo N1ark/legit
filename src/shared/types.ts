@@ -431,6 +431,13 @@ export interface ScopeSettings {
   collapse: string[];
   /** Tree-sitter grammars to highlight files with, by glob; the last matching rule wins. */
   syntax: { pattern: string; grammar: string }[];
+  /** Columns to draw a guide line at, in diffs; unset in a repo's settings: as for all repos. */
+  guides?: number[];
+}
+
+/** How diffs are shown, as the settings of both scopes make it. */
+export interface DisplaySettings {
+  guides: number[];
 }
 
 export interface Settings {

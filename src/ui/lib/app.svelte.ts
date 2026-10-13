@@ -3,7 +3,7 @@ import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
-  CommitInfo, DiffSummary, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
+  CommitInfo, DiffSummary, DisplaySettings, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
   Stashes, SyncResult,
 } from '../../shared/types.ts';
 
@@ -69,6 +69,7 @@ class App {
 
   /** First load: the state, and the view this window left the repo in, if it's been here before. */
   async start() {
+    this.loadDisplay();
     try {
       await this.load();
     } finally {
@@ -487,10 +488,18 @@ class App {
   /** Bumped when the settings change: open diffs take the new ones (see DiffView). */
   settingsTick = $state(0);
 
+  /** How diffs are shown, from the settings. */
+  display = $state.raw<DisplaySettings>({ guides: [] });
+
+  async loadDisplay() {
+    this.display = await request<DisplaySettings>('/api/display').catch(() => this.display);
+  }
+
   /** Diffs' summaries say which files are collapsed and how they're highlighted: drop them, and tell open diffs. */
   settingsChanged() {
     this.diffs.clear();
     this.settingsTick++;
+    this.loadDisplay();
   }
 
   workChanged() {

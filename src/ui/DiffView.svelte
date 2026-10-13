@@ -696,6 +696,9 @@
                     oncontextmenu={(e) => openMenu(e, i)}
                     onfocus={() => {}}
                   >
+                    {#each app.display.guides as col (col)}
+                      <span class="guide" style:left="calc({GUTTER + 8}px + {col}ch)"></span>
+                    {/each}
                     {#each shown as r (r)}
                       {#if isHead(rows.kind[r])}
                         {@const k = rows.gap[r]}
@@ -933,6 +936,7 @@
 
   .gutter {
     position: sticky;
+    z-index: 1;
     left: 0;
     display: flex;
     flex-shrink: 0;
@@ -942,6 +946,16 @@
     user-select: none;
     font-size: var(--fs-xs);
     box-shadow: inset -1px 0 0 var(--border);
+  }
+
+  /* A guide column, under the gutter when scrolled sideways. */
+  .guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-strong);
+    pointer-events: none;
   }
 
   .gutter > span {
