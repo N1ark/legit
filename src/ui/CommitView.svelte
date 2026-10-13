@@ -55,13 +55,13 @@
 
   function save() {
     if (!dirty || !valid || readonly) return;
-    app.op('edit', {
+    app.rewriteInPlace('edit', {
       sha: commit.sha,
       subject,
       body,
       author: { name: authorName, email: authorEmail },
       coauthors: parsedCo ?? [],
-    });
+    }, diffView?.position() ?? null);
   }
 
   function revert() {
@@ -126,7 +126,11 @@
 
   function split() {
     if (!picked.files || !splitTitleNow.trim() || readonly) return;
-    app.op('split', { sha: commit.sha, selection: selection(), message: splitTitleNow, before: where === 'before' });
+    app.rewriteInPlace(
+      'split',
+      { sha: commit.sha, selection: selection(), message: splitTitleNow, before: where === 'before' },
+      diffView?.position() ?? null,
+    );
   }
 
   /**

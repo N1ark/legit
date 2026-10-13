@@ -40,6 +40,9 @@ test('check out a commit, change it, and finish: amended, later commits replayed
   rmSync(join(t.dir, 'gone'));
   const shown = (await editChanges(repo)).files.map((f) => `${f.status} ${f.path}`).sort();
   assert.deepEqual(shown, ['A new', 'D gone', 'M f']);
+  // The whole commit as finishing makes it: from its parent, with the edits.
+  const whole = await editChanges(repo, true);
+  assert.deepEqual(whole.files.map((f) => `${f.status} ${f.path} +${f.added} -${f.removed}`).sort(), ['A new +1 -0', 'D gone +0 -1', 'M f +1 -0']);
 
   const r = await finishEdit(repo);
   assert.equal(r.state.conflict, null);
@@ -126,6 +129,7 @@ test('cancelling puts everything back, after saving the edits (new files include
   assert.equal(read('f'), 'a\nb\n');
   assert.equal(read('notes'), 'mine\n');
   assert.match(r.message, /^Stopped editing; nothing was changed\./);
+  assert.deepEqual(r.focus, [c]);
   const saved = git('for-each-ref', '--format=%(refname)', 'refs/legit/aborted');
   assert.equal(blob(saved, 'f'), 'edited\n');
   assert.equal(blob(saved, 'made'), 'while editing\n');
