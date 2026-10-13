@@ -253,6 +253,23 @@ test('merge conflicts: listed, marked resolved only without markers, then contin
   assert.equal(git('rev-parse', 'HEAD'), head);
 });
 
+test('mark all resolved: refused while any file has markers, unless forced; stages them all', async () => {
+  const repo = await Repo.open(dir);
+  theyPush('theirs', { f: '1\nTHEIRS\n3\n', g: 'theirs\n', h: 'theirs\n' });
+  commit('mine', { f: '1\nMINE\n3\n', g: 'mine\n', h: 'mine\n' });
+  await pull(repo, { how: 'merge' });
+  write('f', '1\nBOTH\n3\n');
+  write('h', 'both\n');
+  const all = { paths: ['f', 'g', 'h'] };
+  await assert.rejects(markResolved(repo, all), /^Error: g still has conflict markers.*Nothing was changed/);
+  assert.equal((await repo.state()).conflict!.files.length, 3);
+  const r = await markResolved(repo, { ...all, force: true });
+  assert.match(r.message, /Marked 3 files as resolved/);
+  assert.deepEqual(r.state.conflict!.files, []);
+  assert.equal(git('show', ':h'), 'both');
+  await assert.rejects(markResolved(repo, all), /isn't conflicted/);
+});
+
 test('abort saves what was resolved under refs/legit/aborted first', async () => {
   const repo = await Repo.open(dir);
   theyPush('theirs', { f: '1\nTHEIRS\n3\n', g: 'theirs\n', t: '1\n' });

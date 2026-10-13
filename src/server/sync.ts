@@ -451,23 +451,33 @@ async function merge(repo: Repo, head: string, t: Target, here: string): Promise
 // ---- resolving conflicts ----
 
 /** `git add` a conflicted file. Refused while it still has conflict markers, unless `force`. */
-export function markResolved(repo: Repo, req: { path: string; force?: boolean }): Promise<SyncResult> {
+export function markResolved(repo: Repo, req: { path?: string; paths?: string[]; force?: boolean }): Promise<SyncResult> {
   return repo.exclusive(async () => {
-    const shown = String(req.path ?? '');
-    const path = fromUtf8(shown);
+    const list = (Array.isArray(req.paths) ? req.paths : [req.path]).map((p) => String(p ?? ''));
+    if (!list.length) throw new GitError('Nothing to mark resolved.');
     const unmerged = await unmergedPaths(repo.git);
-    // A file changed again after it was staged (in a rebase, which won't continue so) is staged again.
-    const again = !unmerged.has(path) && inProgress(repo.git) === 'rebase' && (await unstagedPaths(repo.git, unmerged)).includes(path);
-    if (!unmerged.has(path) && !again) throw new GitError(`${shown} isn't conflicted (any more); nothing was changed.`);
-    const { markers } = await inspect(repo.git, path);
-    if (markers && !req.force) {
-      throw new GitError(`${shown} still has conflict markers (<<<<<<<, =======, >>>>>>>). Nothing was changed.`);
+    const rebasing = inProgress(repo.git) === 'rebase';
+    const unstaged = rebasing ? await unstagedPaths(repo.git, unmerged) : [];
+    const paths = list.map(fromUtf8);
+    let again = 0;
+    const marked: string[] = [];
+    for (const [k, path] of paths.entries()) {
+      // A file changed again after it was staged (in a rebase, which won't continue so) is staged again.
+      const restage = !unmerged.has(path) && unstaged.includes(path);
+      if (!unmerged.has(path) && !restage) throw new GitError(`${list[k]} isn't conflicted (any more); nothing was changed.`);
+      if (restage) again++;
+      if ((await inspect(repo.git, path)).markers) marked.push(list[k]);
+    }
+    if (marked.length && !req.force) {
+      const which = marked.length === 1 ? `${marked[0]} still has` : `${marked.join(', ')} still have`;
+      throw new GitError(`${which} conflict markers (<<<<<<<, =======, >>>>>>>). Nothing was changed.`);
     }
     // -A stages a deletion too, when deleting the file was the resolution.
     await repo.git.run(['--literal-pathspecs', 'add', '-A', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'], {
-      input: nul([path]),
+      input: nul(paths),
     });
-    return done(repo, again ? `Staged ${shown} again.` : `Marked ${shown} as resolved.`);
+    if (list.length > 1) return done(repo, `Marked ${list.length} files as resolved.`);
+    return done(repo, again ? `Staged ${list[0]} again.` : `Marked ${list[0]} as resolved.`);
   });
 }
 

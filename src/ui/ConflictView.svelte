@@ -1,11 +1,11 @@
 <script lang="ts">
   // A merge, rebase, cherry-pick or revert that stopped halfway (from legit or a terminal):
   // what's still conflicted, what's merged, and Continue or Abort. Files are resolved in an
-  // editor; "Mark resolved" stages one, and asks again while it still has conflict markers.
+  // editor; "Mark resolved" stages one ("Mark all resolved" every one), and asks again while it still has conflict markers.
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
   import { Button, ConfirmButton, Tag } from 'purr';
-  import { ArrowCounterClockwise, Check, FileArrowUp } from 'purr/icons';
+  import { ArrowCounterClockwise, Check, Checks, FileArrowUp } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
@@ -54,6 +54,10 @@
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
   const resolve = (path: string, force = false) => app.sync('resolve', { path, force });
+  // Every conflicted file, and in a rebase every one changed since it was staged.
+  const pending = $derived(c ? [...c.files.map((f) => f.path), ...c.unstaged] : []);
+  const marked = $derived(c ? c.files.filter((f) => f.markers).length : 0);
+  const resolveAll = (force = false) => app.sync('resolve', { paths: pending, force });
 
   /** A path split into its folder (with the trailing slash) and the file's name. */
   const split = (path: string) => {
@@ -154,6 +158,20 @@
       {/if}
 
       <div class="actions">
+        {#if pending.length > 1}
+          {#if marked}
+            <ConfirmButton
+              variant="default"
+              confirmLabel="{marked === 1 ? 'One file still has' : `${marked} files still have`} conflict markers. Mark all resolved anyway?"
+              onconfirm={() => resolveAll(true)}
+              disabled={app.busy}><Checks /> Mark all resolved</ConfirmButton
+            >
+          {:else}
+            <Button onclick={() => resolveAll()} disabled={app.busy} title="Stage every file as it is now (git add)">
+              <Checks /> Mark all resolved
+            </Button>
+          {/if}
+        {/if}
         <Button
           variant="primary"
           onclick={() => app.sync('continue')}
