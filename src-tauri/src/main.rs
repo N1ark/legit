@@ -91,6 +91,7 @@ fn main() {
             "merge" => eval_focused(app, "window.__legit?.branch('merge')"),
             "rebase" => eval_focused(app, "window.__legit?.branch('rebase')"),
             "rebase-base" => eval_focused(app, "window.__legit?.rebaseOnBase()"),
+            "shortcuts" => eval_focused(app, "window.__legit?.help()"),
             _ => {}
         })
         .on_window_event(|window, event| {
@@ -535,5 +536,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
     #[cfg(target_os = "macos")]
     window.set_as_windows_menu_for_nsapp()?;
-    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &branch, &window])
+    let help = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[&MenuItem::with_id(app, "shortcuts", "Keyboard Shortcuts", true, None::<&str>)?],
+    )?;
+    #[cfg(target_os = "macos")]
+    help.set_as_help_menu_for_nsapp()?;
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &branch, &window, &help])
 }

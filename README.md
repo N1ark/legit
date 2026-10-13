@@ -74,7 +74,8 @@ returns the linked account. Emails are only sent to `api.github.com`, and only f
 `~/Library/Caches/legit/avatars.json`. Each picture is downloaded once, at one size for every view, and kept decoded in
 memory, so one shown anywhere shows at once everywhere else.
 
-<kbd>j</kbd>/<kbd>k</kbd> move the selection, and <kbd>?</kbd> lists every shortcut. The list follows the first-parent history of `HEAD`, and older
+<kbd>j</kbd>/<kbd>k</kbd> move the selection, and <kbd>?</kbd> lists every shortcut (so do **Help ▸ Keyboard Shortcuts**, the link under the commit list, and
+**Settings ▸ Keyboard shortcuts**). The list follows the first-parent history of `HEAD`, and older
 history loads as you scroll. Everything from the first merge commit down is shown but can't be rewritten. Click the
 arrow on a merge (or press <kbd>→</kbd>/<kbd>←</kbd>) to list the commits it brought in under it.
 
