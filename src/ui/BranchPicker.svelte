@@ -451,8 +451,9 @@
         </p>
       {:else}
         <p class="foot muted">
-          Replays the commits only on {here} on top of the branch, in memory: refused, changing nothing, if anything conflicts. Uncommitted
-          changes come along unless they'd be overwritten. <span class="mono">⌘Z</span> undoes it.
+          Replays the commits only on {here} on top of the branch, in memory, with uncommitted changes coming along unless they'd be
+          overwritten. If a commit conflicts, it's a real <span class="mono">git rebase</span> instead, which stops at each conflict for you
+          to resolve (it needs no uncommitted changes). <span class="mono">⌘Z</span> undoes it.
         </p>
       {/if}
     </div>

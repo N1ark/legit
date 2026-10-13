@@ -4,7 +4,7 @@
 //
 // Fast-forwards and rebases happen in memory and move HEAD once, carrying uncommitted changes
 // along like `git switch` (git refuses, changing nothing, if they'd be overwritten). A rebase
-// that would conflict is refused. A merge is a real `git merge`, which may stop on conflicts;
+// that would conflict becomes a real `git rebase`, which stops at each conflict. A merge is a real `git merge`, which may stop on conflicts;
 // it only starts from a clean working tree, so aborting it can always get back.
 
 import { existsSync } from 'node:fs';
@@ -282,7 +282,7 @@ export function mergeBranch(repo: Repo, req: { branch: string }): Promise<SyncRe
   return repo.exclusive(async () => integrate(repo, { ...(await branchRef(repo.git, req.branch)), how: 'merge', label: 'merge' }));
 }
 
-/** Replay the current branch's own commits onto `branch`, in memory; refused on any conflict. */
+/** Replay the current branch's own commits onto `branch`: in memory, or as a `git rebase` that stops on conflicts. */
 export function rebaseBranch(repo: Repo, req: { branch: string }): Promise<SyncResult> {
   return repo.exclusive(async () => integrate(repo, { ...(await branchRef(repo.git, req.branch)), how: 'rebase', label: 'rebase' }));
 }
@@ -349,7 +349,7 @@ export async function carry(repo: Repo, from: string, to: string, label: string)
 
 /**
  * Replay the commits only on HEAD onto `target`, like `git rebase`, but in memory through
- * merge-tree: any conflict refuses the whole thing. Commits whose changes are already in
+ * merge-tree; if one conflicts, it's done again as a real `git rebase` that stops there. Commits whose changes are already in
  * `target` become empty and are dropped, as `git rebase` does.
  */
 async function rebase(repo: Repo, head: string, target: string, t: Target, here: string): Promise<SyncResult> {
@@ -377,6 +377,7 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   const out: string[] = [];
   const renamed: Record<string, string> = {};
   let dropped = 0;
+  let conflict: string | null = null;
   try {
     for (const c of commits) {
       const base = await git.treeOf(c.parents[0] ?? null);
@@ -385,7 +386,8 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
         tree = await repo.pickOrThrow(merger, base, parentTree, c);
       } catch (e) {
         if (!(e instanceof GitError)) throw e;
-        throw new GitError(`Rebasing ${here} onto ${t.name} would conflict. ${e.message} Merge instead to resolve the conflicts by hand.`);
+        conflict = e.message.replace(/ Nothing was changed\.$/, '');
+        break;
       }
       if (tree === parentTree && c.tree !== base) {
         dropped++;
@@ -401,10 +403,46 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   } finally {
     merger.close();
   }
+  if (conflict) return rebaseStopping(repo, head, target, t, here, conflict);
   if (out.length) await repo.verify(target, parent, out);
   await carry(repo, head, parent, t.label);
   const skipped = dropped ? ` (${plural(dropped, 'commit')} already there ${dropped === 1 ? 'was' : 'were'} dropped)` : '';
   return done(repo, `Rebased ${plural(out.length, 'commit')} of ${here} onto ${t.name}${skipped}.`, [parent], renamed);
+}
+
+/**
+ * A rebase that conflicts, as a real `git rebase`: it stops at each commit that conflicts for the
+ * conflict view to resolve, then continues (or aborts, back to where it was). Like a merge, it only
+ * starts from a working tree without changes to tracked files, so aborting gets back exactly.
+ */
+async function rebaseStopping(repo: Repo, head: string, target: string, t: Target, here: string, conflict: string): Promise<SyncResult> {
+  const git = repo.git;
+  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
+  const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+  if (status) {
+    throw new GitError(
+      `Rebasing ${here} onto ${t.name} conflicts. ${conflict} Resolving that means stopping at each conflicting commit, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
+    );
+  }
+  await repo.backup(head, t.label);
+  const r = await git.run(
+    ['-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false', 'rebase', '--no-autosquash', '--no-fork-point', target],
+    { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } },
+  );
+  const output = (r.err + r.out.toString('utf8')).trim();
+  if (inProgress(git) === 'rebase') {
+    const n = (await unmergedPaths(git)).size;
+    return done(
+      repo,
+      `Rebasing ${here} onto ${t.name} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.`,
+    );
+  }
+  const after = await repo.head();
+  if (r.code !== 0 || !after || after === head) {
+    throw new GitError(after === head ? `Rebase failed; nothing was changed.\n${output}` : `Rebase failed.\n${output}`);
+  }
+  await repo.record({ label: t.label, before: head, after });
+  return done(repo, `Rebased ${here} onto ${t.name}.`, [after]);
 }
 
 /**
