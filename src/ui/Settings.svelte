@@ -2,9 +2,9 @@
   // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
   // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
   // as you type (shortly after), and the open diff is shown again with it.
-  import { Button, IconButton, Modal, SettingGroup, SettingRow, SettingsLayout, toast } from 'purr';
+  import { Button, IconButton, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, toast } from 'purr';
   import { ArrowsInLineVertical, Columns, Palette, Plus, Warning, X } from 'purr/icons';
-  import type { Scope, ScopeSettings, SettingsInfo } from '../shared/types.ts';
+  import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -37,6 +37,26 @@
     const text = guides[scope].trim();
     if (!text) delete draft![scope].guides;
     else draft![scope].guides = /^none$/i.test(text) ? [] : text.split(/[\s,]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    changed(scope);
+  }
+
+  const WRAPS: { id: Wrap; label: string }[] = [
+    { id: 'none', label: 'No wrap' },
+    { id: 'window', label: 'To the window' },
+    { id: 'column', label: 'At a column' },
+  ];
+  const wrapOptions = (scope: Scope) => (scope === 'repo' ? [{ id: 'inherit' as const, label: 'As for all repos' }, ...WRAPS] : WRAPS);
+
+  function setWrap(scope: Scope, w: Wrap | 'inherit') {
+    if (w === 'inherit') delete draft![scope].wrap;
+    else draft![scope].wrap = w;
+    changed(scope);
+  }
+
+  function setWrapColumn(scope: Scope, value: string) {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0) draft![scope].wrapColumn = n;
+    else delete draft![scope].wrapColumn;
     changed(scope);
   }
 
@@ -146,6 +166,26 @@
       {:else if section === 'lines'}
         {#each SCOPES as { scope, title, description } (scope)}
           <SettingGroup {title} description={description()}>
+            <SettingRow label="Long lines" sub="Scroll sideways, or wrap them" stack>
+              <Segmented
+                label="Long lines"
+                size="sm"
+                options={wrapOptions(scope)}
+                value={draft[scope].wrap ?? (scope === 'repo' ? 'inherit' : 'none')}
+                onchange={(w) => setWrap(scope, w)}
+              />
+            </SettingRow>
+            <SettingRow label="Wrap column" sub="Where “At a column” wraps (or the window, if narrower)" for="column-{scope}">
+              <input
+                class="field-input mono narrow"
+                id="column-{scope}"
+                type="number"
+                min="1"
+                placeholder={scope === 'repo' ? 'As for all repos' : '100'}
+                value={draft[scope].wrapColumn ?? ''}
+                oninput={(e) => setWrapColumn(scope, e.currentTarget.value)}
+              />
+            </SettingRow>
             <SettingRow label="Guides" sub="Vertical lines at these columns, e.g. 80, 100" for="guides-{scope}">
               <input
                 class="field-input mono narrow"

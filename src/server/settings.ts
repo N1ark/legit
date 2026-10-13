@@ -34,13 +34,20 @@ export function clean(s: unknown): ScopeSettings {
       .map((r) => ({ pattern: str(r?.pattern), grammar: str(r?.grammar) }))
       .filter((r) => r.pattern && r.grammar),
   };
+  if (o.wrap === 'none' || o.wrap === 'window' || o.wrap === 'column') out.wrap = o.wrap;
+  const wrapColumn = column(o.wrapColumn);
+  if (wrapColumn) out.wrapColumn = wrapColumn;
   if (Array.isArray(o.guides)) out.guides = [...new Set(o.guides.map(column).filter((x) => x !== undefined))].sort((a, b) => a - b);
   return out;
 }
 
-/** How diffs are shown: the repo's choices, else those for all repos, else no guides. */
+/** How diffs are shown: the repo's choices, else those for all repos, else no wrapping and no guides. */
 export function displaySettings(s: Settings): DisplaySettings {
-  return { guides: s.repo.guides ?? s.global.guides ?? [] };
+  return {
+    wrap: s.repo.wrap ?? s.global.wrap ?? 'none',
+    wrapColumn: s.repo.wrapColumn ?? s.global.wrapColumn ?? 100,
+    guides: s.repo.guides ?? s.global.guides ?? [],
+  };
 }
 
 async function save(file: string, s: ScopeSettings) {

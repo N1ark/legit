@@ -489,7 +489,7 @@ class App {
   settingsTick = $state(0);
 
   /** How diffs are shown, from the settings. */
-  display = $state.raw<DisplaySettings>({ guides: [] });
+  display = $state.raw<DisplaySettings>({ wrap: 'none', wrapColumn: 100, guides: [] });
 
   async loadDisplay() {
     this.display = await request<DisplaySettings>('/api/display').catch(() => this.display);

@@ -67,16 +67,17 @@ test('settings: saved per scope, cleaned, and applied global first then the repo
   });
 });
 
-test("display settings: the repo's guides win where set, else all repos", async () => {
+test("display settings: the repo's win where set, else all repos", async () => {
   await withHome(async () => {
     const git = await Git.open(t.dir);
-    assert.deepEqual(displaySettings(await readSettings(git)), { guides: [] });
-    await saveSettings(git, { scope: 'global', settings: { guides: [100, 80, 80, -1, 'x'] } });
+    assert.deepEqual(displaySettings(await readSettings(git)), { wrap: 'none', wrapColumn: 100, guides: [] });
+    await saveSettings(git, { scope: 'global', settings: { wrap: 'column', wrapColumn: 80, guides: [100, 80, 80, -1, 'x'] } });
+    await saveSettings(git, { scope: 'repo', settings: { wrap: 'window', wrapColumn: 0 } });
     let s = await readSettings(git);
-    assert.deepEqual(s.global, { collapse: [], syntax: [], guides: [80, 100] });
-    assert.deepEqual(displaySettings(s), { guides: [80, 100] });
-    await saveSettings(git, { scope: 'repo', settings: { guides: [] } });
+    assert.deepEqual(s.global, { collapse: [], syntax: [], wrap: 'column', wrapColumn: 80, guides: [80, 100] });
+    assert.deepEqual(displaySettings(s), { wrap: 'window', wrapColumn: 80, guides: [80, 100] });
+    await saveSettings(git, { scope: 'repo', settings: { wrap: 'nope', guides: [] } });
     s = await readSettings(git);
-    assert.deepEqual(displaySettings(s), { guides: [] });
+    assert.deepEqual(displaySettings(s), { wrap: 'column', wrapColumn: 80, guides: [] });
   });
 });

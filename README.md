@@ -66,7 +66,9 @@ the open diff takes them right away.
   (the field suggests them), or a folder with a compiled grammar (`*.wasm`, from `tree-sitter build --wasm`) and its
   `highlights.scm` (at the top, in `queries/`, or in `languages/*/`, as in a Zed extension). A grammar that can't be
   found gets a warning next to it; one that won't load falls back to Prism. The last matching rule wins.
-- **Lines**: **Guides**, vertical lines drawn in diffs at the columns given (e.g. `80, 100`).
+- **Lines**: **Long lines** scroll sideways (**No wrap**), or wrap **To the window** or **At a column** (the **Wrap
+  column**, or the window if narrower), breaking anywhere, like Zed's soft wrap; **Guides**, vertical lines drawn in
+  diffs at the columns given (e.g. `80, 100`). Left empty for a repo, each is as for all repos.
 
 Patterns without a slash match the file name at any depth.
 
@@ -187,7 +189,8 @@ npm run check      # svelte-check + tsc
   it's the one that knows what it has running; a page that doesn't answer within two seconds doesn't hold it up.
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
   shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
-  height and never wrap, so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
+  height and don't wrap (when long lines do, they break anywhere, so a line's rows follow from its length and the
+  font's width; a file with lines too long takes its height once its contents are in, keeping the view in place), so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
   loads. Only files and rows near the viewport are mounted, and file contents are fetched in batches as they
   scroll into view (`/api/diff/<sha>/files?i=…`). Showing the lines between hunks loads the file's old version
   (`/api/diff/<sha>/old?i=…`) and rebuilds its rows (`lib/rows.ts`); the summary counts the row after the last

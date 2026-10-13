@@ -431,12 +431,21 @@ export interface ScopeSettings {
   collapse: string[];
   /** Tree-sitter grammars to highlight files with, by glob; the last matching rule wins. */
   syntax: { pattern: string; grammar: string }[];
-  /** Columns to draw a guide line at, in diffs; unset in a repo's settings: as for all repos. */
+  /** How diffs show long lines; this and the rest, unset in a repo's settings: as for all repos. */
+  wrap?: Wrap;
+  /** The column `wrap: 'column'` wraps at. */
+  wrapColumn?: number;
+  /** Columns to draw a guide line at, in diffs. */
   guides?: number[];
 }
 
+/** Long lines: scrolled sideways, or wrapped to the window, or at a column (or the window if narrower). */
+export type Wrap = 'none' | 'window' | 'column';
+
 /** How diffs are shown, as the settings of both scopes make it. */
 export interface DisplaySettings {
+  wrap: Wrap;
+  wrapColumn: number;
   guides: number[];
 }
 

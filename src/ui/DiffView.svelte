@@ -1,7 +1,9 @@
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
-  // loads, nothing is ever measured, and nothing jumps. Only files near the viewport are
+  // loads, nothing is ever measured, and nothing jumps. (When long lines wrap, a file with lines
+  // wider than the wrap takes its height from its contents once they're in, keeping the view
+  // where it was; the code breaks anywhere, so a line's rows follow from its length.) Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
@@ -27,6 +29,7 @@
   import ImageDiff from './ImageDiff.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
+  import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import {
     ADDED,
     type Expansion,
@@ -142,13 +145,46 @@
   // grows by a row per line typed into it and pushes the rows below down.
   let editing = $state<{ i: number; r: number; text: string; orig: string } | null>(null);
   let saving = $state(false);
-  const editRows = $derived(editing ? editing.text.split('\n').length : 1);
+
+  // Wrapping long lines (settings): at the columns that fit the diff, or at most at a given one.
+  let charWidth = $state(0);
+  let paneWidth = $state(0);
+  const cols = $derived.by(() => {
+    const { wrap, wrapColumn } = app.display;
+    if (wrap === 'none' || !charWidth || !paneWidth) return 0;
+    const fit = Math.max(20, Math.floor((paneWidth - GUTTER - 20) / charWidth) - 1);
+    return wrap === 'column' ? Math.min(wrapColumn, fit) : fit;
+  });
+  const editRows = $derived(
+    editing ? editing.text.split('\n').reduce((n, l) => n + wrappedRows(l, cols), 0) : 1,
+  );
 
   /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
   const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows;
+  /** Where each of file i's rows starts, in rows, when some of its lines wrap; null when none can. */
+  const wrapCache = new WeakMap<FileRows, { cols: number; at: Uint32Array }>();
+  function wrapped(i: number): Uint32Array | null {
+    const rows = contents[i];
+    if (!cols || !rows || files[i].width <= cols) return null;
+    let w = wrapCache.get(rows);
+    if (w?.cols !== cols) wrapCache.set(rows, (w = { cols, at: wrappedOffsets(rows, cols) }));
+    return w.at;
+  }
+  /** Rows row r of file i takes (the one being edited: what its field needs). */
+  function rowSpan(i: number, r: number): number {
+    if (editing?.i === i && editing.r === r) return editRows;
+    const at = wrapped(i);
+    return at ? at[r + 1] - at[r] : 1;
+  }
+  /** Y of row r in file i's lines. */
+  function rowY(i: number, r: number): number {
+    const at = wrapped(i);
+    const y = (at ? at[r] : r) * ROW;
+    return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
+  }
   /** Height of what comes before file i's lines: its images. */
   const lead = (i: number) => (imageType(files[i].path) && files[i].oldSha !== files[i].newSha ? IMG : 0);
-  const linesHeight = (i: number) => rowCount(i) * ROW + PAD + (editing?.i === i ? (editRows - 1) * ROW : 0);
+  const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
@@ -161,7 +197,10 @@
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
-    const [a, b] = fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+    const at = wrapped(i);
+    const [a, b] = at
+      ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
+      : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
     return out;
@@ -175,6 +214,29 @@
     if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
       view = { top, bottom: top + scroller.clientHeight };
     }
+    if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
+    const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
+    held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
+  }
+
+  // With wrapping, files change height as their contents come in (or the width changes): the
+  // file at the top of the view stays where it was.
+  let held: { k: number; offset: number } | null = null;
+  $effect(() => {
+    const t = tops;
+    const a = held;
+    if (!cols || !a || !scroller || a.k >= files.length) return;
+    const drift = t[a.k] + Math.min(a.offset, t[a.k + 1] - t[a.k]) - untrack(() => view.top);
+    if (Math.abs(drift) >= 1) {
+      scroller.scrollTop += drift;
+      measure();
+    }
+  });
+
+  function measureChars(el: HTMLElement) {
+    const read = () => (charWidth = el.getBoundingClientRect().width / 100);
+    read();
+    document.fonts?.ready.then(() => alive && read());
   }
 
   onMount(() => {
@@ -182,6 +244,7 @@
     scroller.addEventListener('scroll', measure, { passive: true });
     const ro = new ResizeObserver(measure);
     ro.observe(scroller);
+    ro.observe(filesEl);
     ro.observe(scroller.firstElementChild ?? filesEl);
     measure();
     if (initial) {
@@ -587,6 +650,7 @@
 <svelte:window onmouseup={up} />
 
 <div class="diff">
+  <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
   <div class="summary muted">
     <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
     <span class="add">+{totals.a}</span>
@@ -687,8 +751,10 @@
                   <div
                     class="lines mono"
                     class:readonly
-                    style:top="{(shown[0] ?? 0) * ROW}px"
-                    style:min-width="max(100%, calc({GUTTER + 20}px + {f.width}ch))"
+                    class:wrap={cols > 0}
+                    style:--cols={cols}
+                    style:top="{rowY(i, shown[0] ?? 0)}px"
+                    style:min-width="max(100%, calc({GUTTER + 20}px + {cols ? Math.min(cols, f.width) : f.width}ch))"
                     onmousedown={(e) => down(e, i)}
                     onmouseover={(e) => over(e, i)}
                     onmouseleave={() => (hoverBlock = null)}
@@ -738,7 +804,7 @@
                           class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
-                          style:height={edit ? `${editRows * ROW}px` : undefined}
+                          style:height={edit || cols ? `${rowSpan(i, r) * ROW}px` : undefined}
                           data-r={r}
                         >
                           <span class="gutter"
@@ -750,7 +816,7 @@
                               ><textarea
                                 class="editor"
                                 aria-label="Line {rows.n[r]}"
-                                wrap="off"
+                                wrap={cols ? 'soft' : 'off'}
                                 spellcheck="false"
                                 readonly={saving}
                                 bind:value={edit.text}
@@ -917,6 +983,13 @@
     opacity: 0.6;
   }
 
+  .measure {
+    position: absolute;
+    visibility: hidden;
+    font-size: var(--fs-sm);
+    white-space: pre;
+  }
+
   .lines {
     position: absolute;
     left: 0;
@@ -998,6 +1071,25 @@
   .code {
     padding: 0 12px 0 8px;
     flex: 1;
+  }
+
+  /* Wrapping: the code breaks anywhere at --cols columns, so each line's rows are known. */
+  .lines.wrap .line .code {
+    flex: none;
+    box-sizing: content-box;
+    width: calc(var(--cols) * 1ch);
+    white-space: break-spaces;
+    word-break: break-all;
+  }
+
+  .lines.wrap .line.editing .code {
+    padding: 0 12px 0 8px;
+  }
+
+  .lines.wrap .hunk .code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .hunk {
@@ -1125,6 +1217,7 @@
     border-radius: 0;
     resize: none;
     overflow: hidden;
+    box-sizing: border-box;
     font: inherit;
     line-height: 19px;
     white-space: pre;
@@ -1133,6 +1226,11 @@
     background: var(--surface);
     box-shadow: inset 0 0 0 1.5px var(--theme2);
     outline: none;
+  }
+
+  .lines.wrap .editor {
+    white-space: break-spaces;
+    word-break: break-all;
   }
 
   .editor[readonly] {
