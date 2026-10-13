@@ -20,7 +20,7 @@
     variableRange,
   } from 'purr';
   import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
-  import { flushSync, onMount, untrack } from 'svelte';
+  import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
   import { formatSize, imageType } from '../shared/files.ts';
@@ -30,6 +30,8 @@
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
+  import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
+  import { finder } from './lib/finder.svelte.ts';
   import {
     ADDED,
     type Expansion,
@@ -331,6 +333,82 @@
     hoverBlock = null;
     contents = { ...contents, [i]: rows };
     queueHighlight(i, rows);
+  }
+
+  // ⌘F: matches of the find bar's query in every file's lines, collapsed files included (all
+  // contents are loaded for it), in order. The bar is App's; this view is one of its sources.
+  const query = $derived(finder.open ? finder.query : '');
+  const found = $derived.by(() => {
+    const out: { i: number; r: number; start: number }[] = [];
+    if (!query) return out;
+    const sensitive = caseSensitive(query);
+    files.forEach((_, i) => {
+      const rows = contents[i];
+      if (!rows) return;
+      for (let r = 0; r < rows.kind.length; r++) {
+        if (isHead(rows.kind[r])) continue;
+        for (const start of matchesIn(rows.text[r], query, sensitive)) out.push({ i, r, start });
+      }
+    });
+    return out;
+  });
+  /** Match starts by file, then row. */
+  const hits = $derived.by(() => {
+    const out = new Map<number, Map<number, number[]>>();
+    for (const { i, r, start } of found) {
+      let f = out.get(i);
+      if (!f) out.set(i, (f = new Map()));
+      const at = f.get(r);
+      if (at) at.push(start);
+      else f.set(r, [start]);
+    }
+    return out;
+  });
+  const source = {
+    get el() {
+      return filesEl;
+    },
+    count: () => found.length,
+    show: (k: number) => showMatch(found[k]),
+  };
+  const hitNow = $derived(found[finder.currentIn(source)] ?? null);
+
+  onMount(() => finder.register(source));
+
+  // Searching needs every file's lines: load the ones not loaded yet.
+  $effect(() => {
+    if (!query) return;
+    const want = untrack(() => files.flatMap((f, i) => (f.rows && !contents[i] && !requested.has(i) ? [i] : [])));
+    if (!want.length) return;
+    for (const i of want) requested.add(i);
+    app.fileContents(summary.sha, want).then(
+      (res) => {
+        if (!alive) return;
+        const next = { ...contents };
+        for (const i of want) if (!next[i]) next[i] = buildRows(res[i], expandable(files[i]));
+        contents = next;
+        for (const i of want) queueHighlight(i, next[i]);
+      },
+      (e) => {
+        for (const i of want) requested.delete(i);
+        toast.error(e);
+      },
+    );
+  });
+
+  async function showMatch(m: { i: number; r: number; start: number } | undefined) {
+    if (!m || !scroller) return;
+    if (collapsed[m.i]) {
+      collapsed[m.i] = false;
+      flushSync();
+    }
+    const y = tops[m.i] + HEAD + lead(m.i) + rowY(m.i, m.r);
+    if (y < view.top + HEAD + ROW || y > view.bottom - 2 * ROW) {
+      scroller.scrollTop += y - view.top - (view.bottom - view.top) / 3;
+      measure();
+    }
+    await tick();
+    filesEl.querySelector('mark.now')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
   // The file tree, beside the diff when there's more than one file and room for it.
@@ -825,7 +903,9 @@
                                 {@attach attachEditor}
                               ></textarea></span
                             >{:else}<span class="code"
-                            >{#if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
+                            >{#if hits.get(i)?.has(r)}{#each markSegments(tok ? segments(tok, r, rows.text[r]) : [{ t: rows.text[r], c: '' }], hits.get(i)!.get(r)!, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) as seg}{#if seg.m}<mark
+                                    class={['hit', seg.m === 2 && 'now', seg.c]}>{seg.t}</mark
+                                  >{:else if seg.c}<span class={seg.c}>{seg.t}</span>{:else}{seg.t}{/if}{/each}{:else if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
                                     >{seg.t}</span
                                   >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
                                 class="eof"
@@ -1235,6 +1315,17 @@
 
   .editor[readonly] {
     opacity: 0.6;
+  }
+
+  .hit {
+    border-radius: var(--radius-sm);
+    background: var(--theme-mid);
+    color: inherit;
+  }
+
+  .hit.now {
+    background: var(--theme2);
+    color: var(--on-accent2);
   }
 
   .eof {

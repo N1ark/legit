@@ -31,11 +31,13 @@
   import CommitView from './CommitView.svelte';
   import ConflictView from './ConflictView.svelte';
   import EditView from './EditView.svelte';
+  import FindBar from './FindBar.svelte';
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
+  import { finder } from './lib/finder.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -80,7 +82,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'find' | 'findNext' | 'findPrev';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -106,6 +108,9 @@
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
+    { keys: '⌘F', action: 'find', label: 'Find in the diff' },
+    { keys: '⌘G', action: 'findNext', label: 'Next match' },
+    { keys: '⇧⌘G', action: 'findPrev', label: 'Previous match' },
     { keys: '?', action: 'help', label: 'Show shortcuts' },
   ];
   const keymap = createKeymap(bindings);
@@ -129,6 +134,11 @@
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
     else if (action === 'settings') settings = true;
+    else if (action === 'find') finder.start();
+    else if (action === 'findNext' || action === 'findPrev') {
+      if (finder.open) finder.step(action === 'findNext' ? 1 : -1);
+      else finder.start();
+    }
     else if (action === 'down' || action === 'up') app.step(action === 'down' ? 1 : -1);
     else if (action === 'addDown' || action === 'addUp') app.step(action === 'addDown' ? 1 : -1, true);
     else if (action === 'open' || action === 'close') {
@@ -203,6 +213,9 @@
       </footer>
     </aside>
     <section data-scroller>
+      {#if finder.open}
+        <div class="find"><div class="bar"><FindBar /></div></div>
+      {/if}
       {#if app.stash}
         {#key app.stash.sha}
           <StashView stash={app.stash} />
@@ -331,6 +344,22 @@
   section {
     overflow: auto;
     min-width: 0;
+  }
+
+  /* Over the diff's top right corner, wherever it's scrolled. */
+  .find {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-popover);
+    height: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding-right: var(--sp-5);
+  }
+
+  .bar {
+    margin-top: var(--gap-3);
   }
 
   .empty {
