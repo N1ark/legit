@@ -326,7 +326,7 @@
       {sel}
       {readonly}
       initial={position}
-      hint="Pick lines to split out or remove: click, drag, or shift-click; the left edge picks whole blocks. Double-click a line to edit it."
+      hint="Pick lines to split out or remove: click, shift-click, or drag the line numbers; the left edge picks whole blocks. Double-click a line to edit it."
       onremove={remove}
       oneditline={editLine}
       fileActions={(f) => [

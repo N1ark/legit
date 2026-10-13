@@ -44,7 +44,7 @@
     summary,
     sel,
     readonly,
-    hint = 'Pick lines to split out: click, drag, or shift-click; the left edge picks whole blocks.',
+    hint = 'Pick lines to split out: click, shift-click, or drag the line numbers; the left edge picks whole blocks.',
     fileActions,
     tree = true,
     initial = null,
@@ -362,6 +362,10 @@
     return el ? Number(el.dataset.r) : -1;
   }
 
+  // Picking starts on the gutter (line numbers, strip), or with a plain click on the code; a drag
+  // over the code selects its text instead, to copy.
+  let pending: { i: number; r: number; x: number; y: number } | null = null;
+
   function down(e: MouseEvent, i: number) {
     if ((e.target as HTMLElement).closest('.editor, .xp')) return;
     const r = rowOf(e);
@@ -371,8 +375,12 @@
     if (rows.kind[r] === HUNK) return toggleHunk(i, r);
     const ci = rows.ci[r];
     if (ci < 0) return;
-    e.preventDefault();
     const f = files[i];
+    if (!e.shiftKey && f.partial && !(e.target as HTMLElement).closest('.gutter')) {
+      pending = { i, r, x: e.clientX, y: e.clientY };
+      return;
+    }
+    e.preventDefault();
     if (!f.partial) return toggleFile(f);
     const s = sel[f.path];
     if (onStrip(e)) {
@@ -393,6 +401,20 @@
     on ? s.add(ci) : s.delete(ci);
     drag = { path: f.path, on, last: ci, block: false };
     anchor = { path: f.path, ci };
+  }
+
+  function up(e: MouseEvent) {
+    drag = null;
+    const p = pending;
+    pending = null;
+    if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) return;
+    const rows = contents[p.i];
+    const ci = rows?.ci[p.r] ?? -1;
+    if (ci < 0) return;
+    const path = files[p.i].path;
+    const s = sel[path];
+    s.has(ci) ? s.delete(ci) : s.add(ci);
+    anchor = { path, ci };
   }
 
   function over(e: MouseEvent, i: number) {
@@ -548,7 +570,7 @@
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
-<svelte:window onmouseup={() => (drag = null)} />
+<svelte:window onmouseup={up} />
 
 <div class="diff">
   <div class="summary muted">
@@ -1000,9 +1022,14 @@
     color: var(--del);
   }
 
-  .lines:not(.readonly) .ta,
-  .lines:not(.readonly) .td {
+  .lines:not(.readonly) :is(.ta, .td) .gutter {
     cursor: pointer;
+  }
+
+  /* Text that isn't the file's stays out of a copy. */
+  .hunk .code,
+  .eof {
+    user-select: none;
   }
 
   .lines:not(.readonly) .ta:not(.sel):hover .gutter,
