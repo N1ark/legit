@@ -239,7 +239,7 @@
         class="btn--danger"
         timeout={3000}
         confirmLabel="Click again to drop"
-        onconfirm={() => app.op('drop', { shas: [commit.sha] })}
+        onconfirm={() => app.drop([commit])}
         disabled={app.busy}
         title="Drop this commit"
         aria-label="Drop this commit"

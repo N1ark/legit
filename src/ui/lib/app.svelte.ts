@@ -443,6 +443,14 @@ class App {
     return this.op('squash', { shas: newestFirst.map((c) => c.sha), subject, body, coauthors });
   }
 
+  /** Drop commits (the files lose their changes too); the toast offers to undo it. */
+  async drop(commits: CommitInfo[]) {
+    if (!commits.length || !(await this.op('drop', { shas: commits.map((c) => c.sha) }))) return;
+    const what = commits.length === 1 ? `"${commits[0].subject}"` : `${commits.length} commits`;
+    const undo = async () => (await this.undo()) && this.select(commits[0].sha);
+    toast(`Dropped ${what}.`, { timeout: 8000, action: { label: 'Undo', run: undo } });
+  }
+
   /** Anything staged, unstaged or untracked, or a merge (rebase...) in progress. */
   hasWork = $derived(
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),

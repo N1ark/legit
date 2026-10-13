@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu } from 'purr';
   import { tick } from 'svelte';
-  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Users } from 'purr/icons';
+  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Trash, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import Markdown from './Markdown.svelte';
   import { newBranch } from './lib/branches.svelte.ts';
@@ -38,6 +38,15 @@
             : "Some of these commits can't be rewritten.",
           run: () => app.squash(app.selection),
         },
+        'separator',
+        {
+          label: `Drop ${app.selection.length} commits`,
+          icon: Trash,
+          danger: true,
+          disabled: !canSquash || app.busy,
+          confirm: `Click again to drop ${app.selection.length} commits`,
+          run: () => app.drop(app.selection),
+        },
       ]);
       return;
     }
@@ -70,6 +79,16 @@
       'separator',
       { label: 'Copy hash', icon: Copy, run: () => app.copy(c.sha, shortSha(c)) },
       { label: 'Copy short hash', icon: Hash, run: () => app.copy(shortSha(c)) },
+      c.editable && !blocked && 'separator',
+      c.editable && !blocked && {
+        label: 'Drop this commit',
+        icon: Trash,
+        danger: true,
+        disabled: app.busy,
+        note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
+        confirm: 'Click again to drop',
+        run: () => app.drop([c]),
+      },
     ]);
   }
 
