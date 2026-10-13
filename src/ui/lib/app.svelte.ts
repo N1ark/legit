@@ -449,7 +449,7 @@ class App {
   hasWork = $derived(
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
   );
-  /** Avatar URL by lowercased email; null when there's none (initials are shown instead). */
+  /** Avatar URL by lowercased email, set once the picture is loaded; null when there's none (initials are shown instead). */
   avatars = $state<Record<string, string | null>>({});
   private avatarsPending = new Set<string>();
 
@@ -460,7 +460,14 @@ class App {
     if (!need.length) return;
     for (const e of need) this.avatarsPending.add(e);
     request<Record<string, string | null>>('/api/avatars', { emails: need })
-      .then((r) => (this.avatars = { ...this.avatars, ...r }))
+      .then((r) =>
+        Promise.all(
+          Object.entries(r).map(async ([email, url]) => {
+            const src = url && (await preloadAvatar(url));
+            this.avatars = { ...this.avatars, [email]: src || null };
+          }),
+        ),
+      )
       .catch(() => {})
       .finally(() => need.forEach((e) => this.avatarsPending.delete(e)));
   }
@@ -663,8 +670,27 @@ export function shortSha(c: CommitInfo | string) {
 }
 
 /** A person's avatar at `size` px (doubled for retina), or null for initials. */
-export function avatarUrl(email: string, size: number): string | null {
-  const url = app.avatars[email.trim().toLowerCase()];
-  if (!url) return null;
-  return url.includes('avatars.githubusercontent.com') ? `${url}&s=${size * 2}` : `${url}?size=${size * 2}`;
+/** Avatars are shown 14 to 22px wide: one size for all, sharp at 2x, so each is downloaded once. */
+const AVATAR_PX = 64;
+/** Downloaded and decoded pictures, held so the browser keeps them ready for every view that shows one. */
+const avatarImages = new Map<string, HTMLImageElement>();
+
+/** The one URL an avatar is shown from, once it's downloaded and decoded; null if it won't load. */
+async function preloadAvatar(url: string): Promise<string | null> {
+  const src = url.includes('avatars.githubusercontent.com') ? `${url}&s=${AVATAR_PX}` : `${url}?size=${AVATAR_PX}`;
+  if (avatarImages.has(src)) return src;
+  const img = new Image();
+  img.src = src;
+  try {
+    await img.decode();
+  } catch {
+    return null;
+  }
+  avatarImages.set(src, img);
+  return src;
+}
+
+/** Avatar URL for `email`, the same at every size (so a picture loaded once shows everywhere at once). */
+export function avatarUrl(email: string, _size?: number): string | null {
+  return app.avatars[email.trim().toLowerCase()] ?? null;
 }
