@@ -17,6 +17,7 @@ import { DIFF_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
+import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
 import { fetchFrom, networkEnv, syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
@@ -1015,7 +1016,7 @@ export class Repo {
         }
         args = ['push', `--force-with-lease=refs/heads/${info.branch}:${info.tip}`, info.remote, refspec];
       }
-      const r = await this.git.run(args, { allowFail: true, timeout: 120_000, env: await networkEnv(this.git) });
+      const r = await runWithProgress(this.git, 'push', info.remote, args, { allowFail: true, timeout: 120_000, env: await networkEnv(this.git) });
       if (r.code !== 0) {
         const err = r.err.trim();
         if (/updated since checkout/i.test(err)) {

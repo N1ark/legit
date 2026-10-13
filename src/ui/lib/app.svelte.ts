@@ -3,7 +3,7 @@ import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type {
-  CommitInfo, DiffSummary, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, RemoveChangesRequest, RepoState,
+  CommitInfo, DiffSummary, EditLineRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
   Stashes, SyncResult,
 } from '../../shared/types.ts';
 
@@ -528,6 +528,15 @@ class App {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Fetches and pushes under way (pulls' fetches too), by op and remote: how far each has got. */
+  progress = $state.raw<Record<string, Progress>>({});
+
+  gotProgress(p: Progress) {
+    const key = `${p.op} ${p.remote}`;
+    const { [key]: _, ...rest } = this.progress;
+    this.progress = p.phase === null ? rest : { ...rest, [key]: p };
   }
 
   fetching = $state(false);

@@ -10,6 +10,7 @@
   import { ArrowsClockwise, CaretDown, CloudArrowDown, CloudArrowUp, GitMerge, GitPullRequest, Warning } from 'purr/icons';
   import { onMount } from 'svelte';
   import { app } from './lib/app.svelte.ts';
+  import { progressSummary } from './lib/progress.ts';
 
   const info = $derived(app.repo?.push ?? null);
   const mode = $derived(
@@ -46,11 +47,18 @@
   });
 
   const fetched = $derived(app.repo?.fetchedAt ?? null);
+  const progress = $derived(Object.values(app.progress));
+  const fetchProgress = $derived(progress.filter((p) => p.op === 'fetch'));
+  const pushProgress = $derived(progress.filter((p) => p.op === 'push'));
   const fetchLabel = $derived(
-    app.fetching ? 'Fetching…' : fetched ? `Fetched ${formatRelative(fetched, { now: Math.max(now, fetched) })}` : 'Fetch',
+    fetchProgress.length ? progressSummary(fetchProgress)
+    : app.fetching ? 'Fetching…'
+    : fetched ? `Fetched ${formatRelative(fetched, { now: Math.max(now, fetched) })}`
+    : 'Fetch',
   );
   const fetchTitle = $derived(
     !info ? ''
+    : fetchProgress.length ? `Fetching from ${fetchProgress.map((p) => p.remote).join(', ')}: ${progressSummary(fetchProgress)}`
     : app.fetchError ? `The last fetch failed:\n${app.fetchError}`
     : `Fetch from every remote${fetched ? ` (last fetched ${formatFull(fetched)})` : ''}` +
       (mode === 'done' ? `. Up to date with ${where} as of then.` : ''),
@@ -131,11 +139,14 @@
 {#if info && mode}
   <div class="sync">
     <Button variant="ghost" size="sm" onclick={() => app.fetchRemote()} disabled={app.fetching} title={fetchTitle}>
-      <span class="icon" class:spin={app.fetching}>
+      <span class="icon" class:spin={app.fetching || fetchProgress.length}>
         {#if app.fetchError && !app.fetching}<Warning weight="bold" />{:else}<ArrowsClockwise />{/if}
       </span>
       <span class="when">{fetchLabel}</span>
     </Button>
+    {#if pushProgress.length}
+      <span class="when progress" role="status">Pushing: {progressSummary(pushProgress)}</span>
+    {/if}
 
     {#if mode === 'pull' || mode === 'diverged'}
       <Button variant="primary" onclick={pull} {disabled} title={pullTitle}>
@@ -191,6 +202,10 @@
     font-size: var(--fs-xs);
     color: var(--muted);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 34em;
+    font-variant-numeric: tabular-nums;
   }
 
   .count {

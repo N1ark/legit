@@ -35,6 +35,8 @@ export interface RunOpts {
   allowFail?: boolean;
   /** Kill the process after this many ms (for network operations). */
   timeout?: number;
+  /** Called with stderr as it arrives (for progress). */
+  onErr?: (chunk: string) => void;
 }
 
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
@@ -46,7 +48,10 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     p.stdout.on('data', (d: Buffer) => out.push(d));
-    p.stderr.on('data', (d: Buffer) => err.push(d));
+    p.stderr.on('data', (d: Buffer) => {
+      err.push(d);
+      opts.onErr?.(d.toString('utf8'));
+    });
     p.stdin.on('error', () => {});
     const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
     p.on('error', fail);

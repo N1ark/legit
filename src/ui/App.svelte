@@ -67,6 +67,7 @@
     app.start();
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
+    events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
     const focus = () => app.refresh();
     const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
