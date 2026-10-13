@@ -32,10 +32,13 @@ const lines = (edit: (l: string[]) => void) => {
 };
 /** The index and the legit backups, which a discard must leave alone. */
 const untouched = () => [git('ls-files', '-s'), git('for-each-ref', 'refs/legit/backups')];
-const unstagedFile = async (repo: Repo, path: string) => {
-  const { unstaged } = await repo.work();
-  return { key: unstaged.sha, f: unstaged.files.find((x) => x.path === path)! };
+const changedFile = async (repo: Repo, path: string) => {
+  const changes = await repo.work();
+  return { key: changes.sha, f: changes.files.find((x) => x.path === path)! };
 };
+/** The changed lines of `f` that read one of `texts`. */
+const linesOf = (f: { hunks: { lines: { s: string; i?: number }[] }[] }, ...texts: string[]) =>
+  f.hunks.flatMap((h) => h.lines.filter((l) => l.i !== undefined && texts.includes(l.s)).map((l) => l.i!));
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'legit-test-'));
@@ -43,26 +46,36 @@ beforeEach(() => {
   git('init', '-q', '-b', 'main');
 });
 
-test('discard selected lines: the rest of the file stays, the index is untouched', async () => {
+test('discard lines: the rest of the file stays; staged ones leave the index too, and come back', async () => {
   commit('base', { f: lines(() => {}) });
-  write('f', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
+  write('f', lines((l) => { l[1] = 'B'; }));
   git('add', 'f');
   const staged = git('ls-files', '-s');
-  write('f', lines((l) => { l[1] = 'B2'; l[15] = 'P2'; }));
+  write('f', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
   const repo = await Repo.open(dir);
   const was = untouched();
-  const { key, f } = await unstagedFile(repo, 'f');
-  // Discard the second hunk ("P" -> "P2"); keep "B" -> "B2".
-  const second = f.hunks[1].lines.filter((l) => l.i !== undefined).map((l) => l.i!);
-  const r = await discard(repo, { key, selection: { f: second } });
-  assert.equal(read('f'), lines((l) => { l[1] = 'B2'; l[15] = 'P'; }));
+  let { key, f } = await changedFile(repo, 'f');
+  // An unstaged change ("p" -> "P"): the index is untouched.
+  const r = await discard(repo, { key, selection: { f: linesOf(f, 'p', 'P') } });
+  assert.equal(read('f'), lines((l) => { l[1] = 'B'; }));
   assert.equal(git('ls-files', '-s'), staged);
   assert.deepEqual(untouched(), was);
   assert.match(r.ref!, /^refs\/legit\/discarded\/\d+$/);
   // The snapshot holds the file as it was; its second parent, as it was left.
-  assert.equal(git('show', `${r.ref}:f`) + '\n', lines((l) => { l[1] = 'B2'; l[15] = 'P2'; }));
-  assert.equal(git('show', `${r.ref}^2:f`) + '\n', lines((l) => { l[1] = 'B2'; l[15] = 'P'; }));
+  assert.equal(git('show', `${r.ref}:f`) + '\n', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
+  assert.equal(git('show', `${r.ref}^2:f`) + '\n', lines((l) => { l[1] = 'B'; }));
   assert.equal(git('rev-parse', `${r.ref}^1`), git('rev-parse', 'HEAD'));
+
+  // A staged one ("b" -> "B"): out of the file and the index, both saved.
+  ({ key, f } = await changedFile(repo, 'f'));
+  const r2 = await discard(repo, { key, selection: { f: linesOf(f, 'b', 'B') } });
+  assert.equal(read('f'), lines(() => {}));
+  assert.equal(git('status', '--porcelain'), '');
+  assert.equal(git('rev-list', '--no-walk', '--parents', r2.ref!).split(' ').length, 5);
+  assert.equal(git('show', `${r2.ref}^3:f`) + '\n', lines((l) => { l[1] = 'B'; }));
+  await restoreDiscarded(repo, { ref: r2.ref! });
+  assert.equal(read('f'), lines((l) => { l[1] = 'B'; }));
+  assert.equal(git('ls-files', '-s'), staged);
 });
 
 test('discarded lines go through checkout filters (line endings)', async () => {
@@ -70,9 +83,8 @@ test('discarded lines go through checkout filters (line endings)', async () => {
   commit('base', { f: 'a\r\nb\r\nc\r\n' });
   write('f', 'A\r\nb\r\nC\r\n');
   const repo = await Repo.open(dir);
-  const { key, f } = await unstagedFile(repo, 'f');
-  const lastHunkLines = f.hunks[0].lines.filter((l) => l.s === 'c' || l.s === 'C').map((l) => l.i!);
-  await discard(repo, { key, selection: { f: lastHunkLines } });
+  const { key, f } = await changedFile(repo, 'f');
+  await discard(repo, { key, selection: { f: linesOf(f, 'c', 'C') } });
   assert.equal(read('f'), 'A\r\nb\r\nc\r\n');
 });
 
@@ -87,15 +99,14 @@ test('discard whole files, untracked files, and restore them all', async () => {
   write('new/deep/n.txt', 'one\ntwo\n');
   const repo = await Repo.open(dir);
   const was = untouched();
-  const { unstaged } = await repo.work();
-  const r = await discard(repo, { key: unstaged.sha, selection: { f: 'all', g: 'all', gone: 'all', 'new/deep/n.txt': 'all' } });
+  const changes = await repo.work();
+  const r = await discard(repo, { key: changes.sha, selection: { f: 'all', g: 'all', gone: 'all', 'new/deep/n.txt': 'all' } });
   assert.equal(r.files, 4);
   assert.equal(read('f'), '1\n');
-  assert.equal(read('g'), 'staged\n');
+  assert.equal(read('g'), 'g\n');
   assert.equal(read('gone'), 'x\n');
   assert.equal(existsSync(join(dir, 'new')), false);
-  assert.deepEqual(untouched(), was);
-  assert.equal(git('status', '--porcelain'), 'M  g');
+  assert.equal(git('status', '--porcelain'), '');
 
   const list = await discarded(repo.git);
   assert.equal(list.length, 1);
@@ -125,9 +136,9 @@ test('binary files, modes and symlinks round-trip byte for byte', async () => {
   rmSync(join(dir, 'link'));
   symlinkSync('elsewhere', join(dir, 'link'));
   const repo = await Repo.open(dir);
-  const { unstaged } = await repo.work();
-  assert.deepEqual(unstaged.files.map((f) => f.path).sort(), ['b.bin', 'link', 'run.sh']);
-  const r = await discard(repo, { key: unstaged.sha, selection: { 'b.bin': 'all', 'run.sh': 'all', link: 'all' } });
+  const changes = await repo.work();
+  assert.deepEqual(changes.files.map((f) => f.path).sort(), ['b.bin', 'link', 'run.sh']);
+  const r = await discard(repo, { key: changes.sha, selection: { 'b.bin': 'all', 'run.sh': 'all', link: 'all' } });
   assert.equal(read('b.bin'), 'old\0bin');
   assert.equal(lstatSync(join(dir, 'run.sh')).mode & 0o111, 0);
   assert.equal(readlinkSync(join(dir, 'link')), 't');
@@ -139,18 +150,19 @@ test('binary files, modes and symlinks round-trip byte for byte', async () => {
   assert.equal(readlinkSync(join(dir, 'link')), 'elsewhere');
 });
 
-test('refuses files that changed since they were shown, and partial untracked files', async () => {
+test('refuses files that changed since they were shown; untracked files lose lines too', async () => {
   commit('base', { f: '1\n' });
   write('f', '2\n');
   write('u', 'a\nb\n');
   const repo = await Repo.open(dir);
-  const { unstaged } = await repo.work();
+  const changes = await repo.work();
   write('f', '3\n');
-  await assert.rejects(discard(repo, { key: unstaged.sha, selection: { f: 'all' } }), /changed since it was shown/);
+  await assert.rejects(discard(repo, { key: changes.sha, selection: { f: 'all' } }), /changed since it was shown/);
   assert.equal(read('f'), '3\n');
-  await assert.rejects(discard(repo, { key: unstaged.sha, selection: { u: [0] } }), /only be discarded as a whole file/);
-  assert.equal(read('u'), 'a\nb\n');
   assert.deepEqual(await discarded(repo.git), []);
+  await discard(repo, { key: changes.sha, selection: { u: [0] } });
+  assert.equal(read('u'), 'b\n');
+  assert.equal(git('ls-files', 'u'), '');
 });
 
 test('restore refuses files changed since the discard unless told to overwrite, saving them first', async () => {
@@ -158,8 +170,8 @@ test('restore refuses files changed since the discard unless told to overwrite, 
   write('f', 'mine\n');
   write('g', 'mine too\n');
   const repo = await Repo.open(dir);
-  const { unstaged } = await repo.work();
-  const r = await discard(repo, { key: unstaged.sha, selection: { f: 'all', g: 'all' } });
+  const changes = await repo.work();
+  const r = await discard(repo, { key: changes.sha, selection: { f: 'all', g: 'all' } });
   write('f', 'newer\n');
   const refused = await restoreDiscarded(repo, { ref: r.ref! });
   assert.deepEqual([refused.restored, refused.conflicts], [0, ['f']]);
@@ -194,14 +206,14 @@ test('big files go to the Trash instead of into git, and are refused if they can
     write('big', 'x'.repeat(100));
     write('small', '2\n');
     const repo = await Repo.open(dir);
-    let { unstaged } = await repo.work();
+    let changes = await repo.work();
     fail = true;
-    await assert.rejects(discard(repo, { key: unstaged.sha, selection: { big: 'all', small: 'all' } }), /Couldn't move big to the Trash.*Nothing was discarded/s);
+    await assert.rejects(discard(repo, { key: changes.sha, selection: { big: 'all', small: 'all' } }), /Couldn't move big to the Trash.*Nothing was discarded/s);
     assert.equal(read('big'), 'x'.repeat(100));
     assert.equal(read('small'), '2\n');
     fail = false;
-    ({ unstaged } = await repo.work());
-    const r = await discard(repo, { key: unstaged.sha, selection: { big: 'all', small: 'all' } });
+    changes = await repo.work();
+    const r = await discard(repo, { key: changes.sha, selection: { big: 'all', small: 'all' } });
     assert.deepEqual(r.trashed, ['big']);
     assert.equal(existsSync(join(dir, 'big')), false);
     assert.equal(readFileSync(join(trash, 'big'), 'utf8'), 'x'.repeat(100));
@@ -212,13 +224,13 @@ test('big files go to the Trash instead of into git, and are refused if they can
     // An edit that lands mid-discard stops it before that file is touched.
     write('big', 'y'.repeat(100));
     write('small', '3\n');
-    ({ unstaged } = await repo.work());
+    changes = await repo.work();
     trashing.trash = async (p) => {
       renameSync(p, join(trash, 'big2'));
       write('small', 'edited meanwhile\n');
     };
     await assert.rejects(
-      discard(repo, { key: unstaged.sha, selection: { big: 'all', small: 'all' } }),
+      discard(repo, { key: changes.sha, selection: { big: 'all', small: 'all' } }),
       /small changed in the meantime, so it was left as it is\. 1 of 2 files were discarded before that\. What was there before is saved in refs\/legit\/discarded\//,
     );
     assert.equal(read('small'), 'edited meanwhile\n');
@@ -227,12 +239,6 @@ test('big files go to the Trash instead of into git, and are refused if they can
   }
 });
 
-const stagedFile = async (repo: Repo, path: string) => {
-  const { staged } = await repo.work();
-  return { key: staged.sha, f: staged.files.find((x) => x.path === path)! };
-};
-const changedLines = (h: { lines: { i?: number }[] }) => h.lines.filter((l) => l.i !== undefined).map((l) => l.i!);
-
 test('discard staged lines: out of the index and the file, unstaged changes kept, and back', async () => {
   commit('base', { f: lines(() => {}) });
   write('f', lines((l) => { l[1] = 'B'; l[15] = 'P'; }));
@@ -240,8 +246,9 @@ test('discard staged lines: out of the index and the file, unstaged changes kept
   write('f', lines((l) => { l[1] = 'B'; l[8] = 'I'; l[15] = 'P'; }));
   const indexBefore = git('ls-files', '-s');
   const repo = await Repo.open(dir);
-  const { key, f } = await stagedFile(repo, 'f');
-  const r = await discard(repo, { key, selection: { f: changedLines(f.hunks[1]) } });
+  const { key, f } = await changedFile(repo, 'f');
+  assert.deepEqual([f.stage, f.staged!.length], ['some', 4]);
+  const r = await discard(repo, { key, selection: { f: linesOf(f, 'p', 'P') } });
   assert.equal(git('show', ':f') + '\n', lines((l) => { l[1] = 'B'; }));
   assert.equal(read('f'), lines((l) => { l[1] = 'B'; l[8] = 'I'; }));
   assert.equal(git('for-each-ref', 'refs/legit/backups'), '');
@@ -262,8 +269,8 @@ test('discard a staged new file and a staged deletion, then restore both', async
   git('rm', '-q', 'gone');
   const indexBefore = git('ls-files', '-s');
   const repo = await Repo.open(dir);
-  const { staged } = await repo.work();
-  const r = await discard(repo, { key: staged.sha, selection: { new: 'all', gone: 'all' } });
+  const changes = await repo.work();
+  const r = await discard(repo, { key: changes.sha, selection: { new: 'all', gone: 'all' } });
   assert.equal(existsSync(join(dir, 'new')), false);
   assert.equal(read('gone'), 'x\n');
   assert.equal(git('status', '--porcelain'), '');
@@ -273,23 +280,25 @@ test('discard a staged new file and a staged deletion, then restore both', async
   assert.equal(git('ls-files', '-s'), indexBefore);
 });
 
-test('discarding staged lines is refused when unstaged changes overlap them, or the index moved', async () => {
+test('a line edited again after staging is discarded from both; a file that changed is refused', async () => {
   commit('base', { f: lines(() => {}) });
   write('f', lines((l) => { l[1] = 'B'; }));
   git('add', 'f');
   write('f', lines((l) => { l[1] = 'B2'; }));
   const repo = await Repo.open(dir);
-  let { key, f } = await stagedFile(repo, 'f');
-  const state = () => [git('ls-files', '-s'), read('f'), git('for-each-ref', 'refs/legit')];
-  const was = state();
-  await assert.rejects(discard(repo, { key, selection: { f: changedLines(f.hunks[0]) } }), /overlap/);
-  assert.deepEqual(state(), was);
+  let { key, f } = await changedFile(repo, 'f');
+  assert.deepEqual([f.staged, f.mixed], [[], linesOf(f, 'b', 'B2')]);
+  const r = await discard(repo, { key, selection: { f: linesOf(f, 'b', 'B2') } });
+  assert.equal(git('status', '--porcelain'), '');
+  await restoreDiscarded(repo, { ref: r.ref! });
+  assert.equal(git('show', ':f') + '\n', lines((l) => { l[1] = 'B'; }));
+  assert.equal(read('f'), lines((l) => { l[1] = 'B2'; }));
 
-  write('f', lines((l) => { l[1] = 'B'; }));
-  ({ key, f } = await stagedFile(repo, 'f'));
+  ({ key, f } = await changedFile(repo, 'f'));
   write('f', lines((l) => { l[1] = 'B'; l[3] = 'D'; }));
   git('add', 'f');
-  const was2 = state();
+  const state = () => [git('ls-files', '-s'), read('f'), git('for-each-ref', 'refs/legit')];
+  const was = state();
   await assert.rejects(discard(repo, { key, selection: { f: 'all' } }), /changed since it was shown/);
-  assert.deepEqual(state(), was2);
+  assert.deepEqual(state(), was);
 });

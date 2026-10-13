@@ -1,5 +1,6 @@
 // Local HTTP server: JSON API, change notifications (SSE), and the UI.
 
+import { createHash } from 'node:crypto';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -192,8 +193,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, await avatars(repo.git, Array.isArray(emails) ? emails.slice(0, 2000) : []));
     }
     if (path === '/api/work') {
-      const { staged, unstaged } = await repo.work();
-      return send(res, 200, `{"staged":${await summary(staged)},"unstaged":${await summary(unstaged)}}`);
+      const changes = await repo.work();
+      // The same diff with only what's staged changed keeps its id, so the UI keeps its view of it.
+      const content = createHash('sha1').update(changes.files.map((f) => `${f.path}\0${f.token}`).join('\0')).digest('hex');
+      return send(res, 200, `{"changes":${await summary(changes)},"content":"${content}"}`);
     }
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
     if (path === '/api/editing') return send(res, 200, await summary(await editChanges(repo)));

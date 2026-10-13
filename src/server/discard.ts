@@ -16,11 +16,11 @@ import { lstat, mkdir, readFile, readlink, rename, rmdir, symlink, unlink, write
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Discarded, DiscardResult, FileDiff, RestoreDiscardedRequest, RestoreDiscardedResult, StageRequest } from '../shared/types.ts';
-import { applyLines } from './diff.ts';
+import { emit, restage } from './staging.ts';
 import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
-import { stagedDiff, unstagedDiff } from './work.ts';
+import { stagingOf, workDiff } from './work.ts';
 
 export const DISCARDED = 'refs/legit/discarded';
 
@@ -223,37 +223,6 @@ async function apply(git: Git, steps: Step[], ref: string | null, verb: string) 
 }
 
 /**
- * What discarding leaves: a tracked file goes back to the index, plus the changes that aren't
- * discarded, through git's checkout filters (line endings, LFS); an untracked one goes away.
- */
-async function leftovers(git: Git, whole: FileDiff[], partial: { f: FileDiff; picked: Set<number> }[]) {
-  const out = new Map<string, Entry>();
-  const modes = new Map<string, string>();
-  const records: string[] = [];
-  for (const f of whole) {
-    if (f.untracked) out.set(f.path, null);
-    else {
-      modes.set(f.path, f.oldMode);
-      records.push(`${f.oldMode} ${f.oldSha}\t${f.path}`);
-    }
-  }
-  const bases = await git.readObjects(partial.map(({ f }) => f.oldSha));
-  for (const { f, picked } of partial) {
-    const base = bases.get(f.oldSha);
-    if (!base) throw new GitError(`Couldn't read the staged version of ${toUtf8(f.path)}; nothing was discarded.`);
-    const sha = git.writeObject('blob', Buffer.from(applyLines(base.data.toString('latin1'), f.hunks, (i) => !picked.has(i)), 'latin1'));
-    // A mode change isn't a line, so it stays.
-    const mode = f.status === 'D' ? f.oldMode : f.newMode;
-    modes.set(f.path, mode);
-    records.push(`${mode} ${sha}\t${f.path}`);
-  }
-  if (!records.length) return out;
-  await git.flush();
-  for (const [p, e] of await smudge(git, records, [...modes.keys()])) out.set(p, e);
-  return out;
-}
-
-/**
  * The files index `records` (`<mode> <sha>\t<path>`) check out as, through git's checkout
  * filters (line endings, LFS), without touching the index or the working tree.
  */
@@ -284,22 +253,18 @@ async function smudge(git: Git, records: string[], paths: string[]): Promise<Map
   return out;
 }
 
-/** Was `key` handed out for `kind` changes? */
-const isKind = (repo: Repo, key: string, kind: 'staged' | 'unstaged') =>
-  [...repo.snapshotIds].some(([content, k]) => k === key && content.startsWith(kind + '\0'));
-
 /**
- * Discard unstaged changes: selected lines, whole files, or untracked files. The working tree
- * goes back towards the index, which isn't touched. What's on disk is saved first.
+ * Discard uncommitted changes: lines or whole files of the working tree's diff, untracked files
+ * included. The file loses them, and so does the index where they're staged (the rest of what's
+ * staged stays). What's on disk and in the index is saved first.
  */
 export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
-  if (isKind(repo, req.key, 'staged')) return discardStaged(repo, req);
   return repo.exclusive(async () => {
     const git = repo.git;
     const why = repo.blocked();
     if (why) throw new GitError(why);
     const snap = repo.snapshots.get(req.key);
-    if (!snap || !isKind(repo, req.key, 'unstaged')) throw new GitError('Those changes are out of date; refresh and select again.');
+    if (!snap) throw new GitError('Those changes are out of date; refresh and select again.');
 
     // Read the files first, then check them against what was shown: what gets saved is then
     // what was shown, and it's compared again right before each write.
@@ -309,7 +274,7 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
       if (!snap.files.some((f) => f.path === path)) throw new GitError(`${pathU} changed since it was shown; nothing was discarded.`);
       before.set(path, await readDisk(abs(git, path)));
     }
-    const { whole, partial } = await repo.resolve(req, await unstagedDiff(git, ''));
+    const { whole, partial } = await repo.resolve(req, (await workDiff(git, '')).diff);
     const files = [...whole, ...partial.map(({ f }) => f)];
     if (!files.length) throw new GitError('Select some changes to discard first.');
     for (const f of files) {
@@ -318,28 +283,75 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
         throw new GitError(`${name} is a submodule; legit can't discard changes inside it. Nothing was discarded.`);
       }
       if (before.get(f.path)!.kind === 'other') throw new GitError(`${name} isn't a file or a symlink; nothing was discarded.`);
-      if (!f.untracked && f.status === 'A') throw new GitError(`${name} was added with \`git add -N\`; nothing was discarded.`);
     }
     for (const { f } of partial) {
-      if (f.untracked) throw new GitError(`${toUtf8(f.path)} is untracked, so it can only be discarded as a whole file. Nothing was discarded.`);
+      if (isBig(before.get(f.path)!)) throw new GitError(`${toUtf8(f.path)} is too big to discard line by line; discard the whole file. Nothing was discarded.`);
     }
 
-    const after = await leftovers(git, whole, partial);
+    // What each file becomes (HEAD's version, or the changes not discarded), and its index entry.
+    const paths = files.map((f) => f.path);
+    const indexBefore = await indexEntries(git, paths);
+    const indexAfter = new Map<string, IndexEntry>();
+    const after = new Map<string, Entry>();
+    const records: string[] = [];
+    const headOf = (f: FileDiff): IndexEntry => (f.untracked || /^0+$/.test(f.oldSha) ? null : { mode: f.oldMode, sha: f.oldSha });
+    for (const f of whole) {
+      const h = headOf(f);
+      if (!f.untracked) indexAfter.set(f.path, h);
+      if (h) records.push(`${h.mode} ${h.sha}\t${f.path}`);
+      else after.set(f.path, null);
+    }
+    const heads = await git.readObjects(partial.flatMap(({ f }) => (headOf(f) ? [f.oldSha] : [])));
+    for (const { f, picked } of partial) {
+      const s = stagingOf(f, heads.get(f.oldSha)?.data.toString('latin1') ?? '');
+      const kept = emit(s.pos, (ci) => !picked.has(ci));
+      // A mode change isn't a line, so it stays.
+      records.push(`${f.status === 'D' ? f.oldMode : f.newMode} ${git.writeObject('blob', Buffer.from(kept, 'latin1'))}\t${f.path}`);
+      const next = f.untracked ? s.index : restage(s.pos, s.index, s.staging, picked, false);
+      if (next !== s.index) indexAfter.set(f.path, { mode: s.mode, sha: git.writeObject('blob', Buffer.from(next, 'latin1')) });
+    }
+    await git.flush();
+    if (records.length) {
+      for (const [p, e] of await smudge(git, records, records.map((r) => r.slice(r.indexOf('\t') + 1)))) after.set(p, e);
+    }
+    for (const [p, e] of indexAfter) if (sameEntry(indexBefore.get(p), e)) indexAfter.delete(p);
+    const touched = paths.filter((p) => !matches(before.get(p)!, after.get(p)!));
+    if (!touched.length && !indexAfter.size) throw new GitError('Those changes are already gone.');
+
     // Big files go first: if one can't go to the Trash, nothing else has been discarded yet.
-    const big = files.filter((f) => isBig(before.get(f.path)!));
-    const kept = files.filter((f) => !big.includes(f));
-    const ref = kept.length
-      ? await save(
-          repo,
-          `discarded changes to ${plural(files.length, 'file')}`,
-          files.map((f) => (big.includes(f) ? `${f.path} (moved to the Trash)` : f.path)),
-          new Map(kept.map((f) => [f.path, entryOf(before.get(f.path)!)])),
-          new Map(kept.map((f) => [f.path, after.get(f.path)!])),
-        )
-      : null;
-    const steps = [...big, ...kept].map((f) => ({ path: f.path, expect: before.get(f.path)!, write: after.get(f.path)!, trash: big.includes(f) }));
+    const big = touched.filter((p) => isBig(before.get(p)!));
+    const kept = touched.filter((p) => !big.includes(p));
+    const indexed = [...indexAfter.keys()];
+    const ref =
+      kept.length || indexed.length
+        ? await save(
+            repo,
+            `discarded changes to ${plural(files.length, 'file')}`,
+            paths.map((p) => (big.includes(p) ? `${p} (moved to the Trash)` : p)),
+            new Map(kept.map((p) => [p, entryOf(before.get(p)!)])),
+            new Map(kept.map((p) => [p, after.get(p)!])),
+            indexed.length
+              ? { before: new Map(indexed.map((p) => [p, indexBefore.get(p) ?? null])), after: indexAfter }
+              : undefined,
+          )
+        : null;
+    const steps = [...big, ...kept].map((p) => ({ path: p, expect: before.get(p)!, write: after.get(p)!, trash: big.includes(p) }));
     await apply(git, steps, ref, 'discarded');
-    return { state: await repo.state(), ref, files: files.length, trashed: big.map((f) => toUtf8(f.path)) };
+
+    // Last, the index, if nothing changed it since it was read.
+    if (indexed.length) {
+      const fail = (msg: string) =>
+        new GitError(`${msg} The files were discarded but the index wasn't; what was there before is saved in ${ref} (Backups ▸ Discarded changes).`);
+      const current = await indexEntries(git, indexed);
+      for (const p of indexed) if (!sameEntry(current.get(p), indexBefore.get(p))) throw fail(`${toUtf8(p)} was staged again meanwhile.`);
+      const zero = '0'.repeat(git.emptyTree.length);
+      const r = await git.run(['update-index', '-z', '--index-info'], {
+        input: Buffer.from(indexed.map((p) => { const n = indexAfter.get(p); return (n ? `${n.mode} ${n.sha}\t${p}` : `0 ${zero}\t${p}`) + '\0'; }).join(''), 'latin1'),
+        allowFail: true,
+      });
+      if (r.code !== 0) throw fail(`Couldn't update the index: ${r.err.trim()}`);
+    }
+    return { state: await repo.state(), ref, files: files.length, trashed: big.map((p) => toUtf8(p)) };
   });
 }
 
@@ -448,146 +460,6 @@ async function indexEntries(git: Git, paths: string[]): Promise<Map<string, Inde
 
 const sameEntry = (a: IndexEntry | undefined, b: IndexEntry | undefined) =>
   (a ?? null) === null ? (b ?? null) === null : !!b && a!.mode === b.mode && a!.sha === b.sha;
-
-/**
- * Discard staged changes: selected lines or whole files go out of the index (back towards
- * HEAD) and out of the files on disk. Unstaged changes to the same files are kept (a three-way
- * merge), and the discard is refused if they overlap. Files and index entries are saved first.
- */
-function discardStaged(repo: Repo, req: StageRequest): Promise<DiscardResult> {
-  return repo.exclusive(async () => {
-    const git = repo.git;
-    const why = repo.blocked();
-    if (why) throw new GitError(why);
-    const snap = repo.snapshots.get(req.key);
-    if (!snap) throw new GitError('Those changes are out of date; refresh and select again.');
-    const { whole, partial } = await repo.resolve(req, await stagedDiff(git, ''));
-    const files = [...whole, ...partial.map(({ f }) => f)];
-    if (!files.length) throw new GitError('Select some changes to discard first.');
-    for (const f of files) {
-      const shown = snap.files.find((x) => x.path === f.path)!;
-      if (shown.oldSha !== f.oldSha || shown.newSha !== f.newSha || shown.newMode !== f.newMode) {
-        throw new GitError(`${toUtf8(f.path)} changed since it was shown; nothing was discarded. Look again and reselect.`);
-      }
-      if (f.oldMode === '160000' || f.newMode === '160000') {
-        throw new GitError(`${toUtf8(f.path)} is a submodule; legit can't discard changes inside it. Nothing was discarded.`);
-      }
-    }
-
-    // What the index has now (I) and will have (I').
-    const zero = '0'.repeat(files[0].oldSha.length);
-    const was = new Map<string, IndexEntry>();
-    const next = new Map<string, IndexEntry>();
-    for (const f of whole) {
-      was.set(f.path, f.status === 'D' ? null : { mode: f.newMode, sha: f.newSha });
-      next.set(f.path, f.status === 'A' ? null : { mode: f.oldMode, sha: f.oldSha });
-    }
-    const bases = await git.readObjects(partial.filter(({ f }) => f.status !== 'A').map(({ f }) => f.oldSha));
-    for (const { f, picked } of partial) {
-      const base = f.status === 'A' ? '' : bases.get(f.oldSha)!.data.toString('latin1');
-      const sha = git.writeObject('blob', Buffer.from(applyLines(base, f.hunks, (i) => !picked.has(i)), 'latin1'));
-      was.set(f.path, f.status === 'D' ? null : { mode: f.newMode, sha: f.newSha });
-      next.set(f.path, { mode: f.status === 'D' ? f.oldMode : f.newMode, sha });
-    }
-    await git.flush();
-    const paths = files.map((f) => f.path);
-    const now = await indexEntries(git, paths);
-    for (const p of paths) {
-      if (!sameEntry(now.get(p), was.get(p))) throw new GitError(`${toUtf8(p)} changed since it was shown; nothing was discarded.`);
-    }
-
-    // What each file on disk becomes. A file that's exactly what's staged becomes I'. One with
-    // unstaged changes on top keeps them: git merge-file of (disk, I, I'). A file missing on
-    // disk, or one whose staged entry is a deletion, is left as it is.
-    const disk = new Map<string, Disk>();
-    for (const p of paths) disk.set(p, await readDisk(abs(git, p)));
-    const onDisk = paths.filter((p) => disk.get(p)!.kind !== 'missing' && was.get(p));
-    for (const p of onDisk) {
-      if (disk.get(p)!.kind === 'other') throw new GitError(`${toUtf8(p)} isn't a file or a symlink; nothing was discarded.`);
-    }
-    // Clean (filtered) content of each file, written so it can be merged; and the raw bytes, to save.
-    const hashes = async (list: string[], args: string[]) => {
-      if (!list.length) return [];
-      const r = await git.run(['hash-object', '-w', ...args, '--stdin-paths'], { input: Buffer.from(list.map((p) => p + '\n').join(''), 'latin1') });
-      return r.out.toString('latin1').trim().split('\n');
-    };
-    const files_ = onDisk.filter((p) => disk.get(p)!.kind === 'file');
-    const [clean, raw] = await Promise.all([hashes(files_, []), hashes(files_, ['--no-filters'])]);
-    const cleanOf = new Map(files_.map((p, i) => [p, clean[i]]));
-    const rawOf = new Map(files_.map((p, i) => [p, raw[i]]));
-    for (const p of onDisk) {
-      const d = disk.get(p)!;
-      if (d.kind === 'link') cleanOf.set(p, git.writeObject('blob', d.data!));
-    }
-    await git.flush();
-
-    const records: string[] = [];
-    const removed: string[] = [];
-    for (const p of onDisk) {
-      const d = disk.get(p)!;
-      const i = was.get(p)!;
-      const n = next.get(p) ?? null;
-      const diskMode = d.kind === 'link' ? '120000' : d.exec ? '100755' : '100644';
-      if (cleanOf.get(p) === i.sha && diskMode === i.mode) {
-        if (n) records.push(`${n.mode} ${n.sha}\t${p}`);
-        else removed.push(p);
-        continue;
-      }
-      const name = toUtf8(p);
-      if (!n) throw new GitError(`${name} also has unstaged changes; discard or stage those first. Nothing was discarded.`);
-      if (d.kind === 'link' || i.mode === '120000' || n.mode === '120000') {
-        throw new GitError(`${name} is a symlink with unstaged changes too; discard those first. Nothing was discarded.`);
-      }
-      const r = await git.run(['merge-file', '-p', '--object-id', cleanOf.get(p)!, i.sha, n.sha], { allowFail: true });
-      if (r.code !== 0) {
-        throw new GitError(
-          r.code > 0
-            ? `${name} has unstaged changes that overlap the ones to discard; discard or stage those first. Nothing was discarded.`
-            : `${name} can't be merged (binary?) with its unstaged changes; discard or stage those first. Nothing was discarded.`,
-        );
-      }
-      // Keep the file's own executable bit unless it was the staged one.
-      const exec = diskMode === i.mode ? n.mode === '100755' : d.exec;
-      records.push(`${exec ? '100755' : '100644'} ${git.writeObject('blob', r.out)}\t${p}`);
-    }
-    // A staged deletion whose file is gone from disk: the file comes back as I'.
-    for (const p of paths) {
-      const n = next.get(p);
-      if (!was.get(p) && n && disk.get(p)!.kind === 'missing') records.push(`${n.mode} ${n.sha}\t${p}`);
-    }
-    await git.flush();
-    const after = records.length ? await smudge(git, records, records.map((r) => r.slice(r.indexOf('\t') + 1))) : new Map<string, Entry>();
-    for (const p of removed) after.set(p, null);
-
-    const before = new Map<string, Entry>();
-    for (const p of after.keys()) {
-      const d = disk.get(p)!;
-      before.set(p, d.kind === 'missing' ? null : d.kind === 'link' ? entryOf(d) : { mode: d.exec ? '100755' : '100644', sha: rawOf.get(p)! });
-    }
-    const ref = await save(
-      repo,
-      `discarded staged changes to ${plural(files.length, 'file')}`,
-      paths,
-      before,
-      after,
-      { before: was, after: next },
-    );
-    const steps = [...after].map(([path, write]) => ({ path, expect: disk.get(path)!, write, trash: false }));
-    await apply(git, steps, ref, 'discarded');
-
-    // Last, the index, if nothing changed it since it was read.
-    const fail = (msg: string) =>
-      new GitError(`${msg} The files were discarded but the index wasn't; what was there before is saved in ${ref} (Backups ▸ Discarded changes).`);
-    const current = await indexEntries(git, paths);
-    for (const p of paths) if (!sameEntry(current.get(p), was.get(p))) throw fail(`${toUtf8(p)} was staged again meanwhile.`);
-    const r = await git.run(['update-index', '-z', '--index-info'], {
-      input: Buffer.from(paths.map((p) => { const n = next.get(p); return (n ? `${n.mode} ${n.sha}\t${p}` : `0 ${zero}\t${p}`) + '\0'; }).join(''), 'latin1'),
-      allowFail: true,
-    });
-    if (r.code !== 0) throw fail(`Couldn't update the index: ${r.err.trim()}`);
-    return { state: await repo.state(), ref, files: files.length, trashed: [] };
-  });
-}
 
 /** Index entries a staged discard changed: as it left them (`left`) and as they were (`was`). */
 async function indexChanges(git: Git, leftCommit: string, wasCommit: string) {

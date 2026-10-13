@@ -121,6 +121,14 @@ export interface FileDiff {
   untracked?: boolean;
   /** Identifies this exact version of the file's diff (working-tree changes only). */
   token?: string;
+  /** Uncommitted changes: whether the file's changes are staged (its checkbox). */
+  stage?: 'all' | 'some' | 'none';
+  /** Uncommitted changes: the changed lines that are staged (index 0 for a file without lines). */
+  staged?: number[];
+  /** Uncommitted changes: lines whose staged version is neither HEAD's nor the file's (edited again after staging). */
+  mixed?: number[];
+  /** Uncommitted changes: the index differs in a way no line shows. */
+  unshown?: string;
   hunks: Hunk[];
   added: number;
   removed: number;
@@ -251,16 +259,20 @@ export interface BranchInfo {
   current: boolean;
 }
 
-/** Uncommitted changes. Each summary's `sha` is a snapshot key usable with the diff APIs. */
+/**
+ * Uncommitted changes: each file's diff from HEAD to the working tree (untracked files included),
+ * with what's staged. Its `sha` is a snapshot key usable with the diff APIs.
+ */
 export interface WorkState {
-  staged: DiffSummary;
-  /** Unstaged changes to tracked files, then untracked files. */
-  unstaged: DiffSummary;
+  changes: DiffSummary;
+  /** Identifies the diff itself, whatever is staged. */
+  content: string;
 }
 
 export interface StageRequest {
   /** Snapshot key the selection was made on. */
   key: string;
+  /** Lines of the working tree's diff ('all': the whole file). */
   selection: Selection;
 }
 

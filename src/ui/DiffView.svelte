@@ -50,6 +50,8 @@
     initial = null,
     onremove,
     oneditline,
+    onstage,
+    changeActions,
   }: {
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
@@ -65,6 +67,13 @@
     onremove?: (selection: Selection) => void;
     /** Replace line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
     oneditline?: (path: string, line: number, text: string) => Promise<boolean>;
+    /**
+     * Uncommitted changes: `sel` is what's staged, and picking lines stages or unstages them at once
+     * (`on`). Files' `mixed` lines show as neither until picked.
+     */
+    onstage?: (path: string, lines: number[] | 'all', on: boolean) => void;
+    /** More entries for a changed line's menu: the line, and the block of changes around it. */
+    changeActions?: (f: FileSummary, line: number, block: number[]) => MaybeEntry[];
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -302,18 +311,28 @@
 
   const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }));
 
-  // Selection (split). A file with no line changes (binary, mode-only) uses index 0 as "whole file".
+  // Selection (split), or what's staged. A file with no line changes (binary, mode-only) uses index 0 as "whole file".
   const changes = (f: FileSummary) => f.added + f.removed;
+  const mixed = $derived(new Map(files.flatMap((f) => (f.mixed?.length ? [[f.path, new Set(f.mixed)]] : []))));
   function fileState(f: FileSummary): 'none' | 'some' | 'all' {
     const n = sel[f.path].size;
+    if (onstage && (f.unshown || [...(mixed.get(f.path) ?? [])].some((c) => !sel[f.path].has(c)))) return 'some';
     return n === 0 ? 'none' : n >= Math.max(1, changes(f)) ? 'all' : 'some';
   }
 
   function toggleFile(f: FileSummary) {
     if (readonly) return;
     const s = sel[f.path];
-    if (fileState(f) === 'all') s.clear();
+    const on = fileState(f) !== 'all';
+    if (!on) s.clear();
     else for (let k = 0; k < Math.max(1, changes(f)); k++) s.add(k);
+    onstage?.(f.path, 'all', on);
+  }
+
+  /** Staging: lines picked are staged or unstaged together, now. */
+  function stageLines(path: string, lines: Iterable<number>, on: boolean) {
+    const list = [...lines];
+    if (onstage && list.length) onstage(path, list, on);
   }
 
   function toggleHunk(i: number, headerRow: number) {
@@ -325,6 +344,7 @@
     const s = sel[f.path];
     const on = !idx.every((c) => s.has(c));
     for (const c of idx) on ? s.add(c) : s.delete(c);
+    stageLines(f.path, idx, on);
   }
 
   function toggleCollapsed(i: number) {
@@ -337,7 +357,7 @@
   // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed.
   // Starting on the block strip (left of the line numbers) works in whole blocks: runs of
   // consecutive changed lines.
-  let drag: { path: string; on: boolean; last: number; block: boolean } | null = null;
+  let drag: { path: string; on: boolean; last: number; block: boolean; touched: Set<number> } | null = null;
   let hoverBlock = $state<{ i: number; a: number; b: number } | null>(null);
 
   /** Rows [a, b] of the run of consecutive changed lines around row r. */
@@ -352,9 +372,18 @@
   const onStrip = (e: Event) => !!(e.target as HTMLElement).closest('.blk');
   let anchor: { path: string; ci: number } | null = null;
 
-  function setRange(path: string, a: number, b: number, on: boolean) {
+  function setRange(path: string, a: number, b: number, on: boolean, touched?: Set<number>) {
     const s = sel[path];
-    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) on ? s.add(k) : s.delete(k);
+    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) {
+      on ? s.add(k) : s.delete(k);
+      touched?.add(k);
+    }
+  }
+
+  /** The end of a drag: what it crossed is staged or unstaged in one go. */
+  function endDrag() {
+    if (drag) stageLines(drag.path, drag.touched, drag.on);
+    drag = null;
   }
 
   function rowOf(e: Event): number {
@@ -375,23 +404,29 @@
     const f = files[i];
     if (!f.partial) return toggleFile(f);
     const s = sel[f.path];
-    if (onStrip(e)) {
+    const touched = new Set<number>();
+    // A line whose staged version is neither side's is staged with the rest of its block.
+    const whole = onStrip(e) || (!!onstage && !!mixed.get(f.path)?.has(ci) && !s.has(ci));
+    if (whole) {
       const [a, b] = blockAt(rows, r);
       const [lo, hi] = [rows.ci[a], rows.ci[b]];
       let all = true;
       for (let c = lo; c <= hi; c++) if (!s.has(c)) all = false;
-      setRange(f.path, lo, hi, !all);
-      drag = { path: f.path, on: !all, last: ci, block: true };
+      setRange(f.path, lo, hi, !all, touched);
+      drag = { path: f.path, on: !all, last: ci, block: true, touched };
       anchor = { path: f.path, ci };
       return;
     }
     if (e.shiftKey && anchor?.path === f.path) {
-      setRange(f.path, anchor.ci, ci, s.has(anchor.ci));
+      const on = s.has(anchor.ci);
+      setRange(f.path, anchor.ci, ci, on, touched);
+      stageLines(f.path, touched, on);
       return;
     }
     const on = !s.has(ci);
     on ? s.add(ci) : s.delete(ci);
-    drag = { path: f.path, on, last: ci, block: false };
+    touched.add(ci);
+    drag = { path: f.path, on, last: ci, block: false, touched };
     anchor = { path: f.path, ci };
   }
 
@@ -407,10 +442,10 @@
       if (hoverBlock?.i !== i || hoverBlock.a !== a) hoverBlock = { i, a, b };
     } else if (hoverBlock) hoverBlock = null;
     if (!drag || drag.path !== files[i].path || ci < 0) return;
-    setRange(drag.path, drag.last, ci, drag.on);
+    setRange(drag.path, drag.last, ci, drag.on, drag.touched);
     if (drag.block) {
       const [a, b] = blockAt(rows, r);
-      setRange(drag.path, rows.ci[a], rows.ci[b], drag.on);
+      setRange(drag.path, rows.ci[a], rows.ci[b], drag.on, drag.touched);
     }
     drag.last = ci;
   }
@@ -488,7 +523,14 @@
     const ci = contents[i].ci[r];
     const count = Object.values(sel).reduce((n, s) => n + s.size, 0);
     const many = ci >= 0 && sel[f.path].has(ci) && count > 1;
+    const rows = contents[i];
+    let block: number[] = [];
+    if (ci >= 0) {
+      const [a, b] = blockAt(rows, r);
+      block = [...rows.ci.slice(a, b + 1)];
+    }
     return [
+      ...(changeActions && ci >= 0 ? changeActions(f, ci, block) : []),
       canEdit(i, r) && { label: 'Edit line', icon: PencilSimple, note: 'Or double-click it', run: () => startEdit(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
@@ -553,7 +595,7 @@
   const KIND = ['', 'tc', 'ta', 'td'];
 </script>
 
-<svelte:window onmouseup={() => (drag = null)} />
+<svelte:window onmouseup={endDrag} />
 
 <div class="diff">
   <div class="summary muted">
@@ -601,7 +643,7 @@
                 checked={state === 'all'}
                 indeterminate={state === 'some'}
                 onchange={() => toggleFile(f)}
-                title="Select whole file"
+                title={onstage ? (state === 'all' ? 'Unstage the whole file' : 'Stage the whole file') : 'Select whole file'}
               />
             {/if}
             <button
@@ -618,6 +660,14 @@
             >
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
+            {#if onstage && (f.unshown || mixed.has(f.path))}
+              <Tag
+                color="var(--warn)"
+                label="staged differently"
+                title={f.unshown ??
+                  'Some lines were changed again after they were staged, so what is staged is neither the old nor the new version. Pick one to stage the new version of its block, or unpick it.'}
+              />
+            {/if}
             {#if f.generated}
               <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
             {/if}
@@ -630,7 +680,7 @@
             {#if !f.rows}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
-                {f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
+                {onstage && f.unshown ? f.unshown : f.binary ? 'Binary file' : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
             {:else}
               <div class="body" class:loading={!rows} style:height="{bodyHeight(i)}px">
@@ -686,13 +736,16 @@
                         <div
                           class="line {KIND[kind]}"
                           class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
+                          class:mixed={onstage && ci >= 0 && !sel[f.path].has(ci) && mixed.get(f.path)?.has(ci)}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
                           style:height={edit ? `${editRows * ROW}px` : undefined}
                           data-r={r}
                         >
                           <span class="gutter"
-                            ><span class="blk" title={ci >= 0 && !readonly ? 'Select this block of changes' : undefined}
+                            ><span
+                              class="blk"
+                              title={ci >= 0 && !readonly ? (onstage ? 'Stage or unstage this block of changes' : 'Select this block of changes') : undefined}
                             ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
                               >{MARK[kind]}</span
                             ></span
@@ -1024,6 +1077,11 @@
 
   .line.sel .gutter .mark {
     color: var(--on-accent);
+  }
+
+  /* Staged in a version that's neither side's: half picked. */
+  .line.mixed .gutter {
+    background: repeating-linear-gradient(135deg, var(--theme-mid) 0 3px, transparent 3px 6px), var(--code-bg);
   }
 
   .line.ta.sel {

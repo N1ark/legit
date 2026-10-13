@@ -114,7 +114,6 @@
     extra: [
       { label: 'Select several (click)', hints: [MOD, '⇧'], group: C },
       { label: 'Save, commit, squash, finish editing or continue a merge', hints: ['⌘↩'] },
-      { label: 'Stage / unstage picked changes', hints: ['s', 'u'] },
       { label: "Remove picked changes from the commit", hints: ['⌫'] },
       { label: 'Editing a line (double-click it): save / add a line', hints: ['↩', '⇧↩'] },
       { label: 'Revert edits, clear picked changes', hints: ['Esc'] },

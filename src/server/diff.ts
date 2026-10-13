@@ -45,6 +45,12 @@ export function parseDiff(data: string, sha: string): CommitDiff {
   // Patches come in the same order as the raw records; a type change produces two.
   let ci = 0;
   for (const f of files) {
+    // A working-tree file listed (stat-dirty) but no different has a record and no patch.
+    const next = chunks[ci] ?? '';
+    if (!next.startsWith('diff --git "') && !next.startsWith(`diff --git a/${f.path} b/`)) {
+      f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).digest('hex');
+      continue;
+    }
     const mine = f.status === 'T' ? chunks.slice(ci, ci + 2) : chunks.slice(ci, ci + 1);
     ci += mine.length;
     f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).update(mine.join('\n'), 'latin1').digest('hex');

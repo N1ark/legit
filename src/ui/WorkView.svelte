@@ -1,29 +1,32 @@
 <script lang="ts">
-  // Uncommitted changes: a commit form, what's staged, and what isn't (untracked files
-  // included). Select lines like in a commit and stage/unstage them; only the index changes.
-  import { Button, Checkbox, ConfirmButton, IconButton, Kbd, hasOverlay, isTyping, matches } from 'purr';
-  import { ArrowDown, ArrowUp, Check, Trash, X } from 'purr/icons';
+  // Uncommitted changes: a commit form, and each file's changes from HEAD to the working tree.
+  // What's picked in them is what's staged: picking a line, block or file stages or unstages
+  // it right away (only the index changes). Discarding is in the menus.
+  import { Button, Checkbox, ConfirmButton, Kbd, hasOverlay, matches, toast } from 'purr';
+  import { ArrowDown, ArrowUp, Check, Trash } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { DiffSummary, Selection, WorkState } from '../shared/types.ts';
+  import type { DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app, request, shortSha } from './lib/app.svelte.ts';
   import { discardChanges } from './lib/discard.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
 
   type Sel = Record<string, SvelteSet<number>>;
   let work = $state.raw<WorkState | null>(null);
   let staged = $state<Sel>({});
-  let unstaged = $state<Sel>({});
   let error = $state<string | null>(null);
 
-  const emptySel = (d: DiffSummary): Sel => Object.fromEntries(d.files.map((f) => [f.path, new SvelteSet<number>()]));
+  const stagedSel = (d: DiffSummary): Sel => Object.fromEntries(d.files.map((f) => [f.path, new SvelteSet<number>(f.staged ?? [])]));
 
   let loading = false;
   let again = false;
+  /** Show what's staged again even if the snapshot is the same (a pick failed). */
+  let resync = false;
   async function load() {
-    if (loading) {
+    // While picks are still on their way, what's shown is ahead of the index: load once they're in.
+    if (loading || pending) {
       again = true;
       return;
     }
@@ -32,13 +35,12 @@
       const res = await fetch('/api/work');
       const w: WorkState | { error: string } = await res.json();
       if ('error' in w) error = w.error;
-      else {
+      else if (!pending) {
         error = null;
-        // A side whose snapshot didn't change keeps its selection.
-        if (w.staged.sha !== work?.staged.sha) staged = emptySel(w.staged);
-        if (w.unstaged.sha !== work?.unstaged.sha) unstaged = emptySel(w.unstaged);
+        if (resync || w.changes.sha !== work?.changes.sha) staged = stagedSel(w.changes);
+        resync = false;
         work = w;
-      }
+      } else again = true;
     } finally {
       loading = false;
       if (again) {
@@ -59,36 +61,57 @@
     if (scroller) scroller.scrollTop = 0;
   });
 
-  const count = (sel: Sel) => Object.values(sel).reduce((n, s) => n + s.size, 0);
-  const selStaged = $derived(count(staged));
-  const selUnstaged = $derived(count(unstaged));
-
-  function selection(d: DiffSummary, sel: Sel, all = false): Selection {
-    const out: Selection = {};
-    for (const f of d.files) {
-      const s = sel[f.path];
-      const n = f.added + f.removed;
-      if (all || n === 0 ? all || s?.size : s?.size === n) out[f.path] = 'all';
-      else if (s?.size) out[f.path] = [...s];
-    }
-    return out;
+  // Picks are sent one after the other, each as soon as it's made, against the snapshot they
+  // were made on (the server refuses a file that changed since; what's staged may have).
+  let pending = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  function stage(path: string, lines: number[] | 'all', on: boolean) {
+    stageMany({ [path]: lines }, on);
   }
 
-  async function run(op: 'stage' | 'unstage', all = false) {
-    if (!work || app.busy) return;
-    const d = op === 'stage' ? work.unstaged : work.staged;
-    const sel = selection(d, op === 'stage' ? unstaged : staged, all);
-    if (!Object.keys(sel).length) return;
-    await app.op(op, { key: d.sha, selection: sel });
-    await load();
+  function stageMany(selection: Selection, on: boolean) {
+    if (!work || !Object.keys(selection).length) return;
+    const key = work.changes.sha;
+    pending++;
+    queue = queue.then(async () => {
+      try {
+        await request<OpResult>(on ? '/api/stage' : '/api/unstage', { key, selection });
+      } catch (e) {
+        toast.error(e);
+        resync = true;
+      } finally {
+        if (--pending === 0) {
+          app.refresh();
+          load();
+        }
+      }
+    });
+  }
+
+  const all = (files: FileSummary[]): Selection => Object.fromEntries(files.map((f) => [f.path, 'all']));
+  const isStaged = (f: FileSummary) => !!staged[f.path]?.size || !!f.unshown || !!f.mixed?.length;
+  const stagedFiles = $derived(work ? work.changes.files.filter(isStaged).length : 0);
+  const unstagedFiles = $derived(
+    work ? work.changes.files.filter((f) => f.unshown || f.mixed?.length || (staged[f.path]?.size ?? 0) < Math.max(1, f.added + f.removed)) : [],
+  );
+
+  function stageAll(on: boolean) {
+    if (!work) return;
+    const files = on ? unstagedFiles : work.changes.files.filter(isStaged);
+    for (const f of files) {
+      const s = staged[f.path];
+      if (on) for (let k = 0; k < Math.max(1, f.added + f.removed); k++) s.add(k);
+      else s.clear();
+    }
+    stageMany(all(files), on);
   }
 
   // Discarding saves what it throws away first (refs/legit/discarded); the toast can undo it.
-  // Staged changes go out of both the index and the files.
-  async function discard(kind: 'staged' | 'unstaged', sel: Selection | null = null) {
+  // Staged changes go out of the index as well as the files.
+  async function discard(selection: Selection) {
     if (!work || app.busy) return;
-    const d = kind === 'staged' ? work.staged : work.unstaged;
-    await discardChanges(d.sha, sel ?? selection(d, kind === 'staged' ? staged : unstaged));
+    await queue;
+    await discardChanges(work.changes.sha, selection);
     await load();
   }
 
@@ -102,7 +125,7 @@
   const head = $derived(app.commits.find((c) => c.sha === app.repo?.head) ?? null);
   let amend = $state(back?.amend ?? false);
   const canCommit = $derived(
-    subject.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : !!work?.staged.files.length),
+    subject.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : stagedFiles > 0),
   );
 
   // Amending starts from the last commit's message; turning it off brings back what was typed.
@@ -139,6 +162,7 @@
 
   async function commit() {
     if (!canCommit || app.busy) return;
+    await queue;
     if (await app.op('commit', { subject, body, coauthors: people, amend })) {
       subject = '';
       body = '';
@@ -150,24 +174,11 @@
     }
   }
 
-  const clear = () => [...Object.values(staged), ...Object.values(unstaged)].forEach((s) => s.clear());
-
   function onWindowKey(e: KeyboardEvent) {
     // ⌘↩ commits wherever the focus is, so picking changes in the diff doesn't need a click back.
     if (matches('⌘↩', e) && !e.isComposing && !hasOverlay()) {
       e.preventDefault();
       commit();
-      return;
-    }
-    if (isTyping(e.target) || hasOverlay()) return;
-    if (matches('s', e) && selUnstaged) {
-      e.preventDefault();
-      run('stage');
-    } else if (matches('u', e) && selStaged) {
-      e.preventDefault();
-      run('unstage');
-    } else if (e.key === 'Escape' && (selStaged || selUnstaged)) {
-      clear();
     }
   }
 
@@ -199,7 +210,7 @@
         {#if amend && head}
           Amend {shortSha(head)}
         {:else}
-          Commit {work?.staged.files.length ? plural(work.staged.files.length, 'file') : ''}
+          Commit {stagedFiles ? plural(stagedFiles, 'file') : ''}
         {/if}
         <Kbd hint="⌘↩" />
       </Button>
@@ -208,8 +219,8 @@
       </span>
       {#if amend && head?.pushed}
         <span class="warn">Already pushed: amending it means force pushing.</span>
-      {:else if !amend && work && !work.staged.files.length}
-        <span class="muted">Stage some changes first.</span>
+      {:else if !amend && work && !stagedFiles}
+        <span class="muted">Check the changes to commit below.</span>
       {/if}
     </div>
     {#if head?.editable && !head.merge && !amend}
@@ -233,121 +244,70 @@
   {#if error}
     <p class="muted empty">{error}</p>
   {:else if work}
+    {@const files = work.changes.files}
     <section>
       <div class="shead">
-        <h3>Staged</h3>
-        <span class="muted">{plural(work.staged.files.length, 'file')}</span>
+        <h3>Changes</h3>
+        <span class="muted">{plural(files.length, 'file')} · {stagedFiles} staged</span>
         <span class="spacer"></span>
-        {#if work.staged.files.length}
+        {#if files.length}
           <ConfirmButton
             variant="ghost"
-            confirmLabel="Discard all {plural(work.staged.files.length, 'file')}? Click again"
-            onconfirm={() => discard('staged', selection(work!.staged, staged, true))}
+            confirmLabel="Discard all {plural(files.length, 'file')}? Click again"
+            onconfirm={() => discard(all(files))}
             disabled={app.busy}
-            title="Throw away everything staged, from the index and your files (saved first, so it can be undone)"
+            title="Throw away every uncommitted change, staged or not, untracked files included (saved first, so it can be undone)"
             ><Trash /> Discard all</ConfirmButton
           >
-          <Button onclick={() => run('unstage', true)} disabled={app.busy}><ArrowDown /> Unstage all</Button>
+          <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDown /> Unstage all</Button>
+          <Button onclick={() => stageAll(true)} disabled={!unstagedFiles.length}><ArrowUp /> Stage all</Button>
         {/if}
       </div>
-      {#if work.staged.files.length}
-        {#key work.staged.sha}
+      {#if files.length}
+        {#key work.content}
           <DiffView
-            summary={work.staged}
+            summary={work.changes}
             sel={staged}
             readonly={false}
-            hint="Pick changes to unstage (u) or discard."
-            fileActions={(f) => [
+            hint="Checked lines are staged: click a line, the strip beside a block, or a file's box. Right-click to discard."
+            onstage={stage}
+            changeActions={(f, line, block) => [
               {
-                label: 'Discard changes',
+                label: 'Discard this change',
                 icon: Trash,
                 danger: true,
                 confirm: 'Click again to discard',
-                note: 'Takes them out of the index and the file. It can be restored.',
-                run: () => discard('staged', { [f.path]: 'all' }),
+                note: 'From your file, and the index if staged. It can be restored.',
+                run: () => discard({ [f.path]: [line] }),
+              },
+              block.length > 1 && {
+                label: `Discard these ${block.length} changes`,
+                icon: Trash,
+                danger: true,
+                confirm: 'Click again to discard',
+                note: 'The block around this line. It can be restored.',
+                run: () => discard({ [f.path]: block }),
+              },
+              'separator',
+            ]}
+            fileActions={(f) => [
+              {
+                label: "Discard this file's changes",
+                icon: Trash,
+                danger: true,
+                confirm: 'Click again to discard',
+                note: f.untracked ? 'Deletes the file. It can be restored.' : 'Back to the last commit, index included. It can be restored.',
+                run: () => discard({ [f.path]: 'all' }),
               },
             ]}
           />
         {/key}
       {:else}
-        <p class="muted empty">Nothing staged. Pick changes below and stage them (s).</p>
-      {/if}
-    </section>
-
-    <section>
-      <div class="shead">
-        <h3>Unstaged</h3>
-        <span class="muted">{plural(work.unstaged.files.length, 'file')}</span>
-        <span class="spacer"></span>
-        {#if work.unstaged.files.length}
-          <ConfirmButton
-            variant="ghost"
-            confirmLabel="Discard all {plural(work.unstaged.files.length, 'file')}? Click again"
-            onconfirm={() => discard('unstaged', selection(work!.unstaged, unstaged, true))}
-            disabled={app.busy}
-            title="Discard all unstaged changes (saved first, so it can be undone)"><Trash /> Discard all</ConfirmButton
-          >
-          <Button onclick={() => run('stage', true)} disabled={app.busy}><ArrowUp /> Stage all</Button>
-        {/if}
-      </div>
-      {#if work.unstaged.files.length}
-        {#key work.unstaged.sha}
-          <DiffView
-            summary={work.unstaged}
-            sel={unstaged}
-            readonly={false}
-            hint="Pick changes to stage (s) or discard."
-            fileActions={(f) => [
-              {
-                label: 'Discard changes',
-                icon: Trash,
-                danger: true,
-                confirm: 'Click again to discard',
-                note: f.untracked ? 'Deletes the file. It can be restored.' : 'It can be restored.',
-                run: () => discard('unstaged', { [f.path]: 'all' }),
-              },
-            ]}
-          />
-        {/key}
-      {:else}
-        <p class="muted empty">No unstaged changes.</p>
+        <p class="muted empty">No changes.</p>
       {/if}
     </section>
   {:else}
     <p class="muted empty">Loading changes…</p>
-  {/if}
-
-  {#if selStaged || selUnstaged}
-    <div class="bar">
-      {#if selUnstaged}
-        <Button variant="primary" onclick={() => run('stage')} disabled={app.busy}>
-          <ArrowUp /> Stage {plural(selUnstaged, 'change')} <Kbd hint="s" />
-        </Button>
-        <ConfirmButton
-          confirmLabel="Click again to discard"
-          onconfirm={() => discard('unstaged')}
-          disabled={app.busy}
-          title="Throw these changes away (saved first, so it can be undone)"
-        >
-          <Trash /> Discard {plural(selUnstaged, 'change')}
-        </ConfirmButton>
-      {/if}
-      {#if selStaged}
-        <Button onclick={() => run('unstage')} disabled={app.busy}>
-          <ArrowDown /> Unstage {plural(selStaged, 'change')} <Kbd hint="u" />
-        </Button>
-        <ConfirmButton
-          confirmLabel="Click again to discard"
-          onconfirm={() => discard('staged')}
-          disabled={app.busy}
-          title="Throw these staged changes away, from the index and your files (saved first, so it can be undone)"
-        >
-          <Trash /> Discard {plural(selStaged, 'staged change')}
-        </ConfirmButton>
-      {/if}
-      <span class="spacer"></span>
-      <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><X /></IconButton>
-    </div>
   {/if}
 </div>
 
@@ -460,28 +420,5 @@
   .empty {
     padding: var(--gap-4) var(--sp-5) var(--sp-5);
     margin: 0;
-  }
-
-  .bar {
-    position: sticky;
-    bottom: var(--sp-4);
-    margin: auto var(--sp-5) var(--sp-4);
-    display: flex;
-    align-items: center;
-    gap: var(--gap-4);
-    padding: var(--gap-4);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow-lg);
-    border: 1px solid var(--theme-mid);
-    z-index: var(--z-sticky);
-    animation: rise var(--dur) var(--ease);
-  }
-
-  @keyframes rise {
-    from {
-      transform: translateY(8px);
-      opacity: 0;
-    }
   }
 </style>

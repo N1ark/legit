@@ -20,7 +20,8 @@ import { buildMessage, parseMessage } from './message.ts';
 import { pruneRefs } from './retention.ts';
 import { syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
-import { stagedDiff, unstagedDiff, workCounts } from './work.ts';
+import { stagingOf, workCounts, workDiff } from './work.ts';
+import { emit, restage } from './staging.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
@@ -756,14 +757,14 @@ export class Repo {
     h.redo = [];
   }
 
-  /** Staged and unstaged changes, as snapshots the UI can page through and select in. */
-  async work(): Promise<{ staged: CommitDiff; unstaged: CommitDiff }> {
+  /** Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of. */
+  async work(): Promise<CommitDiff> {
     // Never read a half-applied stage/unstage/commit.
     await this.idle();
     const head = await this.head();
     if (!head) throw new GitError('This branch has no commits yet.');
-    const [staged, unstaged] = await Promise.all([stagedDiff(this.git, ''), unstagedDiff(this.git, '')]);
-    return { staged: this.snapshot('staged', staged), unstaged: this.snapshot('unstaged', unstaged) };
+    const { diff, index } = await workDiff(this.git, '');
+    return this.snapshot(`work:${index}`, diff);
   }
 
   /** Give a working-tree diff a key, keeping the previous key if nothing changed. */
@@ -813,48 +814,51 @@ export class Repo {
     return Buffer.from(files.map((f) => f.path + '\0').join(''), 'latin1');
   }
 
-  /** Stage selected changes. Only the index changes; working-tree files are never touched. */
+  /** Stage lines or files of the uncommitted changes. Only the index changes; working-tree files are never touched. */
   stage(req: StageRequest): Promise<OpResult> {
-    return this.exclusive(async () => {
-      const why = this.blocked();
-      if (why) throw new GitError(why);
-      const { whole, partial } = await this.resolve(req, await unstagedDiff(this.git, ''));
-      const records: string[] = [];
-      const bases = await this.git.readObjects(partial.filter(({ f }) => !f.untracked).map(({ f }) => f.oldSha));
-      for (const { f, picked } of partial) {
-        const base = f.untracked ? '' : bases.get(f.oldSha)!.data.toString('latin1');
-        const sha = this.git.writeObject('blob', Buffer.from(applyLines(base, f.hunks, (i) => picked.has(i)), 'latin1'));
-        records.push(`${f.untracked ? f.newMode : f.oldMode} ${sha}\t${f.path}`);
-      }
-      await this.git.flush();
-      if (whole.length) {
-        await this.git.run(['--literal-pathspecs', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'], {
-          input: Repo.pathspecs(whole),
-        });
-      }
-      if (records.length) await this.updateIndex(records);
-      return { state: await this.state(), renamed: {}, focus: [] };
-    });
+    return this.restage(req, true);
   }
 
-  /** Unstage selected changes: the index goes back towards HEAD. The working tree isn't touched. */
+  /** Unstage lines or files: the index goes back towards HEAD. The working tree isn't touched. */
   unstage(req: StageRequest): Promise<OpResult> {
+    return this.restage(req, false);
+  }
+
+  /**
+   * The index with the selected lines staged or not. Lines the file has changed since it was
+   * shown can't be picked (refused); what's staged may have changed, and the change applies to
+   * it as it is now. A line whose staged version is neither HEAD's nor the file's takes its
+   * whole region along (see staging.ts).
+   */
+  private restage(req: StageRequest, on: boolean): Promise<OpResult> {
     return this.exclusive(async () => {
       const why = this.blocked();
       if (why) throw new GitError(why);
-      const { whole, partial } = await this.resolve(req, await stagedDiff(this.git, ''));
+      const { whole, partial } = await this.resolve(req, (await workDiff(this.git, '')).diff);
+      const add: FileDiff[] = on ? [...whole] : [];
+      const reset: FileDiff[] = on ? [] : whole.filter((f) => !f.untracked);
       const records: string[] = [];
-      const bases = await this.git.readObjects(partial.filter(({ f }) => f.status !== 'A').map(({ f }) => f.oldSha));
+      const heads = await this.git.readObjects(partial.filter(({ f }) => !f.untracked && !/^0+$/.test(f.oldSha)).map(({ f }) => f.oldSha));
       for (const { f, picked } of partial) {
-        const base = f.status === 'A' ? '' : bases.get(f.oldSha)!.data.toString('latin1');
-        const sha = this.git.writeObject('blob', Buffer.from(applyLines(base, f.hunks, (i) => !picked.has(i)), 'latin1'));
-        records.push(`${f.status === 'D' ? f.oldMode : f.newMode} ${sha}\t${f.path}`);
+        const head = heads.get(f.oldSha)?.data.toString('latin1') ?? '';
+        const s = stagingOf(f, head);
+        const next = restage(s.pos, s.index, s.staging, picked, on);
+        if (next === s.index) continue;
+        // All of it or none of it: as `git add` or `git restore --staged` would, mode included.
+        if (next === emit(s.pos, () => true)) add.push(f);
+        else if (next === head && !f.untracked) reset.push(f);
+        else records.push(`${s.mode} ${this.git.writeObject('blob', Buffer.from(next, 'latin1'))}\t${f.path}`);
       }
       await this.git.flush();
-      if (whole.length) {
+      if (add.length) {
+        await this.git.run(['--literal-pathspecs', 'add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+          input: Repo.pathspecs(add),
+        });
+      }
+      if (reset.length) {
         await this.git.run(
           ['--literal-pathspecs', 'restore', '--staged', '--source=HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'],
-          { input: Repo.pathspecs(whole) },
+          { input: Repo.pathspecs(reset) },
         );
       }
       if (records.length) await this.updateIndex(records);
