@@ -157,10 +157,7 @@
   }
 
   function onFormKey(e: KeyboardEvent) {
-    if (matches('⌘↩', e)) {
-      e.preventDefault();
-      save();
-    } else if (e.key === 'Escape' && dirty) {
+    if (e.key === 'Escape' && dirty) {
       e.preventDefault();
       revert();
     } else if (e.key === 'Escape' && editing) {
@@ -170,6 +167,12 @@
   }
 
   function onWindowKey(e: KeyboardEvent) {
+    // ⌘↩ saves wherever the focus is: after clicking away from a field, say.
+    if (matches('⌘↩', e) && !e.isComposing && dirty && !readonly && !hasOverlay()) {
+      e.preventDefault();
+      save();
+      return;
+    }
     if (!picked.files || isTyping(e.target) || hasOverlay()) return;
     if (e.key === 'Escape') clear();
     else if ((e.key === 'Backspace' || e.key === 'Delete') && !readonly) {

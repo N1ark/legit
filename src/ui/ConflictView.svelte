@@ -4,7 +4,7 @@
   // editor; "Mark resolved" stages one ("Mark all resolved" every one), and asks again while it still has conflict markers.
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
-  import { Button, ConfirmButton, Tag } from 'purr';
+  import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches } from 'purr';
   import { ArrowCounterClockwise, Check, Checks, FileArrowUp } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
@@ -68,7 +68,16 @@
   const MERGED_SHOWN = 8;
   let allMerged = $state(false);
   const blocked = $derived(!!c && (c.files.length > 0 || c.unstaged.length > 0));
+
+  function onkeydown(e: KeyboardEvent) {
+    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay() && c && !blocked && !app.busy) {
+      e.preventDefault();
+      app.sync('continue');
+    }
+  }
 </script>
+
+<svelte:window {onkeydown} />
 
 {#if c}
   <div class="view">
@@ -182,7 +191,7 @@
               ? 'Stage the files changed since they were staged first'
               : 'Commits with the prepared message; hooks run as usual'}
         >
-          <Check weight="bold" /> {CONTINUE[c.kind]}
+          <Check weight="bold" /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
         </Button>
         <ConfirmButton
           confirmLabel="Click to abort. What you resolved is saved first"

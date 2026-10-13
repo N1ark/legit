@@ -150,16 +150,15 @@
     }
   }
 
-  function onFormKey(e: KeyboardEvent) {
-    if (matches('⌘↩', e)) {
-      e.preventDefault();
-      commit();
-    }
-  }
-
   const clear = () => [...Object.values(staged), ...Object.values(unstaged)].forEach((s) => s.clear());
 
   function onWindowKey(e: KeyboardEvent) {
+    // ⌘↩ commits wherever the focus is, so picking changes in the diff doesn't need a click back.
+    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay()) {
+      e.preventDefault();
+      commit();
+      return;
+    }
     if (isTyping(e.target) || hasOverlay()) return;
     if (matches('s', e) && selUnstaged) {
       e.preventDefault();
@@ -187,8 +186,7 @@
     {/if}
   </div>
 
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="meta" onkeydown={onFormKey}>
+  <div class="meta">
     <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
     <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true"></textarea>
     <div class="people">

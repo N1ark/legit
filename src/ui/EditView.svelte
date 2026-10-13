@@ -53,7 +53,7 @@
   const cancel = () => app.sync('editCancel');
 
   function onWindowKey(e: KeyboardEvent) {
-    if (matches('⌘↩', e) && !hasOverlay() && !app.busy) {
+    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay() && !app.busy) {
       e.preventDefault();
       finish();
     }

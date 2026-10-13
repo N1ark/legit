@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Avatar, Button, ConfirmButton, Kbd, matches } from 'purr';
+  import { Avatar, Button, ConfirmButton, Kbd, hasOverlay, matches } from 'purr';
   import { ArrowsMerge, Stack, Trash } from 'purr/icons';
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -70,13 +70,16 @@
     app.squash(commits);
   }
 
+  // ⌘↩ squashes wherever the focus is.
   function onkeydown(e: KeyboardEvent) {
-    if (matches('⌘↩', e)) {
+    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay()) {
       e.preventDefault();
       squash();
     }
   }
 </script>
+
+<svelte:window {onkeydown} />
 
 <div class="view">
   <div class="top">
@@ -109,7 +112,7 @@
 
     {#if editable}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="form" {onkeydown} oninput={() => (edited = true)}>
+      <div class="form" oninput={() => (edited = true)}>
         <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
         <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true"></textarea>
         <div class="people">
