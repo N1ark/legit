@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CommitDiff, FileDiff } from '../shared/types.ts';
-import { DIFF_ARGS, parseDiff } from './diff.ts';
+import { DIFF_ARGS, parseDiff, sortFiles } from './diff.ts';
 import type { Git } from './git.ts';
 
 /** Status without taking the index lock, so it never gets in the way of the user's git. */
@@ -53,6 +53,7 @@ export async function unstagedDiff(git: Git, key: string): Promise<CommitDiff> {
   const paths = others.out.toString('latin1').split('\0').filter(Boolean);
   const untracked = await Promise.all(paths.map((p, k) => untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS)));
   d.files.push(...untracked);
+  sortFiles(d.files);
   return d;
 }
 

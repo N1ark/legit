@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { CONTEXT_LINES, expandable, moreAfter } from '../shared/context.ts';
+import { comparePaths } from '../shared/paths.ts';
 import type { CommitDiff, DiffLine, DiffSummary, FileDiff, FileLines, HunkData, Hunk } from '../shared/types.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
@@ -78,8 +79,11 @@ export function parseDiff(data: string, sha: string): CommitDiff {
     }
     f.partial = !f.binary && f.status !== 'T' && TEXT_MODES.has(f.oldMode) && TEXT_MODES.has(f.newMode);
   }
-  return { sha, files };
+  return { sha, files: sortFiles(files) };
 }
+
+/** Files in the order the file tree lists them (folders first, as in Zed). */
+export const sortFiles = (files: FileDiff[]) => files.sort((a, b) => comparePaths(a.path, b.path));
 
 /** File list with exact row counts and widths, but no content (utf8 for display). `syntax`: grammars by path. */
 export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Map<string, string>()): DiffSummary {

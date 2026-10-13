@@ -1,6 +1,7 @@
 <script lang="ts">
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
-  // highlighted, and kept in sight as the diff scrolls. Right-clicking one opens its menu.
+  // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
+  // right-clicking one opens its menu.
   import { Twisty } from 'purr';
   import type { FileSummary } from '../shared/types.ts';
   import { fileTree, treeRows } from './lib/tree.ts';
@@ -9,12 +10,15 @@
     files,
     current,
     onpick,
+    onopen,
     onmenu,
   }: {
     files: FileSummary[];
     /** Index of the file at the top of the diff, or -1. */
     current: number;
     onpick: (i: number) => void;
+    /** Open a file in the editor (double-click). */
+    onopen?: (i: number) => void;
     /** A file's context menu. */
     onmenu?: (e: MouseEvent, i: number) => void;
   } = $props();
@@ -61,8 +65,9 @@
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
-        title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}, +{f.added} −{f.removed}"
+        title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}, +{f.added} −{f.removed}{onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}"
         onclick={() => onpick(r.index)}
+        ondblclick={onopen && (() => onopen(r.index))}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >
         <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}>{r.name}</span>

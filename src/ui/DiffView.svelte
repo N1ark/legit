@@ -57,7 +57,7 @@
     hint?: string;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
-    /** Show the files as a folder tree beside the diff (with more than one), to jump between them. */
+    /** Show the files as a folder tree beside the diff, to jump between them. */
     tree?: boolean;
     /** Where to open, from `position()` of the view this one replaces. */
     initial?: DiffPosition | null;
@@ -264,8 +264,8 @@
     queueHighlight(i, rows);
   }
 
-  // The file tree, beside the diff when there's more than one file and room for it.
-  const showTree = $derived(tree && files.length > 1);
+  // The file tree, beside the diff when there's room for it.
+  const showTree = $derived(tree && files.length > 0);
   const TREE_WIDTH = 240;
   const savedTreeWidth = persisted('legit:tree-width', TREE_WIDTH);
   let treeWidth = $state(savedTreeWidth.value);
@@ -517,6 +517,11 @@
     return r < 0 ? undefined : lineFor(rows, r);
   }
 
+  /** Open file i in Zed at its first change (double-clicking its name). */
+  function openFile(i: number) {
+    if (files[i].status !== 'D') app.openInZed(files[i].path, firstChange(i));
+  }
+
   function openMenu(e: MouseEvent, i: number) {
     // The line being edited keeps the field's own menu (paste...).
     if ((e.target as HTMLElement).closest('.editor')) return;
@@ -567,7 +572,7 @@
     {#if showTree}
       <!-- As tall as the window, or the diff if that's shorter (a short diff above another). -->
       <nav class="tree" style:height="{Math.min(view.bottom - view.top, tops[files.length] - GAP)}px">
-        <FileTree {files} {current} onpick={reveal} onmenu={openMenu} />
+        <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} />
         <ResizeEdge
           side="left"
           label="Resize the file tree"
@@ -607,7 +612,10 @@
             >
               <Twisty open={!collapsed[i]} size={10} />
             </button>
-            <span class="path mono" title={f.path}>{f.path}</span>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span class="path mono" title={f.status === 'D' ? f.path : `${f.path}\nDouble-click to open in Zed`} ondblclick={() => openFile(i)}
+              >{f.path}</span
+            >
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if f.generated}

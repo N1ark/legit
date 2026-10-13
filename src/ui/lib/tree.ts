@@ -1,5 +1,7 @@
 // The files of a diff as a directory tree, for jumping between them.
 
+import { compareNames } from '../../shared/paths.ts';
+
 export interface TreeDir {
   kind: 'dir';
   /** Shown name: a folder holding only one folder is merged into it ("src/ui"). */
@@ -21,10 +23,7 @@ export type TreeNode = TreeDir | TreeFile;
 /** A row of the tree as shown, with collapsed folders' contents left out. */
 export type TreeRow = (TreeDir | TreeFile) & { depth: number };
 
-/**
- * The tree of `paths`, in their order: git lists a folder's files together, so the tree reads
- * top to bottom like the diff does.
- */
+/** The tree of `paths`, ordered as in Zed: folders first, then files, by name (see `comparePaths`). */
 export function fileTree(paths: string[]): TreeNode[] {
   const root: TreeDir = { kind: 'dir', name: '', path: '', children: [] };
   const dirs = new Map<string, TreeDir>();
@@ -43,7 +42,12 @@ export function fileTree(paths: string[]): TreeNode[] {
     }
     dir.children.push({ kind: 'file', name: parts.at(-1)!, index });
   });
-  return root.children.map(merge);
+  return sorted(root.children).map(merge);
+}
+
+function sorted(nodes: TreeNode[]): TreeNode[] {
+  for (const n of nodes) if (n.kind === 'dir') n.children = sorted(n.children);
+  return nodes.sort((a, b) => (a.kind === b.kind ? compareNames(a.name, b.name) : a.kind === 'dir' ? -1 : 1));
 }
 
 function merge(node: TreeNode): TreeNode {

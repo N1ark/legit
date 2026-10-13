@@ -5,7 +5,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CommitDiff, DroppedStash, OpResult, StashEntry, Stashes } from '../shared/types.ts';
-import { DIFF_ARGS, parseDiff } from './diff.ts';
+import { DIFF_ARGS, parseDiff, sortFiles } from './diff.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
@@ -267,5 +267,6 @@ export async function stashDiff(git: Git, sha: string, key: string): Promise<Com
   ]);
   const d = parseDiff(tracked.out.toString('latin1'), key);
   if (untracked) d.files.push(...parseDiff(untracked.out.toString('latin1'), key).files.map((f) => ({ ...f, untracked: true })));
+  sortFiles(d.files);
   return d;
 }
