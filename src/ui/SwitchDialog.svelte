@@ -73,8 +73,11 @@
     white-space: normal;
   }
 
+  /* A tint of the button's own text colour, so the chip reads on any fill, hovered or not. */
   code {
     font-family: var(--mono);
     font-size: var(--fs-xs);
+    background: color-mix(in oklab, currentColor 16%, transparent);
+    color: inherit;
   }
 </style>
