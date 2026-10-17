@@ -91,6 +91,25 @@ memory, so one shown anywhere shows at once everywhere else.
 history loads as you scroll. Everything from the first merge commit down is shown but can't be rewritten. Click the
 arrow on a merge (or press <kbd>→</kbd>/<kbd>←</kbd>) to list the commits it brought in under it.
 
+## GitHub
+
+When the repo has a github.com remote, legit talks to GitHub with `GITHUB_TOKEN`/`GH_TOKEN` or the `gh` CLI's login
+(`gh auth login`); signed out, none of this shows, and the GitHub menu says why. Pull requests and issues are those
+of the `upstream` remote when there is one, else of the remote the branch pushes to (a fork's branches are its head).
+
+| | |
+|---|---|
+| **Pull request** | The header shows the branch's pull request (`#13`, with its state); click it for its title, **Open on GitHub** and **Overview**. Each branch in the branch list shows its pull request too. |
+| **Stacks** | A pull request whose base is another's branch is stacked on it. The pull request's popover lists the whole stack, trunk at the bottom, each with how far ahead and behind its base it is; click one to switch to its branch (as the branch list does, uncommitted changes asked about). When the branch under yours has moved, **Restack** rebuilds yours on it with only your own commits (so a rewritten or squash-merged parent's commits aren't replayed); when it's merged, **Rebase onto** its base and **Retarget** your pull request there. Both undo with <kbd>⌘Z</kbd>. |
+| **Create** | **Create pull request** (in the header, or the GitHub menu) starts from the branch's commits: one commit's message, or the branch name and a list of commits. The base is the default branch, or the branch yours is stacked on, which it says. The branch is pushed first if GitHub doesn't have all of it. **New issue…** in the GitHub menu takes a title, a description (with a preview), labels and assignees. |
+| **Overview** | A pull request's overview, in place of a commit: its description and title (editable), commits (click one to show it), conversation and reviews, reviewers (request more), labels, and the merge box, which says what's blocking (conflicts, reviews, checks…), merges with any method the repo allows (refused if a newer push came in), enables auto-merge, and marks it ready or a draft. **Review** comments, approves or requests changes, with any comments you left on the diff. After merging, it offers to switch to the base and delete the branch. |
+| **CI** | The header shows CI for the branch's pushed tip: how many checks are done and how it's going; each pushed commit in the list has its own mark. Click either for the checks by workflow, each job's steps, and its log (with ANSI colours, opened at the first error, <kbd>⌘F</kbd> to find in it); **Re-run failed**, **Re-run all**, re-run a job, or **Cancel**. It's checked again every 15 s while something runs. |
+| **Notifications** | The bell lists your GitHub notifications, this repo's or all, with why each came. A pull request of this repo opens in its overview, a CI run of the current branch in its checks, anything else on GitHub (at the latest comment). Opening one marks it read; each can be marked read, done or unsubscribed from. It's polled as GitHub asks, only while the window has focus. |
+| **References** | `#123` in messages shows whether it's open, closed or merged, and its title on hover. Typing `#` and a number or words in a commit message suggests issues and pull requests. Right-click diff lines for **Copy GitHub link** (to those lines in that commit) or **New issue from these lines…**. |
+
+For working on these without GitHub, `LEGIT_GITHUB_MOCK=1` sends every call to a fake GitHub (`src/server/gh/mock/`),
+and `node scripts/gh-demo.ts <dir>` makes a repo whose branches match its pull requests.
+
 ## How it stays safe
 
 Losing work is the one failure that matters, so every operation is built to be refused rather than risky:
@@ -192,6 +211,9 @@ npm run check      # svelte-check + tsc
   applies changes, and checks a stash can't conflict before applying it.
   `discard.ts` discards uncommitted changes and puts them back. `work.ts` lists uncommitted changes, and `staging.ts` works out
   which of their lines are staged (aligning the index with them) and what staging some of them makes.
+- `src/server/gh/` talks to GitHub: `client.ts` (REST and GraphQL with the token; every query named, one per
+  refresh where it can), a module per feature adding its `/api/gh/<name>` routes to `routes.ts`, and `mock/`, the fake
+  GitHub behind `LEGIT_GITHUB_MOCK`. The UI's side is `src/ui/gh/` and `src/ui/lib/gh*.ts`.
 - `src-tauri/` is the desktop shell (Tauri 2). Its one window is backed by a `legit-server` sidecar for the repo it
   shows: the same engine, built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable
   support, which is why the app is ~145 MB (almost all of it Node). The window loads the UI from that server.
