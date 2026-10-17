@@ -3,6 +3,7 @@ import { chmodSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
+  setUpstream, unsetUpstream,
 } from '../src/server/branches.ts';
 import { Repo } from '../src/server/repo.ts';
 import { setup } from './util.ts';
@@ -146,6 +147,50 @@ test('remote branches: list the untracked ones, check one out, delete one only a
   assert.deepEqual(deleted.map((d) => [d.name, d.sha, d.remote]), [['other', theirs, 'origin']]);
   assert.equal(git('rev-parse', 'other'), git('rev-parse', 'main'));
   void st;
+});
+
+test('change what a branch tracks: the push info follows, and pushes go there under its name', async () => {
+  commit('base', { f: '1\n' });
+  const origin = t.remote();
+  const up = t.tmp('legit-up-');
+  t.gitIn(up, 'init', '-q', '--bare', '-b', 'main');
+  git('remote', 'add', 'upstream', up);
+  git('push', '-q', '-u', 'origin', 'main');
+  git('push', '-q', 'origin', 'main:shared');
+  git('fetch', '-q', 'origin');
+  git('switch', '-q', '-c', 'feature');
+  const tip = commit('feature work', { g: '1\n' });
+  const repo = await Repo.open(dir());
+  assert.equal((await repo.state()).push?.publish, true);
+
+  // An existing remote branch of another name.
+  let st = (await setUpstream(repo, { branch: 'feature', remote: 'origin', name: 'shared' })).state;
+  assert.deepEqual([st.push?.remote, st.push?.branch, st.push?.publish, st.push?.ahead], ['origin', 'shared', false, 1]);
+  const b = (await repo.branches()).find((x) => x.name === 'feature');
+  assert.deepEqual([b?.upstream, b?.tracking], ['origin/shared', { remote: 'origin', branch: 'shared' }]);
+  await repo.push({});
+  assert.equal(t.gitIn(origin, 'rev-parse', 'shared'), tip);
+  assert.equal(t.gitIn(origin, 'branch', '--list', 'feature'), '');
+
+  // One that isn't on the remote yet: pushing publishes it there, under that name.
+  st = (await setUpstream(repo, { branch: 'feature', remote: 'upstream', name: 'fresh' })).state;
+  assert.deepEqual([st.push?.remote, st.push?.branch, st.push?.publish], ['upstream', 'fresh', true]);
+  await repo.push({});
+  assert.equal(t.gitIn(up, 'rev-parse', 'fresh'), tip);
+  assert.equal(git('rev-parse', '--abbrev-ref', 'feature@{u}'), 'upstream/fresh');
+
+  // Another branch than the current one; then back to tracking nothing.
+  await setUpstream(repo, { branch: 'main', remote: 'upstream', name: 'main' });
+  assert.equal(git('config', 'branch.main.merge'), 'refs/heads/main');
+  st = (await unsetUpstream(repo, { branch: 'feature' })).state;
+  assert.deepEqual([st.push?.remote, st.push?.branch, st.push?.publish], ['origin', 'feature', true]);
+  assert.throws(() => git('config', '--get', 'branch.feature.remote'));
+  await assert.rejects(unsetUpstream(repo, { branch: 'feature' }), /doesn't track/);
+
+  await assert.rejects(setUpstream(repo, { branch: 'feature', remote: 'nope', name: 'x' }), /No remote named nope/);
+  await assert.rejects(setUpstream(repo, { branch: 'feature', remote: 'origin', name: 'a b' }), /not a valid branch name/);
+  await assert.rejects(setUpstream(repo, { branch: 'nope', remote: 'origin', name: 'x' }), /No local branch/);
+  await assert.rejects(unsetUpstream(repo, { branch: 'nope' }), /No local branch/);
 });
 
 test('switching with "leave my changes" stashes them, and puts them back if the switch fails', async () => {

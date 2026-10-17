@@ -263,6 +263,8 @@ export interface BranchInfo {
   subject: string;
   time: number;
   upstream: string | null;
+  /** The upstream's remote and its branch there, e.g. origin and feature (null without one, or tracking a local branch). */
+  tracking: { remote: string; branch: string } | null;
   /** e.g. "ahead 2, behind 1" or "gone". */
   track: string | null;
   current: boolean;

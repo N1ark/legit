@@ -10,6 +10,7 @@ import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
+  remotes, setUpstream, unsetUpstream,
 } from './branches.ts';
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
@@ -158,6 +159,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     deleteRemoteBranch: (b) => deleteRemoteBranch(repo, b),
     restoreBranch: (b) => restoreBranch(repo, b),
     checkoutRemote: (b) => checkoutRemote(repo, b),
+    setUpstream: (b) => setUpstream(repo, b),
+    unsetUpstream: (b) => unsetUpstream(repo, b),
     addWorktree: (b) => addWorktree(repo, b),
     removeWorktree: (b) => removeWorktree(repo, b),
     openWorktree: async (b) => {
@@ -210,6 +213,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/rebuild/plan') {
       return send(res, 200, await rebuildPlan(repo, { branch: query.get('branch'), shas: (query.get('shas') ?? '').split(',').filter(Boolean) }));
     }
+    if (path === '/api/remotes') return send(res, 200, await remotes(repo));
     if (path === '/api/worktrees') return send(res, 200, await worktrees(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {

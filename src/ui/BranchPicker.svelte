@@ -6,16 +6,17 @@
   // branch first); in copy mode, the local ones to cherry-pick commits onto. The arrow on a branch
   // lists its commits the current one doesn't have, to cherry-pick some here. A branch checked out
   // in another worktree switches to that worktree.
+  // In upstream mode, it lists the remote branches a local one can track, and names not on a remote yet.
   import { Button, Highlight, IconButton, Kbd, Popover, formatRelative, menu, rank, toast, type MaybeEntry } from 'purr';
   import {
-    ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, Copy, CopySimple,
-    FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, PencilSimple, Plus, Square, Stack, Trash,
+    ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
+    CopySimple, FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, LinkBreak, PencilSimple, Plus, Square, Stack, Trash,
   } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import {
-    commitsRequest, deleteBranch, deleteRemoteBranch, newBranch, rebuild, renameBranch, restoreBranch, switchOp,
+    commitsRequest, deleteBranch, deleteRemoteBranch, newBranch, rebuild, renameBranch, restoreBranch, setUpstream, switchOp, unsetUpstream,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
@@ -25,12 +26,13 @@
     | { kind: 'local'; b: BranchInfo; indices: number[] }
     | { kind: 'create'; name: string }
     | { kind: 'remote'; b: RemoteBranchInfo; indices: number[] }
-    | { kind: 'deleted'; b: DeletedBranch; indices: number[] };
+    | { kind: 'deleted'; b: DeletedBranch; indices: number[] }
+    | { kind: 'publish'; remote: string; name: string };
 
   /** Deleted branches shown while the filter is empty. */
   const DELETED_SHOWN = 8;
 
-  type Mode = 'switch' | 'merge' | 'rebase' | 'rebuild' | 'copy' | 'commits';
+  type Mode = 'switch' | 'merge' | 'rebase' | 'rebuild' | 'copy' | 'commits' | 'upstream';
   let mode = $state<Mode>('switch');
   let open = $state(false);
   let local = $state<BranchInfo[] | null>(null);
@@ -47,16 +49,37 @@
   let browsing = $state<string | null>(null);
   let theirs = $state.raw<{ commits: CommitInfo[]; total: number } | null>(null);
   const picked = new SvelteSet<string>();
+  /** The branch whose upstream is being picked (upstream mode), and the remotes, longest name first. */
+  let tracker = $state<string | null>(null);
+  let remoteNames = $state<string[]>([]);
 
   const disabled = $derived(!!app.repo?.blocked || app.busy);
   const here = $derived(app.repo?.branch ?? null);
   const names = $derived(new Set((local ?? []).map((b) => b.name)));
+  const tracked = $derived(mode === 'upstream' ? (local?.find((b) => b.name === tracker) ?? null) : null);
+  const isUpstream = (remote: string, name: string) => tracked?.tracking?.remote === remote && tracked.tracking.branch === name;
+
+  /** Branches to track that aren't on a remote yet: the name typed (or the branch's own) on each remote, or on the remote typed. */
+  function publishRows(typed: string): Row[] {
+    const on = remoteNames.find((r) => typed.startsWith(`${r}/`));
+    const name = on ? typed.slice(on.length + 1) : typed || (tracker ?? '');
+    if (!name || /\s/.test(name)) return [];
+    const there = new Set(remote.map((b) => `${b.remote}/${b.name}`));
+    return (on ? [on] : [...remoteNames].sort())
+      .filter((r) => !there.has(`${r}/${name}`))
+      .map((r): Row => ({ kind: 'publish', remote: r, name }));
+  }
 
   const rowName = (r: Row) => (r.kind === 'local' ? r.b.name : r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : null);
 
   const rows = $derived.by((): Row[] => {
     if (!local) return [];
     const typed = filter.trim();
+    if (mode === 'upstream') {
+      const out = rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] }).map(({ item, indices }): Row => ({ kind: 'remote', b: item, indices }));
+      if (!typed) out.sort((a, b) => Number(current(b)) - Number(current(a)));
+      return [...out, ...publishRows(typed)];
+    }
     const shown = mode === 'switch' ? local : local.filter((b) => !b.current);
     const out: Row[] = rank(shown, filter, { keys: [(b) => b.name] }).map(({ item, indices }) => ({ kind: 'local', b: item, indices }));
     if (mode === 'copy' || mode === 'commits') return out;
@@ -76,8 +99,20 @@
   /** The default branch is listed first (and so picked by ↵) when rebuilding. */
   const promoted = $derived(mode === 'rebuild' && !filter.trim() && !!rows[0] && rowName(rows[0]) === app.repo?.base?.name);
 
-  const key = (r: Row) => (r.kind === 'create' ? `create:${r.name}` : r.kind === 'local' ? `local:${r.b.name}` : `${r.kind}:${r.b.ref}`);
-  const HEADINGS: Partial<Record<Row['kind'], string>> = { remote: 'Remote branches', deleted: 'Recently deleted' };
+  const key = (r: Row) =>
+    r.kind === 'create' ? `create:${r.name}`
+    : r.kind === 'publish' ? `publish:${r.remote}/${r.name}`
+    : r.kind === 'local' ? `local:${r.b.name}`
+    : `${r.kind}:${r.b.ref}`;
+  const HEADINGS: Partial<Record<Row['kind'], string>> = {
+    remote: 'Remote branches', deleted: 'Recently deleted', publish: 'Not on the remote yet',
+  };
+
+  /** The current branch, or in upstream mode the branch's current upstream. */
+  function current(r: Row): boolean {
+    if (mode === 'upstream') return r.kind === 'remote' ? isUpstream(r.b.remote, r.b.name) : r.kind === 'publish' && isUpstream(r.remote, r.name);
+    return r.kind === 'local' && r.b.current;
+  }
 
   /** The listed branch's commits, filtered by title or SHA. */
   const commitRows = $derived(
@@ -96,17 +131,22 @@
       theirs = data;
       return;
     }
-    [local, remote, deleted] = await Promise.all([
+    [local, remote, deleted, remoteNames] = await Promise.all([
       get<BranchInfo[]>('/api/branches'),
       get<RemoteBranchInfo[]>(`/api/branches/remote${mode === 'switch' ? '' : '?all=1'}`),
       get<DeletedBranch[]>('/api/branches/deleted'),
+      mode === 'upstream' ? get<string[]>('/api/remotes') : remoteNames,
     ]);
   }
 
-  /** Open the list to switch branch, or to pick one to merge, rebase or rebuild onto (or to copy commits to). */
-  export async function show(m: Mode = 'switch') {
+  /**
+   * Open the list to switch branch, or to pick one to merge, rebase or rebuild onto (or to copy
+   * commits to), or for `branch` (else the current one) to track.
+   */
+  export async function show(m: Mode = 'switch', branch?: string) {
     if (disabled) return;
-    if ((m === 'merge' || m === 'rebase' || m === 'rebuild') && !here) return toast.error('HEAD is detached: switch to a branch first.');
+    if ((m === 'merge' || m === 'rebase' || m === 'rebuild' || (m === 'upstream' && !branch)) && !here) return toast.error('HEAD is detached: switch to a branch first.');
+    if (m === 'upstream') tracker = branch ?? here;
     open = true;
     filter = '';
     await setMode(m);
@@ -156,9 +196,27 @@
     else open = false;
   }
 
+  /** Pick what `name` tracks. */
+  function pickUpstream(name: string) {
+    tracker = name;
+    setMode('upstream');
+  }
+
+  async function track(remote: string, name: string, exists: boolean) {
+    if (!tracked || isUpstream(remote, name)) return;
+    if (await setUpstream(tracked, remote, name, exists)) await setMode('switch');
+  }
+
+  async function stopTracking() {
+    if (tracked && (await unsetUpstream(tracked))) await setMode('switch');
+  }
+
   function choose(r: Row | undefined) {
     if (!r) return;
-    if (mode === 'copy' && r.kind === 'local') {
+    if (mode === 'upstream') {
+      if (r.kind === 'remote') track(r.b.remote, r.b.name, true);
+      else if (r.kind === 'publish') track(r.remote, r.name, false);
+    } else if (mode === 'copy' && r.kind === 'local') {
       open = false;
       app.sync('copyTo', { shas: copying, branch: r.b.name }, undefined, true);
     } else if (mode === 'rebuild' && (r.kind === 'local' || r.kind === 'remote')) {
@@ -174,7 +232,7 @@
       else if (!r.b.current) act(() => switchOp('switch', { branch: r.b.name }, r.b.name));
     } else if (r.kind === 'create') act(() => switchOp('createBranch', { name: r.name }, r.name));
     else if (r.kind === 'remote') act(() => switchOp('checkoutRemote', { ref: r.b.ref }, r.b.name));
-    else act(() => restoreBranch(r.b, names.has(r.b.name)), true);
+    else if (r.kind === 'deleted') act(() => restoreBranch(r.b, names.has(r.b.name)), true);
   }
 
   const copyName = (name: string): MaybeEntry => ({ label: 'Copy name', icon: Copy, run: () => app.copy(name, 'the branch name') });
@@ -202,6 +260,14 @@
       { label: 'Rename…', icon: PencilSimple, run: () => act(() => renameBranch(b.name), true) },
       !b.current && !!here && { label: 'Cherry-pick from it…', icon: CopySimple, run: () => browse(b.name) },
       copyName(b.name),
+      'separator',
+      {
+        label: 'Set upstream…',
+        icon: CloudArrowUp,
+        note: b.upstream ? `Tracks ${b.upstream}. Pick another remote branch, or a new one to publish to.` : 'Pick a remote branch to push to and pull from.',
+        run: () => pickUpstream(b.name),
+      },
+      !!b.upstream && { label: 'Stop tracking', icon: LinkBreak, note: `Forget ${b.upstream}. The next push publishes it under its own name.`, run: () => act(() => unsetUpstream(b), true) },
       'separator',
       ...integrateEntries(b.name, b.current, () => (open = false)),
       'separator',
@@ -265,7 +331,7 @@
 
   function oncontextmenu(e: MouseEvent, r: Row, k: number) {
     active = k;
-    if (r.kind === 'create') return e.preventDefault();
+    if (r.kind === 'create' || r.kind === 'publish' || mode === 'upstream') return e.preventDefault();
     const list = r.kind === 'local' ? localMenu(r.b) : r.kind === 'remote' ? remoteMenu(r.b) : deletedMenu(r.b);
     menu.show(e, list, r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : r.b.name);
   }
@@ -338,6 +404,8 @@
             ? 'Copy commits to a branch'
             : mode === 'commits'
               ? `Commits on ${browsing}`
+              : mode === 'upstream'
+                ? `Upstream of ${tracker}`
               : 'Branches'}
     onclose={() => (open = false)}
     width="min(560px, calc(100vw - 32px))"
@@ -352,6 +420,8 @@
           {:else if mode === 'rebase'}<GitPullRequest /> Rebase <b class="mono">{here}</b> onto a branch
           {:else if mode === 'rebuild'}<Stack /> Rebuild <b class="mono">{here}</b> on a branch with {copying.length === 1 ? '1 commit' : `${copying.length} commits`}
           {:else if mode === 'copy'}<CopySimple /> Copy {copying.length === 1 ? '1 commit' : `${copying.length} commits`} to a branch
+          {:else if mode === 'upstream'}<CloudArrowUp /> What <b class="mono">{tracker}</b> pushes to and pulls from
+            {#if tracked?.upstream}<span class="muted">(now <span class="mono">{tracked.upstream}</span>)</span>{/if}
           {:else}<GitBranch /> Commits on <b class="mono">{browsing}</b> that <b class="mono">{here}</b> doesn't have{/if}
         </div>
       {/if}
@@ -370,6 +440,8 @@
                 ? 'Branch to copy to…'
                 : mode === 'commits'
                   ? 'Filter commits…'
+                  : mode === 'upstream'
+                    ? 'Remote branch to track, or a new name…'
                   : 'Switch to or create a branch…'}
         spellcheck="false"
         class="field-input mono"
@@ -417,7 +489,7 @@
             <li
               class="row-item"
               class:is-cursor={k === active}
-              class:current={r.kind === 'local' && r.b.current}
+              class:current={current(r)}
               role="option"
               aria-selected={k === active}
               data-row={k}
@@ -429,6 +501,10 @@
                 <span class="check"><Plus weight="bold" /></span>
                 <span class="name">Create branch <b class="mono">{r.name}</b></span>
                 <span class="subject muted">from {app.repo?.branch ?? 'HEAD'}</span>
+              {:else if r.kind === 'publish'}
+                <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowUp />{/if}</span>
+                <span class="name mono">{r.remote}/{r.name}</span>
+                <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; the next push publishes it there</span>
               {:else if r.kind === 'local'}
                 {@const b = r.b}
                 <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
@@ -440,12 +516,15 @@
                   </span>
                 {/if}
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
-                {#if b.track}<span class="track">{b.track}</span>{/if}
+                {#if b.upstream}<span class="upstream mono muted" title="Tracks {b.upstream}">{b.upstream}</span>{/if}
+                {#if b.track === 'gone'}
+                  <span class="track" title="{b.upstream} isn't on the remote (deleted there, or not pushed yet); the next push publishes it">not on remote</span>
+                {:else if b.track}<span class="track">{b.track}</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
               {:else if r.kind === 'remote'}
                 {@const b = r.b}
-                <span class="check"><CloudArrowDown /></span>
+                <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
                 <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                 <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
@@ -475,7 +554,7 @@
           </Button>
         </div>
         <p class="foot muted">
-          Right-click a branch to rename or delete it, or to open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
+          Right-click a branch to rename or delete it, change its upstream, or open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
           bring them along.
         </p>
       {:else if mode === 'commits'}
@@ -486,6 +565,18 @@
           <span class="foot muted">
             Oldest first. In memory when nothing conflicts; otherwise a real <span class="mono">git cherry-pick</span>, which stops at
             each conflict for you to resolve (it needs no uncommitted changes). <span class="mono">⌘Z</span> undoes it.
+          </span>
+        </div>
+      {:else if mode === 'upstream'}
+        <div class="pick">
+          {#if tracked?.upstream}
+            <Button size="sm" variant="ghost" disabled={app.busy} onclick={stopTracking}>
+              <LinkBreak /> Stop tracking
+            </Button>
+          {/if}
+          <span class="foot muted">
+            Pushing, pulling and the ahead/behind counts use the branch picked, whatever its name. Type a name to track one that isn't on a
+            remote yet: the next push publishes it there.
           </span>
         </div>
       {:else if mode === 'copy'}
@@ -610,6 +701,16 @@
     flex-shrink: 0;
     max-width: 25%;
     overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .upstream {
+    font-size: var(--fs-xs);
+    flex-shrink: 1;
+    min-width: 4ch;
+    max-width: 30%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 

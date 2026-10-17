@@ -93,6 +93,7 @@ fn main() {
             "rebase" => eval_focused(app, "window.__legit?.branch('rebase')"),
             "rebase-base" => eval_focused(app, "window.__legit?.rebaseOnBase()"),
             "rebuild" => eval_focused(app, "window.__legit?.rebuild()"),
+            "upstream" => eval_focused(app, "window.__legit?.branch('upstream')"),
             "worktree" => eval_focused(app, "window.__legit?.newWorktree()"),
             "shortcuts" => eval_focused(app, "window.__legit?.help()"),
             _ => {}
@@ -565,6 +566,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, "rebuild", "Rebuild on a Branch with the Selected Commits…", true, None::<&str>)?,
             &sep()?,
             &MenuItem::with_id(app, "rebase-base", "Rebase on the Default Branch", true, None::<&str>)?,
+            &sep()?,
+            &MenuItem::with_id(app, "upstream", "Set Upstream…", true, None::<&str>)?,
             &sep()?,
             &MenuItem::with_id(app, "worktree", "New Worktree…", true, None::<&str>)?,
         ],

@@ -4,8 +4,8 @@
 // being left (stashed) or bring them along (`git switch`, which refuses if they'd be
 // overwritten). The question is asked before the request, so no lock is held while waiting.
 import { confirmAction, dialog, promptText, toast } from 'purr';
+import type { BranchInfo, RebuildPlan } from '../../shared/types.ts';
 import { app, request, shortSha } from './app.svelte.ts';
-import type { RebuildPlan } from '../../shared/types.ts';
 
 export type Choice = 'leave' | 'bring';
 
@@ -130,6 +130,31 @@ export async function deleteRemoteBranch(ref: string): Promise<boolean> {
   const short = ref.replace(/^refs\/remotes\//, '');
   if (!(await app.op('deleteRemoteBranch', { ref }))) return false;
   toast(`Deleted ${short} on the remote. Its tip is under Recently deleted for two weeks.`);
+  return true;
+}
+
+type Tracked = Pick<BranchInfo, 'name' | 'upstream' | 'tracking'>;
+
+/** Put back what `b` tracked before a change, for the toast's Undo. */
+function trackAgain(b: Tracked) {
+  const t = b.tracking;
+  return {
+    label: 'Undo',
+    run: () => void app.op(t ? 'setUpstream' : 'unsetUpstream', t ? { branch: b.name, remote: t.remote, name: t.branch } : { branch: b.name }),
+  };
+}
+
+/** Make `b` track `name` on `remote`; one that isn't there yet is where the next push publishes `b`. */
+export async function setUpstream(b: Tracked, remote: string, name: string, exists: boolean): Promise<boolean> {
+  if (!(await app.op('setUpstream', { branch: b.name, remote, name }))) return false;
+  const then = exists ? '' : `; the next push publishes it to ${remote}`;
+  toast(`${b.name} now tracks ${remote}/${name}${then}.`, { action: trackAgain(b), timeout: 8000 });
+  return true;
+}
+
+export async function unsetUpstream(b: Tracked): Promise<boolean> {
+  if (!(await app.op('unsetUpstream', { branch: b.name }))) return false;
+  toast(`${b.name} no longer tracks ${b.upstream}.`, { action: trackAgain(b), timeout: 8000 });
   return true;
 }
 

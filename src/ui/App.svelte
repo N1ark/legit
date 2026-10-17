@@ -57,7 +57,7 @@
   (window as any).__legit = {
     undo: () => (typing() ? document.execCommand('undo') : app.undo()),
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
-    branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
+    branch: (mode?: 'merge' | 'rebase' | 'upstream') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
     rebuild: () => rebuildOn(app.selection.map((c) => c.sha)),
     newWorktree: () => newWorktree(),

@@ -984,10 +984,13 @@ export class Repo {
       return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip: tip || null };
     }
     const names = remotes.split('\n').filter(Boolean);
-    const target = remote || (names.includes('origin') ? 'origin' : names[0]);
+    // An upstream that isn't on the remote (yet, or any more) is where publishing goes.
+    const set = !!remote && names.includes(remote) && remoteRef.startsWith('refs/heads/');
+    const target = set ? remote : names.includes('origin') ? 'origin' : names[0];
     if (!target) return null;
     const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
-    return { remote: target, branch, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
+    const name = set ? remoteRef.slice('refs/heads/'.length) : branch;
+    return { remote: target, branch: name, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
   }
 
   /**
@@ -1077,7 +1080,7 @@ export class Repo {
     const [out, current] = await Promise.all([
       this.git.text([
         'for-each-ref', '--sort=-committerdate',
-        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)',
+        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)',
         'refs/heads',
       ]),
       this.currentBranch(),
@@ -1086,10 +1089,11 @@ export class Repo {
       .split('\n')
       .filter(Boolean)
       .map((line) => {
-        const [name, sha, subject, time, upstream, track, worktree] = line.split('\0');
+        const [name, sha, subject, time, upstream, track, worktree, remote, remoteRef] = line.split('\0');
         const here = name === current;
+        const tracking = remote && remote !== '.' && remoteRef.startsWith('refs/heads/') ? { remote, branch: remoteRef.slice('refs/heads/'.length) } : null;
         return {
-          name, sha, subject, time: Number(time), upstream: upstream || null, track: track || null, current: here,
+          name, sha, subject, time: Number(time), upstream: upstream || null, tracking, track: track || null, current: here,
           worktree: !here && worktree ? worktree : null,
         };
       });

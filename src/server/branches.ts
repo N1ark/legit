@@ -1,5 +1,5 @@
 // Branches: switch (optionally leaving uncommitted changes in a stash), create, rename, delete
-// and bring back, and check out remote branches. A deleted branch's tip is first saved under
+// and bring back, change what they track, and check out remote branches. A deleted branch's tip is first saved under
 // refs/legit/deleted/<branch>/<time> (outside refs/legit/backups, which restores move HEAD to),
 // and every ref change is a compare-and-swap.
 
@@ -151,7 +151,7 @@ export function deleteBranch(repo: Repo, req: { branch: string }): Promise<OpRes
 }
 
 /** Remote names, longest first (a remote's name can contain a slash). */
-async function remotes(repo: Repo): Promise<string[]> {
+export async function remotes(repo: Repo): Promise<string[]> {
   return (await repo.git.text(['remote'])).split('\n').filter(Boolean).sort((a, b) => b.length - a.length);
 }
 
@@ -188,6 +188,36 @@ export function deleteRemoteBranch(repo: Repo, req: { ref: string }): Promise<Op
       );
     }
     await pruneRefs(repo.git);
+  });
+}
+
+/**
+ * Make `branch` track `name` on `remote` (`git branch --set-upstream-to`). One not fetched, or
+ * not on the remote yet, is set in config the same way, and pushing publishes the branch there.
+ */
+export function setUpstream(repo: Repo, req: { branch: string; remote: string; name: string }): Promise<OpResult> {
+  return guarded(repo, async () => {
+    if (!req.branch || !(await localExists(repo, req.branch))) throw new GitError(`No local branch named ${req.branch}.`);
+    if (!req.remote || !(await remotes(repo)).includes(req.remote)) throw new GitError(`No remote named ${req.remote}.`);
+    const name = await validName(repo, req.name);
+    const tracking = `refs/remotes/${req.remote}/${name}`;
+    const config = (key: string, value: string) => repo.git.run(['config', `branch.${req.branch}.${key}`, value], { allowFail: true });
+    let r;
+    if (await sha(repo, tracking)) r = await repo.git.run(['branch', `--set-upstream-to=${tracking}`, req.branch], { allowFail: true });
+    else {
+      r = await config('remote', req.remote);
+      if (r.code === 0) r = await config('merge', `refs/heads/${name}`);
+    }
+    if (r.code !== 0) throw new GitError(`Couldn't set what ${req.branch} tracks.\n${r.err.trim()}`);
+  });
+}
+
+/** Stop `branch` tracking anything (`git branch --unset-upstream`). */
+export function unsetUpstream(repo: Repo, req: { branch: string }): Promise<OpResult> {
+  return guarded(repo, async () => {
+    if (!req.branch || !(await localExists(repo, req.branch))) throw new GitError(`No local branch named ${req.branch}.`);
+    const r = await repo.git.run(['branch', '--unset-upstream', req.branch], { allowFail: true });
+    if (r.code !== 0) throw new GitError(/no upstream/i.test(r.err) ? `${req.branch} doesn't track a branch.` : r.err.trim());
   });
 }
 
