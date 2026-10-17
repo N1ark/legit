@@ -3,6 +3,7 @@
 ## Unreleased
 
 - ⌘T: ↵ opens the repository or worktree your filter matches best, rather than creating a worktree.
+- A commit's author is one `Name <email>` field, like a co-author, and suggests people from the history too.
 
 ## 0.3.0 — 2026-10-13
 

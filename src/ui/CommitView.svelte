@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Avatar, Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
+  import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
   import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -7,9 +7,10 @@
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
-  import { formatPerson, parsePeople } from './lib/people.ts';
+  import PersonField from './PersonField.svelte';
+  import { formatPerson, parseAuthor, parsePeople } from './lib/people.ts';
   import { splitTitle } from './lib/split.ts';
-  import { type DiffPosition, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, shortSha } from './lib/app.svelte.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
@@ -21,18 +22,17 @@
   const back = app.restore<Kept>('commit', (k) => k.sha === init.sha);
   let subject = $state(back?.subject ?? init.subject);
   let body = $state(back?.body ?? init.body);
-  let authorName = $state(back?.authorName ?? init.author.name);
-  let authorEmail = $state(back?.authorEmail ?? init.author.email);
+  let author = $state(back?.author ?? fmt(init.author));
   let coauthors = $state(back?.coauthors ?? init.coauthors.map(fmt));
 
   const readonly = $derived(!commit.editable || !!app.repo?.blocked);
+  const parsedAuthor = $derived(parseAuthor(author));
   const parsedCo = $derived(parsePeople(coauthors));
-  const valid = $derived(subject.trim() !== '' && parsedCo !== null);
+  const valid = $derived(subject.trim() !== '' && parsedAuthor !== null && parsedCo !== null);
   const dirty = $derived(
     subject !== commit.subject ||
       body !== commit.body ||
-      authorName !== commit.author.name ||
-      authorEmail !== commit.author.email ||
+      author.trim() !== fmt(commit.author) ||
       coauthors.filter((s) => s.trim()).join('\n') !== commit.coauthors.map(fmt).join('\n'),
   );
 
@@ -54,12 +54,12 @@
   }
 
   function save() {
-    if (!dirty || !valid || readonly) return;
+    if (!dirty || !valid || !parsedAuthor || readonly) return;
     app.rewriteInPlace('edit', {
       sha: commit.sha,
       subject,
       body,
-      author: { name: authorName, email: authorEmail },
+      author: parsedAuthor,
       coauthors: parsedCo ?? [],
     }, diffView?.position() ?? null);
   }
@@ -67,8 +67,7 @@
   function revert() {
     subject = commit.subject;
     body = commit.body;
-    authorName = commit.author.name;
-    authorEmail = commit.author.email;
+    author = fmt(commit.author);
     coauthors = commit.coauthors.map(fmt);
   }
 
@@ -156,12 +155,12 @@
   const clear = () => Object.values(sel).forEach((s) => s.clear());
 
   type Kept = {
-    sha: string; subject: string; body: string; authorName: string; authorEmail: string; coauthors: string[];
+    sha: string; subject: string; body: string; author: string; coauthors: string[];
     position: DiffPosition | null;
   };
   $effect(() =>
     app.keep('commit', (): Kept => ({
-      sha: commit.sha, subject, body, authorName, authorEmail, coauthors, position: diffView?.position() ?? null,
+      sha: commit.sha, subject, body, author, coauthors, position: diffView?.position() ?? null,
     })),
   );
   const isHead = $derived(commit.sha === app.repo?.head);
@@ -315,12 +314,8 @@
     {/if}
 
     <div class="people">
-      <label for="author-name" class="muted">Author</label>
-      <div class="person">
-        <Avatar name={authorName || '?'} src={avatarUrl(authorEmail, 22)} seed={authorEmail.toLowerCase()} size={22} round />
-        <input class="field-input" id="author-name" bind:value={authorName} placeholder="Name" disabled={readonly} />
-        <input class="field-input mono" bind:value={authorEmail} placeholder="email@example.com" disabled={readonly} />
-      </div>
+      <label for="author" class="muted">Author</label>
+      <PersonField id="author" bind:value={author} required {readonly} />
 
       <span class="muted label">Co-authors</span>
       <Coauthors bind:value={coauthors} {readonly} />
@@ -513,13 +508,6 @@
   .people > .label {
     padding-top: var(--gap-3);
     font-size: var(--fs-sm);
-  }
-
-  .person {
-    display: grid;
-    grid-template-columns: auto 1fr 1.2fr;
-    align-items: center;
-    gap: var(--gap-3);
   }
 
   .actions {

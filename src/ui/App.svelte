@@ -38,6 +38,7 @@
   import { WORK, app } from './lib/app.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
+  import { formatPerson } from './lib/people.ts';
   import { newWorktree } from './lib/worktrees.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
@@ -242,6 +243,11 @@
     </section>
   </main>
 </div>
+
+<!-- Suggestions for every `Name <email>` field (PersonField). -->
+<datalist id="people">
+  {#each app.people as p (p.email)}<option value={formatPerson(p)}></option>{/each}
+</datalist>
 
 <ContextMenuHost />
 <DialogHost />

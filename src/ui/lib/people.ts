@@ -10,6 +10,12 @@ export function parsePerson(s: string): Person | null {
   return m ? { name: m[1], email: m[2] } : null;
 }
 
+/** A commit's author: `Name <email>`, with a name. */
+export function parseAuthor(s: string): Person | null {
+  const p = parsePerson(s);
+  return p?.name ? p : null;
+}
+
 /** Co-authors from the editor's lines; null if a non-empty line isn't `Name <email>`. */
 export function parsePeople(lines: string[]): Person[] | null {
   const out: Person[] = [];
