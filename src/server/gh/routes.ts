@@ -1,6 +1,7 @@
 // /api/gh/<name>: GET routes read from GitHub, POST routes change something there. Each feature
 // module exports its own tables, merged here.
 
+import { checksGet, checksPost } from './checks.ts';
 import { GithubError, MOCK, resetToken, viewerLogin } from './client.ts';
 import { ghRepos } from './context.ts';
 import { db } from './mock/registry.ts';
@@ -27,8 +28,8 @@ const core: Record<string, GetRoute> = {
   pr: (repo, q) => prForBranch(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
 };
 
-export const getRoutes: Record<string, GetRoute> = { ...core };
-export const postRoutes: Record<string, PostRoute> = {};
+export const getRoutes: Record<string, GetRoute> = { ...core, ...checksGet };
+export const postRoutes: Record<string, PostRoute> = { ...checksPost };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
 
