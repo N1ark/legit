@@ -7,6 +7,8 @@
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
+  import ReviewButton from './gh/ReviewButton.svelte';
+  import { DiffReview } from './lib/gh-review.svelte.ts';
   import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { squashDiffKey, squashFields } from './lib/squash.ts';
@@ -51,6 +53,7 @@
 
   // The squashed commit's changes, read-only; DiffView wants a (never filled) selection per file.
   const diffKey = $derived(squashDiffKey(commits, app.commits));
+  const review = $derived(new DiffReview(diffKey, commits.map((c) => c.sha)));
   let changes = $state.raw<{ diff: DiffSummary; sel: Record<string, SvelteSet<number>> } | null>(null);
   let error = $state<string | null>(null);
   $effect(() => {
@@ -97,6 +100,8 @@
         everything they change together.
       </p>
     {/if}
+
+    <ReviewButton />
 
     <ol class="picked">
       {#each commits.toReversed() as c (c.sha)}
@@ -147,7 +152,7 @@
     <p class="muted note">{error}</p>
   {:else if changes}
     {#key changes.diff.sha}
-      <DiffView summary={changes.diff} sel={changes.sel} readonly={true} />
+      <DiffView summary={changes.diff} sel={changes.sel} readonly={true} {review} />
     {/key}
   {:else}
     <p class="muted note">Loading changes…</p>

@@ -15,6 +15,7 @@
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
     type MaybeEntry,
+    Popover,
     ResizeEdge,
     Tag,
     Twisty,
@@ -26,7 +27,7 @@
     toast,
     variableRange,
   } from 'purr';
-  import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
+  import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, ChatCircleText, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -34,6 +35,10 @@
   import type { DiffSummary, FileSummary, HunkData, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
+  import Composer from './gh/Composer.svelte';
+  import Thread from './gh/Thread.svelte';
+  import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
+  import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
@@ -71,6 +76,7 @@
     oneditline,
     onstage,
     changeActions,
+    review,
   }: {
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
@@ -93,6 +99,8 @@
     onstage?: (path: string, lines: number[] | 'all', on: boolean) => void;
     /** More entries for a changed line's menu: its changes (two for a line whose whitespace changed), and the block of changes around it. */
     changeActions?: (f: FileSummary, line: number[], block: number[]) => MaybeEntry[];
+    /** The pull request's review threads to show under the lines they're on, and commenting on lines. */
+    review?: DiffReview;
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -169,6 +177,129 @@
   let editing = $state<{ i: number; r: number; text: string; orig: string } | null>(null);
   let saving = $state(false);
 
+  // Review threads (and comments being written) sit under the rows they're on, as tall as they
+  // were last measured (an estimate until first shown); one growing above the view keeps the view
+  // where it was. Placing them takes a file's rows, so they appear as its contents come in.
+  const SLOT_PAD = 6;
+  const placedThreads = $derived.by(() => {
+    const out: Record<number, ReturnType<DiffReview['blocks']>> = {};
+    if (!review) return out;
+    for (const k of Object.keys(contents)) out[+k] = review.blocks(files[+k].path, contents[+k]);
+    return out;
+  });
+  let blockHeights = $state<Record<string, number>>({});
+  function blockHeight(b: Block): number {
+    const known = blockHeights[b.key] ?? reviews.heights.get(b.key);
+    if (known !== undefined) return known;
+    if (b.draft) return 190;
+    const shut = 32 + 2 * SLOT_PAD;
+    return reviews.isOpen(b.thread) ? shut + 64 + 90 * b.thread.comments.length : shut;
+  }
+  const blockLayout = $derived.by(() => {
+    const out: Record<number, BlockLayout<Block>> = {};
+    for (const [k, v] of Object.entries(placedThreads)) if (v.blocks.length) out[+k] = layOut(v.blocks, blockHeight);
+    return out;
+  });
+  /** Height of file i's blocks under the rows before row r. */
+  const blocksAbove = (i: number, r: number) => (blockLayout[i] ? heightAbove(blockLayout[i], r) : 0);
+
+  function measureBlock(b: Block) {
+    return (el: HTMLElement) => {
+      const ro = new ResizeObserver(() => {
+        const h = el.offsetHeight + 2 * SLOT_PAD;
+        const was = blockHeight(b);
+        if (!el.offsetHeight || h === was) return;
+        if (scroller && el.getBoundingClientRect().top < scroller.getBoundingClientRect().top) scroller.scrollTop += h - was;
+        blockHeights[b.key] = h;
+        reviews.heights.set(b.key, h);
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    };
+  }
+
+  // A thread to bring into view (from the threads panel, or a comment just started): its file
+  // first, then, once its contents are in, the thread.
+  $effect(() => {
+    const f = reviews.focus;
+    if (!review || !f) return;
+    const i = files.findIndex((x) => x.path === f.path);
+    if (i < 0) return void (reviews.focus = null);
+    const placed = placedThreads[i];
+    untrack(() => {
+      if (!scroller) return;
+      if (!placed) return reveal(i);
+      reviews.focus = null;
+      const b = placed.blocks.find((x) => x.key === f.id);
+      if (!b) {
+        reveal(i);
+        if (placed.elsewhere.some((t) => t.id === f.id)) tick().then(() => openAway(i));
+        return;
+      }
+      const same = blockLayout[i]?.byRow.get(b.row) ?? [];
+      let y = tops[i] + HEAD + lead(i) + rowY(i, b.row) + rowSpan(i, b.row) * ROW;
+      for (const x of same) {
+        if (x === b) break;
+        y += blockHeight(x);
+      }
+      if (y < view.top + HEAD || y + Math.min(blockHeight(b), (view.bottom - view.top) / 2) > view.bottom) {
+        scroller.scrollTop += y - view.top - (view.bottom - view.top) / 4;
+        measure();
+      }
+    });
+  });
+
+  // A file's threads that have no line here, listed from its header.
+  let away = $state<{ i: number; el: HTMLElement } | null>(null);
+  function openAway(i: number) {
+    const el = filesEl?.querySelector<HTMLElement>(`[data-away="${i}"]`);
+    if (el) away = { i, el };
+  }
+
+  /** Rows a..b of file i the picked changes span, when they're all in file i; else why not. */
+  function pickedRows(i: number): [number, number] | string {
+    const f = files[i];
+    const rows = contents[i];
+    if (files.some((g) => g !== f && sel[g.path]?.size)) return 'Pick lines in one file to comment on them.';
+    if (!rows) return 'Pick lines shown in the diff to comment on them.';
+    let a = -1;
+    let b = -1;
+    for (let r = 0; r < rows.ci.length; r++) {
+      if (changesIn(rows, r, r).some((c) => sel[f.path].has(c))) {
+        if (a < 0) a = r;
+        b = r;
+      }
+    }
+    return a < 0 ? 'Pick lines shown in the diff to comment on them.' : [a, b];
+  }
+
+  /** "Comment on this line…" (or on the picked lines around it) in row r's menu. */
+  function commentEntry(i: number, r: number): MaybeEntry {
+    if (!review?.pr) return false;
+    const rows = contents[i];
+    const p = sel[files[i].path]?.size ? pickedRows(i) : null;
+    const [a, b] = Array.isArray(p) && r >= p[0] && r <= p[1] ? p : [r, r];
+    const why = review.why(rows, a, b);
+    return {
+      label: a === b ? 'Comment on this line…' : `Comment on ${b - a + 1} lines…`,
+      icon: ChatCircleText,
+      disabled: !!why,
+      note: why ?? `On #${review.pr.number}`,
+      run: () => review.compose(files[i].path, rows, a, b),
+    };
+  }
+
+  /** Commenting on the picked lines, for the view's own buttons: why not, and how; null without a pull request. */
+  export function pickedComment(): { why: string | null; run: () => void } | null {
+    if (!review?.pr) return null;
+    const i = files.findIndex((f) => sel[f.path]?.size);
+    if (i < 0) return null;
+    const p = pickedRows(i);
+    if (typeof p === 'string') return { why: p, run: () => {} };
+    const why = review.why(contents[i], p[0], p[1]);
+    return { why, run: () => review.compose(files[i].path, contents[i], p[0], p[1]) };
+  }
+
   // Wrapping long lines (settings): at the columns that fit the diff, or at most at a given one.
   let charWidth = $state(0);
   let paneWidth = $state(0);
@@ -202,7 +333,7 @@
   /** Y of row r in file i's lines. */
   function rowY(i: number, r: number): number {
     const at = wrapped(i);
-    const y = (at ? at[r] : r) * ROW;
+    const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
     return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
   }
   /** Height of what comes before file i's lines: its images. */
@@ -221,9 +352,11 @@
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
     const at = wrapped(i);
-    const [a, b] = at
-      ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
-      : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+    const [a, b] = blockLayout[i]
+      ? variableRange(Array.from({ length: rowCount(i) + 1 }, (_, r) => rowY(i, r)), view.top - y, view.bottom - view.top, OVERSCAN)
+      : at
+        ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
+        : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
     return out;
@@ -242,13 +375,13 @@
     held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
   }
 
-  // With wrapping, files change height as their contents come in (or the width changes): the
-  // file at the top of the view stays where it was.
+  // With wrapping, files change height as their contents come in (or the width changes), and with
+  // review threads as they're placed: the file at the top of the view stays where it was.
   let held: { k: number; offset: number } | null = null;
   $effect(() => {
     const t = tops;
     const a = held;
-    if (!cols || !a || !scroller || a.k >= files.length) return;
+    if ((!cols && !review) || !a || !scroller || a.k >= files.length) return;
     const drift = t[a.k] + Math.min(a.offset, t[a.k + 1] - t[a.k]) - untrack(() => view.top);
     if (Math.abs(drift) >= 1) {
       scroller.scrollTop += drift;
@@ -563,7 +696,10 @@
     const above = view.top - tops[i];
     collapsed[i] = !collapsed[i];
     // Keep a stuck header where it is instead of jumping past the file.
-    if (above > 0 && scroller) scroller.scrollTop -= above;
+    if (above > 0 && scroller) {
+      scroller.scrollTop -= above;
+      measure();
+    }
   }
 
   // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed (`last`
@@ -624,7 +760,7 @@
   let pending: { i: number; r: number; x: number; y: number } | null = null;
 
   function down(e: MouseEvent, i: number) {
-    if ((e.target as HTMLElement).closest('.editor, .xp')) return;
+    if ((e.target as HTMLElement).closest('.editor, .xp, .gh-slot')) return;
     const r = rowOf(e);
     const rows = contents[i];
     if (rows?.kind[r] === TAIL && e.button === 0) return void expand(i, rows.gap[r], 'top');
@@ -789,6 +925,7 @@
     const kind = rows.kind[r];
     return [
       ...(changeActions && ci >= 0 ? changeActions(f, mine, block) : []),
+      commentEntry(i, r),
       canEdit(i, r) && { label: 'Edit line', icon: PencilSimple, note: 'Or double-click it', run: () => startEdit(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
@@ -838,8 +975,8 @@
   }
 
   function openMenu(e: MouseEvent, i: number) {
-    // The line being edited keeps the field's own menu (paste...).
-    if ((e.target as HTMLElement).closest('.editor')) return;
+    // The line being edited (and a review thread) keeps the field's own menu (paste...).
+    if ((e.target as HTMLElement).closest('.editor, .gh-slot')) return;
     e.preventDefault();
     const r = rowOf(e);
     const rows = contents[i];
@@ -972,6 +1109,17 @@
             {#if hideWhitespace.value && onlyWhitespace(f)}
               <Tag label="whitespace only" title="Every change in this file only changes whitespace" />
             {/if}
+            {#if placedThreads[i]?.elsewhere.length}
+              {@const n = placedThreads[i].elsewhere.length}
+              <span class="away" data-away={i}>
+                <Tag
+                  color="var(--theme2)"
+                  label="{n} {n === 1 ? 'comment' : 'comments'} not on a line here"
+                  title="Review threads on this file made on this commit that aren't on a line of its diff: on the whole file, or outdated"
+                  onclick={(e) => (away = { i, el: e.currentTarget as HTMLElement })}
+                />
+              </span>
+            {/if}
             <span class="spacer"></span>
             <span class="add mono">+{f.added}</span>
             <span class="del mono">−{f.removed}</span>
@@ -1061,6 +1209,7 @@
                           class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
+                          class:gh-range={blockLayout[i]?.on.has(r)}
                           style:height={edit || cols ? `${rowSpan(i, r) * ROW}px` : undefined}
                           data-r={r}
                           title={kind === SPACED ? 'Only whitespace changed' : undefined}
@@ -1094,6 +1243,17 @@
                           >{/if}
                         </div>
                       {/if}
+                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
+                        <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
+                          <div {@attach measureBlock(b)}>
+                            {#if b.thread && review?.data}
+                              <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
+                            {:else if b.draft && review}
+                              <Composer {review} draft={b.draft} />
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
                     {/each}
                   </div>
                 {/if}
@@ -1105,6 +1265,23 @@
     </div>
   </div>
 </div>
+
+{#if away && review?.data}
+  <Popover
+    anchor={away.el}
+    label="Review threads not on a line"
+    onclose={() => (away = null)}
+    width="min(600px, calc(100vw - 32px))"
+    maxHeight="70vh"
+    padding="var(--sp-4)"
+  >
+    <div class="away-list">
+      {#each placedThreads[away.i]?.elsewhere ?? [] as t (t.id)}
+        <Thread number={review.data.number} thread={t} pending={!!review.data.pending} hunk />
+      {/each}
+    </div>
+  </Popover>
+{/if}
 
 <style>
   .diff {
@@ -1556,5 +1733,30 @@
     color: var(--del);
     opacity: 0.7;
     margin-left: var(--gap-2);
+  }
+
+  /* A review thread under its line, as wide as the view however far the lines are scrolled. */
+  .gh-slot {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    box-sizing: border-box;
+    padding: 6px var(--sp-4) 6px 40px;
+    overflow: hidden;
+  }
+
+  .line.gh-range .gutter {
+    color: var(--theme2);
+    font-weight: 600;
+  }
+
+  .away {
+    display: inline-flex;
+  }
+
+  .away-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-4);
   }
 </style>

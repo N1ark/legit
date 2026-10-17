@@ -6,3 +6,4 @@ import './stack.ts';
 import './issues.ts';
 import './checks.ts';
 import './prview.ts';
+import './review.ts';

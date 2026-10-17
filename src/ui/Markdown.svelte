@@ -13,12 +13,15 @@
     text,
     inline = false,
     links = 'click',
+    images = false,
   }: {
     text: string;
     /** A title: inline markdown on one line. */
     inline?: boolean;
     /** How links open: on a click, on a ⌘-click (in a row a click selects), or not at all. */
     links?: 'click' | 'mod' | 'off';
+    /** Show images (a GitHub comment's), rather than links to them. */
+    images?: boolean;
   } = $props();
 
   const tokens = $derived(inline ? lexInline(text) : lexBlocks(text));
@@ -74,6 +77,9 @@
     {:else if t.type === 'link'}
       {@const l = t as Tokens.Link}
       {@render link(safeHref(l.href), l.title, l.tokens)}
+    {:else if t.type === 'image' && images && safeHref((t as Tokens.Image).href)?.startsWith('https:')}
+      {@const l = t as Tokens.Image}
+      <img class="img" src={safeHref(l.href)} alt={l.text} title={l.title ?? undefined} loading="lazy" />
     {:else if t.type === 'image'}
       <!-- Not loaded: a message shouldn't fetch from wherever it points. -->
       {@const l = t as Tokens.Image}
@@ -177,5 +183,10 @@
 
   .task-item {
     list-style: none;
+  }
+
+  .img {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
   }
 </style>

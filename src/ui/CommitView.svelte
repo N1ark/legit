@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
-  import { ArrowCounterClockwise, ArrowUUpLeft, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
+  import { ArrowCounterClockwise, ArrowUUpLeft, ChatCircleText, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
@@ -8,6 +8,8 @@
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
   import PersonField from './PersonField.svelte';
+  import ReviewButton from './gh/ReviewButton.svelte';
+  import { DiffReview } from './lib/gh-review.svelte.ts';
   import { formatPerson, parseAuthor, parsePeople } from './lib/people.ts';
   import { splitTitle } from './lib/split.ts';
   import { type DiffPosition, app, shortSha } from './lib/app.svelte.ts';
@@ -81,6 +83,7 @@
   // A new commit starts at the top; one rewritten from its own diff, where the old one was.
   const position = app.takeDiffPosition(init.sha) ?? back?.position ?? null;
   let diffView = $state<DiffView>();
+  const review = new DiffReview(init.sha, [init.sha]);
   onMount(() => {
     const scroller = document.querySelector('[data-scroller]');
     if (scroller && !position) scroller.scrollTop = 0;
@@ -103,6 +106,9 @@
     }
     return { lines, files };
   });
+
+  /** Commenting on GitHub on the picked lines, when this commit is in the branch's pull request. */
+  const comment = $derived(picked.files ? (diffView?.pickedComment() ?? null) : null);
 
   function selection(): Selection {
     const out: Selection = {};
@@ -217,6 +223,7 @@
       </Tag>
     {/if}
     <span class="spacer"></span>
+    <ReviewButton />
     {#if commit.merge && !commit.side}
       {@const open = commit.sha in app.expanded}
       <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} title="List the commits it brought in under it (→ / ←)">
@@ -341,6 +348,7 @@
       {sel}
       {readonly}
       initial={position}
+      {review}
       hint="Pick lines to split out or remove: click, shift-click, or drag the line numbers; the left edge picks whole blocks. Double-click a line to edit it."
       onremove={remove}
       oneditline={editLine}
@@ -405,6 +413,11 @@
       >
         <Eraser /> Remove <Kbd hint="⌫" />
       </Button>
+      {#if comment}
+        <Button onclick={comment.run} disabled={!!comment.why} title={comment.why ?? 'Comment on these lines on GitHub'}>
+          <ChatCircleText /> Comment
+        </Button>
+      {/if}
       <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><X /></IconButton>
     </div>
   {/if}
