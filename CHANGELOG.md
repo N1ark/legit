@@ -4,6 +4,7 @@
 
 - The header shows the branch's pull request and its stack of pull requests; click one in the stack to switch to its branch, and restack a branch when the one under it moved or was merged.
 - **Create pull request** from the header, pushing the branch first and offering to stack it on the branch below.
+- Review comments sit under their lines in a commit's diff: reply, resolve, apply a suggested change to your files, and comment on picked lines (or start a review).
 - A pull request's overview: description, commits, conversation, reviewers, labels, reviews, and merging.
 - CI status for the branch and for each pushed commit, with each job's steps and logs, and re-running or cancelling runs.
 - GitHub notifications behind a bell in the header; a pull request of this repo opens in legit.
