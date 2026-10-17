@@ -98,6 +98,24 @@ export async function rest<T = any>(method: string, path: string, body?: unknown
   return (opts.text ? await res.text() : await res.json()) as T;
 }
 
+/** A GET sent with `If-Modified-Since`: null when nothing changed (a 304, which costs no rate limit). */
+export async function restSince<T = any>(path: string, since: string | null): Promise<{ data: T; modified: string | null; poll: number } | null> {
+  if (MOCK) return { data: (await mockRest('GET', path, undefined)) as T, modified: null, poll: 60 };
+  let res: Response;
+  try {
+    res = await fetch(`https://api.github.com${path}`, {
+      headers: await headers(since ? { 'if-modified-since': since } : {}),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    if (e instanceof GithubError) throw e;
+    throw new GithubError(`Couldn't reach GitHub (${e instanceof Error ? e.message : e}).`);
+  }
+  if (res.status === 304) return null;
+  if (!res.ok) throw await failure(res);
+  return { data: (await res.json()) as T, modified: res.headers.get('last-modified'), poll: Number(res.headers.get('x-poll-interval')) || 60 };
+}
+
 /** A GraphQL query or mutation; it must be named (`query Name(…)`), which is how the mock finds it. */
 export async function graphql<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
   if (MOCK) return mockGraphql(query, variables) as T;
