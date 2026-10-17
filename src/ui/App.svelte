@@ -36,6 +36,7 @@
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import PrView from './gh/PrView.svelte';
+  import GithubMenu from './gh/GithubMenu.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
@@ -191,6 +192,7 @@
     </IconButton>
     <StashPanel />
     <Backups />
+    <GithubMenu />
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = true)}><Gear /></IconButton>
   </header>
 

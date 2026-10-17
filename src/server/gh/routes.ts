@@ -5,6 +5,7 @@ import { GithubError, MOCK, resetToken, viewerLogin } from './client.ts';
 import { ghRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import { prForBranch } from './pulls.ts';
+import { issuesGet, issuesPost } from './issues.ts';
 import type { GithubStatus } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
@@ -27,8 +28,8 @@ const core: Record<string, GetRoute> = {
   pr: (repo, q) => prForBranch(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
 };
 
-export const getRoutes: Record<string, GetRoute> = { ...core };
-export const postRoutes: Record<string, PostRoute> = {};
+export const getRoutes: Record<string, GetRoute> = { ...core, ...issuesGet };
+export const postRoutes: Record<string, PostRoute> = { ...issuesPost };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
 
