@@ -35,6 +35,7 @@
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
+  import Notifications from './gh/Notifications.svelte';
   import PrView from './gh/PrView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
@@ -189,6 +190,7 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRight />
     </IconButton>
+    <Notifications />
     <StashPanel />
     <Backups />
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = true)}><Gear /></IconButton>
