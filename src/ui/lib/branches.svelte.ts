@@ -4,7 +4,7 @@
 // being left (stashed) or bring them along (`git switch`, which refuses if they'd be
 // overwritten). The question is asked before the request, so no lock is held while waiting.
 import { confirmAction, dialog, promptText, toast } from 'purr';
-import type { BranchInfo, RebuildPlan } from '../../shared/types.ts';
+import type { BranchInfo, DeleteBranchesResult, RebuildPlan } from '../../shared/types.ts';
 import { app, request, shortSha } from './app.svelte.ts';
 
 export type Choice = 'leave' | 'bring';
@@ -123,6 +123,32 @@ export async function deleteBranch(name: string): Promise<boolean> {
   if (!(await app.op('deleteBranch', { branch: name }))) return false;
   toast(`Deleted ${name}. It's under Recently deleted in the branch list for two weeks.`);
   return true;
+}
+
+const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 'es'}`;
+
+/** Run a bulk delete; the toast says what was deleted and which were skipped, and why. */
+async function bulk(op: string, body: unknown, done: (n: number) => string): Promise<boolean> {
+  const got: { r?: DeleteBranchesResult } = {};
+  if (!(await app.op(op, body, undefined, async (r) => (got.r = r as DeleteBranchesResult)))) return false;
+  const skipped = got.r?.skipped ?? [];
+  const also = skipped.length ? ` Skipped ${skipped.map((s) => `${s.name} (${s.why})`).join(', ')}.` : '';
+  toast(done(got.r?.deleted.length ?? 0) + also, { timeout: skipped.length ? 12_000 : 5000 });
+  return true;
+}
+
+/** Delete several local branches; the current one and those checked out in another worktree are skipped. */
+export function deleteBranches(names: string[]): Promise<boolean> {
+  return bulk('deleteBranches', { branches: names }, (n) => `Deleted ${plural(n, 'branch')}. They're under Recently deleted for two weeks.`);
+}
+
+/** Delete several branches on their remotes, given their remote-tracking refs. */
+export function deleteRemoteBranches(refs: string[]): Promise<boolean> {
+  return bulk(
+    'deleteRemoteBranches',
+    { refs },
+    (n) => `Deleted ${plural(n, 'branch')} on the remote. Their tips are under Recently deleted for two weeks.`,
+  );
 }
 
 /** Delete a branch on its remote, given its remote-tracking ref (refs/remotes/<remote>/<branch>). */

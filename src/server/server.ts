@@ -10,7 +10,7 @@ import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
-  remotes, setUpstream, unsetUpstream,
+  deleteBranches, deleteRemoteBranches, remotes, setUpstream, unsetUpstream,
 } from './branches.ts';
 import { stash, stashApply, stashDrop, stashPop, stashes } from './stash.ts';
 import { discard, discarded, restoreDiscarded } from './discard.ts';
@@ -157,6 +157,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     renameBranch: (b) => renameBranch(repo, b),
     deleteBranch: (b) => deleteBranch(repo, b),
     deleteRemoteBranch: (b) => deleteRemoteBranch(repo, b),
+    deleteBranches: (b) => deleteBranches(repo, b),
+    deleteRemoteBranches: (b) => deleteRemoteBranches(repo, b),
     restoreBranch: (b) => restoreBranch(repo, b),
     checkoutRemote: (b) => checkoutRemote(repo, b),
     setUpstream: (b) => setUpstream(repo, b),

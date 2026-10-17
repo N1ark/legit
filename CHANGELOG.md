@@ -8,6 +8,7 @@
 - **Hide whitespace** above a diff shows lines that only changed whitespace as unchanged.
 - In a partly changed line, the words that changed are highlighted.
 - Change the remote branch a branch tracks, or stop tracking it, from its right-click menu; the branch list shows each one's upstream.
+- ⌘/⇧-click branches in the branch list to delete several at once.
 
 ## 0.3.0 — 2026-10-13
 

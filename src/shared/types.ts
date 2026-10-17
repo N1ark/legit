@@ -386,6 +386,12 @@ export interface Progress {
 }
 
 /** Result of a fetch, pull, merge, rebase, continue or abort: the new state plus what happened. */
+/** Several branches deleted at once: those that were, and those left alone with why. */
+export interface DeleteBranchesResult extends OpResult {
+  deleted: string[];
+  skipped: { name: string; why: string }[];
+}
+
 export interface SyncResult extends OpResult {
   message: string;
 }

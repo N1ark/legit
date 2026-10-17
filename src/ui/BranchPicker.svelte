@@ -7,16 +7,19 @@
   // lists its commits the current one doesn't have, to cherry-pick some here. A branch checked out
   // in another worktree switches to that worktree.
   // In upstream mode, it lists the remote branches a local one can track, and names not on a remote yet.
-  import { Button, Highlight, IconButton, Kbd, Popover, formatRelative, menu, rank, toast, type MaybeEntry } from 'purr';
+  import {
+    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, formatRelative, isMac, menu, rank, toast, type MaybeEntry,
+  } from 'purr';
   import {
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
-    CopySimple, FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, LinkBreak, PencilSimple, Plus, Square, Stack, Trash,
+    CopySimple, FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, LinkBreak, PencilSimple, Plus, Square, Stack, Trash, X,
   } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import {
-    commitsRequest, deleteBranch, deleteRemoteBranch, newBranch, rebuild, renameBranch, restoreBranch, setUpstream, switchOp, unsetUpstream,
+    commitsRequest, deleteBranch, deleteBranches, deleteRemoteBranch, deleteRemoteBranches, newBranch, rebuild, renameBranch,
+    restoreBranch, setUpstream, switchOp, unsetUpstream,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
@@ -49,6 +52,9 @@
   let browsing = $state<string | null>(null);
   let theirs = $state.raw<{ commits: CommitInfo[]; total: number } | null>(null);
   const picked = new SvelteSet<string>();
+  /** Local branches selected with ⌘/⇧-click (switch mode), and where a ⇧-click range starts. */
+  const chosen = new SvelteSet<string>();
+  let anchor = $state<string | null>(null);
   /** The branch whose upstream is being picked (upstream mode), and the remotes, longest name first. */
   let tracker = $state<string | null>(null);
   let remoteNames = $state<string[]>([]);
@@ -137,6 +143,8 @@
       get<DeletedBranch[]>('/api/branches/deleted'),
       mode === 'upstream' ? get<string[]>('/api/remotes') : remoteNames,
     ]);
+    const left = new Set(local.map((b) => b.name));
+    for (const name of [...chosen]) if (!left.has(name)) chosen.delete(name);
   }
 
   /**
@@ -155,6 +163,8 @@
   async function setMode(m: Mode) {
     mode = m;
     active = 0;
+    chosen.clear();
+    anchor = null;
     local = null;
     theirs = null;
     filter = '';
@@ -194,6 +204,68 @@
     if (!(await run())) return;
     if (stay && open) await load();
     else open = false;
+  }
+
+  const many = (n: number) => `${n} branch${n === 1 ? '' : 'es'}`;
+  /** A branch's upstream when it's a remote-tracking branch (`<remote>/<branch>`); the server checks it names a remote. */
+  const remoteUpstream = (b: BranchInfo) => (b.upstream?.includes('/') && b.track !== 'gone' ? b.upstream : '');
+  const isChosen = (r: Row) => mode === 'switch' && r.kind === 'local' && chosen.has(r.b.name);
+
+  const selection = $derived((local ?? []).filter((b) => chosen.has(b.name)));
+  const deletable = $derived(selection.filter((b) => !b.current && !b.worktree));
+  const kept = $derived(
+    selection
+      .filter((b) => b.current || b.worktree)
+      .map((b) => `${b.name} (${b.worktree ? `checked out in ${folder(b.worktree)}` : "you're on it"})`),
+  );
+  const upstreams = $derived(deletable.map(remoteUpstream).filter(Boolean).map((u) => `refs/remotes/${u}`));
+
+  /** ⌘/Ctrl-click adds or removes a local branch, ⇧-click selects the range from the last one; a plain click chooses it. */
+  function onrowclick(e: MouseEvent, r: Row) {
+    const toggle = isMac ? e.metaKey : e.ctrlKey;
+    if (mode !== 'switch' || r.kind !== 'local' || !(toggle || e.shiftKey)) return choose(r);
+    const shown = rows.flatMap((x) => (x.kind === 'local' ? [x.b.name] : []));
+    const [from, to] = [anchor ? shown.indexOf(anchor) : -1, shown.indexOf(r.b.name)];
+    if (e.shiftKey && from >= 0) {
+      chosen.clear();
+      for (const name of shown.slice(Math.min(from, to), Math.max(from, to) + 1)) chosen.add(name);
+      return;
+    }
+    if (chosen.has(r.b.name)) chosen.delete(r.b.name);
+    else chosen.add(r.b.name);
+    anchor = r.b.name;
+  }
+
+  /** Delete the selected branches; the server skips the ones that can't be, and the toast says which. */
+  async function deleteChosen() {
+    if (!(await deleteBranches([...chosen]))) return false;
+    chosen.clear();
+    return true;
+  }
+
+  function bulkMenu(): MaybeEntry[] {
+    const n = deletable.length;
+    return [
+      {
+        label: `Delete ${many(n)}`,
+        icon: Trash,
+        danger: true,
+        disabled: !n,
+        note: kept.length ? `Skips ${kept.join(', ')}.` : 'Kept under Recently deleted for two weeks.',
+        confirm: `Delete ${many(n)}`,
+        run: () => act(deleteChosen, true),
+      },
+      !!upstreams.length && {
+        label: upstreams.length === 1 ? 'Delete its upstream on the remote…' : `Delete their ${upstreams.length} upstreams on the remote…`,
+        icon: Trash,
+        danger: true,
+        note: `${upstreams.map((u) => u.slice('refs/remotes/'.length)).join(', ')}, for everyone. Each is refused if it moved since you last fetched.`,
+        confirm: `Delete ${upstreams.length} on the remote`,
+        run: () => act(() => deleteRemoteBranches(upstreams), true),
+      },
+      'separator',
+      { label: 'Clear selection', icon: X, run: () => chosen.clear() },
+    ];
   }
 
   /** Pick what `name` tracks. */
@@ -247,8 +319,7 @@
 
   /** A local branch's menu. Entries for other actions on a branch go in their own section. */
   function localMenu(b: BranchInfo): MaybeEntry[] {
-    // Only a remote-tracking upstream (`<remote>/<branch>`); the server checks it names a remote.
-    const upstream = b.upstream?.includes('/') && b.track !== 'gone' ? b.upstream : '';
+    const upstream = remoteUpstream(b);
     return [
       !b.current && {
         label: b.worktree ? `Switch to its worktree (${folder(b.worktree)})` : 'Switch to it',
@@ -332,6 +403,7 @@
   function oncontextmenu(e: MouseEvent, r: Row, k: number) {
     active = k;
     if (r.kind === 'create' || r.kind === 'publish' || mode === 'upstream') return e.preventDefault();
+    if (isChosen(r) && chosen.size > 1) return menu.show(e, bulkMenu(), `${chosen.size} branches selected`);
     const list = r.kind === 'local' ? localMenu(r.b) : r.kind === 'remote' ? remoteMenu(r.b) : deletedMenu(r.b);
     menu.show(e, list, r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : r.b.name);
   }
@@ -480,7 +552,7 @@
       {:else if !rows.length}
         <p class="muted">No matching branch.</p>
       {:else}
-        <ol bind:this={listEl} role="listbox" aria-label="Branches">
+        <ol bind:this={listEl} role="listbox" aria-label="Branches" aria-multiselectable={mode === 'switch'}>
           {#each rows as r, k (key(r))}
             {#if HEADINGS[r.kind] && rows[k - 1]?.kind !== r.kind && !(promoted && k === 0)}
               <li class="heading muted" role="presentation">{HEADINGS[r.kind]}</li>
@@ -489,11 +561,13 @@
             <li
               class="row-item"
               class:is-cursor={k === active}
+              class:is-current={isChosen(r)}
               class:current={current(r)}
               role="option"
-              aria-selected={k === active}
+              aria-selected={chosen.size ? isChosen(r) : k === active}
               data-row={k}
-              onclick={() => choose(r)}
+              onclick={(e) => onrowclick(e, r)}
+              onmousedown={(e) => e.shiftKey && e.preventDefault()}
               oncontextmenu={(e) => oncontextmenu(e, r, k)}
               onmousemove={() => (active = k)}
             >
@@ -507,7 +581,7 @@
                 <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; the next push publishes it there</span>
               {:else if r.kind === 'local'}
                 {@const b = r.b}
-                <span class="check">{#if b.current}<Check weight="bold" />{/if}</span>
+                <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
                 <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
                 <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 {#if b.worktree}
@@ -541,6 +615,22 @@
           {/each}
         </ol>
       {/if}
+      {#if mode === 'switch' && chosen.size > 1}
+        <div class="pick bulk">
+          <span class="foot muted">
+            {chosen.size} selected{#if kept.length}; skips {kept.join(', ')}{/if}. Deleted branches stay under Recently deleted for two weeks.
+          </span>
+          <Button size="sm" variant="ghost" onclick={() => chosen.clear()}><X /> Clear</Button>
+          <ConfirmButton
+            size="sm"
+            confirmLabel="Click again to delete {many(deletable.length)}"
+            disabled={!deletable.length || app.busy}
+            onconfirm={() => act(deleteChosen, true)}
+          >
+            <Trash /> Delete {many(deletable.length)}
+          </ConfirmButton>
+        </div>
+      {/if}
       {#if mode === 'switch'}
         <div class="modes">
           <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('merge')} title="Pick a branch to merge into this one (m)">
@@ -554,7 +644,7 @@
           </Button>
         </div>
         <p class="foot muted">
-          Right-click a branch to rename or delete it, change its upstream, or open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
+          Right-click a branch to rename or delete it, change its upstream, or open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. <span class="mono">{isMac ? '⌘' : 'Ctrl'}</span>-click or <span class="mono">⇧</span>-click to select several, to delete them together. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
           bring them along.
         </p>
       {:else if mode === 'commits'}

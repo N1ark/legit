@@ -1,9 +1,9 @@
 // Branches: switch (optionally leaving uncommitted changes in a stash), create, rename, delete
-// and bring back, change what they track, and check out remote branches. A deleted branch's tip is first saved under
-// refs/legit/deleted/<branch>/<time> (outside refs/legit/backups, which restores move HEAD to),
-// and every ref change is a compare-and-swap.
+// (one or several) and bring back, change what they track, and check out remote branches. A
+// deleted branch's tip is first saved under refs/legit/deleted/<branch>/<time> (outside
+// refs/legit/backups, which restores move HEAD to), and every ref change is a compare-and-swap.
 
-import type { CreateBranchRequest, DeletedBranch, OpResult, RemoteBranchInfo } from '../shared/types.ts';
+import type { CreateBranchRequest, DeleteBranchesResult, DeletedBranch, OpResult, RemoteBranchInfo } from '../shared/types.ts';
 import { GitError } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
@@ -128,26 +128,70 @@ async function checkedOutIn(repo: Repo, branch: string): Promise<string | null> 
 /** Delete a local branch, after saving its tip under refs/legit/deleted/<branch>/<time>. */
 export function deleteBranch(repo: Repo, req: { branch: string }): Promise<OpResult> {
   return guarded(repo, async () => {
-    const name = req.branch;
-    const ref = `refs/heads/${name}`;
-    const tip = name && (await sha(repo, ref));
-    if (!tip) throw new GitError(`No local branch named ${name}.`);
-    if ((await repo.currentBranch()) === name) throw new GitError(`You're on ${name}; switch to another branch to delete it.`);
-    const other = await checkedOutIn(repo, name);
-    if (other) throw new GitError(`${name} is checked out in ${other}, so it can't be deleted. Nothing was changed.`);
-
-    const saved = `${DELETED}/${name}/${uniqueTime()}`;
-    await repo.git.run(['update-ref', '-m', `legit: backup before deleting ${name}`, saved, tip, '']);
-    const r = await repo.git.run(['update-ref', '-m', 'legit: delete branch', '-d', ref, tip], { allowFail: true });
-    if (r.code !== 0) {
-      await repo.git.run(['update-ref', '-d', saved, tip], { allowFail: true });
-      throw new GitError(`${name} changed while deleting it; nothing was changed. ${r.err.trim()}`);
-    }
-    // Like `git branch -D`: a later branch of the same name shouldn't inherit its upstream.
-    await repo.git.run(['config', '--remove-section', `branch.${name}`], { allowFail: true });
-    repo.history.delete(name);
+    await deleteOne(repo, req.branch, await repo.currentBranch());
     await pruneRefs(repo.git);
   });
+}
+
+/** A branch left alone: the message says why in full, `why` in a few words. */
+class Refused extends GitError {
+  why: string;
+  constructor(message: string, why: string) {
+    super(message);
+    this.why = why;
+  }
+}
+
+async function deleteOne(repo: Repo, name: string, current: string | null) {
+  const ref = `refs/heads/${name}`;
+  const tip = name && (await sha(repo, ref));
+  if (!tip) throw new Refused(`No local branch named ${name}.`, 'no such branch');
+  if (current === name) throw new Refused(`You're on ${name}; switch to another branch to delete it.`, "you're on it");
+  const other = await checkedOutIn(repo, name);
+  if (other) throw new Refused(`${name} is checked out in ${other}, so it can't be deleted. Nothing was changed.`, `checked out in ${other}`);
+
+  const saved = `${DELETED}/${name}/${uniqueTime()}`;
+  await repo.git.run(['update-ref', '-m', `legit: backup before deleting ${name}`, saved, tip, '']);
+  const r = await repo.git.run(['update-ref', '-m', 'legit: delete branch', '-d', ref, tip], { allowFail: true });
+  if (r.code !== 0) {
+    await repo.git.run(['update-ref', '-d', saved, tip], { allowFail: true });
+    throw new Refused(`${name} changed while deleting it; nothing was changed. ${r.err.trim()}`, 'it changed meanwhile');
+  }
+  // Like `git branch -D`: a later branch of the same name shouldn't inherit its upstream.
+  await repo.git.run(['config', '--remove-section', `branch.${name}`], { allowFail: true });
+  repo.history.delete(name);
+}
+
+/** Run `one` on each item, keeping those it refused with why; refused when it refuses them all. */
+async function each(items: unknown, one: (item: string) => Promise<string>, what: string, label = (item: string) => item) {
+  const list = Array.isArray(items) ? [...new Set(items.filter((x): x is string => typeof x === 'string' && !!x))] : [];
+  if (!list.length) throw new GitError(`Pick the ${what} to delete.`);
+  const deleted: string[] = [];
+  const skipped: DeleteBranchesResult['skipped'] = [];
+  for (const item of list) {
+    try {
+      deleted.push(await one(item));
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      skipped.push({ name: label(item), why: e.why });
+    }
+  }
+  if (!deleted.length) throw new GitError(`Nothing was deleted: ${skipped.map((s) => `${s.name} (${s.why})`).join(', ')}.`);
+  return { deleted, skipped };
+}
+
+/**
+ * Delete several local branches, each as `deleteBranch` does. The current one and those checked
+ * out in another worktree are skipped, saying why.
+ */
+export async function deleteBranches(repo: Repo, req: { branches: string[] }): Promise<DeleteBranchesResult> {
+  let result: Pick<DeleteBranchesResult, 'deleted' | 'skipped'> = { deleted: [], skipped: [] };
+  const done = await guarded(repo, async () => {
+    const current = await repo.currentBranch();
+    result = await each(req.branches, async (name) => (await deleteOne(repo, name, current), name), 'branches');
+    await pruneRefs(repo.git);
+  });
+  return { ...done, ...result };
 }
 
 /** Remote names, longest first (a remote's name can contain a slash). */
@@ -168,27 +212,44 @@ async function parseRemoteRef(repo: Repo, ref: string) {
  */
 export function deleteRemoteBranch(repo: Repo, req: { ref: string }): Promise<OpResult> {
   return guarded(repo, async () => {
-    const parsed = await parseRemoteRef(repo, req.ref);
-    if (!parsed) throw new GitError(`${req.ref} is not a remote branch.`);
-    const { remote, branch } = parsed;
-    const tip = await sha(repo, req.ref);
-    if (!tip) throw new GitError(`There's no ${remote}/${branch} here; fetch first. Nothing was deleted.`);
-    const saved = `${DELETED}/${branch}/${uniqueTime()}-${remote.replace(/[^\w-]+/g, '-')}`;
-    await repo.git.run(['update-ref', '-m', `legit: backup before deleting ${remote}/${branch}`, saved, tip, '']);
-    const r = await repo.git.run(
-      ['push', `--force-with-lease=refs/heads/${branch}:${tip}`, remote, `:refs/heads/${branch}`],
-      { allowFail: true, timeout: 120_000 },
-    );
-    if (r.code !== 0) {
-      await repo.git.run(['update-ref', '-d', saved, tip], { allowFail: true });
-      throw new GitError(
-        /stale info/i.test(r.err)
-          ? `${remote}/${branch} has commits you haven't fetched, so it wasn't deleted. Fetch and look at them first.\n${r.err.trim()}`
-          : `Couldn't delete ${remote}/${branch}; nothing was deleted.\n${r.err.trim()}`,
-      );
-    }
+    await deleteRemoteOne(repo, req.ref);
     await pruneRefs(repo.git);
   });
+}
+
+/** Delete several branches on their remotes, each as `deleteRemoteBranch` does; those refused are skipped, saying why. */
+export async function deleteRemoteBranches(repo: Repo, req: { refs: string[] }): Promise<DeleteBranchesResult> {
+  let result: Pick<DeleteBranchesResult, 'deleted' | 'skipped'> = { deleted: [], skipped: [] };
+  const done = await guarded(repo, async () => {
+    result = await each(req.refs, (ref) => deleteRemoteOne(repo, ref), 'remote branches', (ref) => ref.replace(/^refs\/remotes\//, ''));
+    await pruneRefs(repo.git);
+  });
+  return { ...done, ...result };
+}
+
+/** Returns `<remote>/<branch>`. */
+async function deleteRemoteOne(repo: Repo, ref: string): Promise<string> {
+  const parsed = await parseRemoteRef(repo, ref);
+  if (!parsed) throw new Refused(`${ref} is not a remote branch.`, 'not a remote branch');
+  const { remote, branch } = parsed;
+  const tip = await sha(repo, ref);
+  if (!tip) throw new Refused(`There's no ${remote}/${branch} here; fetch first. Nothing was deleted.`, 'not fetched');
+  const saved = `${DELETED}/${branch}/${uniqueTime()}-${remote.replace(/[^\w-]+/g, '-')}`;
+  await repo.git.run(['update-ref', '-m', `legit: backup before deleting ${remote}/${branch}`, saved, tip, '']);
+  const r = await repo.git.run(
+    ['push', `--force-with-lease=refs/heads/${branch}:${tip}`, remote, `:refs/heads/${branch}`],
+    { allowFail: true, timeout: 120_000 },
+  );
+  if (r.code !== 0) {
+    await repo.git.run(['update-ref', '-d', saved, tip], { allowFail: true });
+    throw /stale info/i.test(r.err)
+      ? new Refused(
+          `${remote}/${branch} has commits you haven't fetched, so it wasn't deleted. Fetch and look at them first.\n${r.err.trim()}`,
+          "it has commits you haven't fetched",
+        )
+      : new Refused(`Couldn't delete ${remote}/${branch}; nothing was deleted.\n${r.err.trim()}`, 'the push failed');
+  }
+  return `${remote}/${branch}`;
 }
 
 /**

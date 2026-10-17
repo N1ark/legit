@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { chmodSync } from 'node:fs';
 import { test } from 'node:test';
 import {
-  checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
-  setUpstream, unsetUpstream,
+  checkoutRemote, createBranch, deleteBranch, deleteBranches, deleteRemoteBranch, deleteRemoteBranches, deletedBranches, remoteBranches,
+  renameBranch, restoreBranch, setUpstream, unsetUpstream,
 } from '../src/server/branches.ts';
 import { Repo } from '../src/server/repo.ts';
 import { setup } from './util.ts';
@@ -102,6 +102,59 @@ test('delete a branch: refuses the current one, saves the tip, and can bring it 
   git('worktree', 'add', '-q', wt, 'feature-old');
   await assert.rejects(deleteBranch(repo, { branch: 'feature-old' }), /checked out in/);
   assert.equal(git('rev-parse', 'feature-old'), tip);
+});
+
+test('delete several branches: the current one and worktrees are skipped, the rest kept under Recently deleted', async () => {
+  commit('base', { f: '1\n' });
+  const tips: Record<string, string> = {};
+  for (const name of ['a', 'b', 'c', 'held']) {
+    git('switch', '-q', '-c', name, 'main');
+    tips[name] = commit(`work on ${name}`, { [name]: '1\n' });
+  }
+  git('switch', '-q', 'main');
+  const wt = t.tmp('legit-wt-');
+  git('worktree', 'add', '-q', wt, 'held');
+  const repo = await Repo.open(dir());
+
+  const r = await deleteBranches(repo, { branches: ['a', 'main', 'b', 'held', 'nope', 'a'] });
+  assert.deepEqual(r.deleted, ['a', 'b']);
+  assert.deepEqual(r.skipped, [
+    { name: 'main', why: "you're on it" },
+    { name: 'held', why: `checked out in ${t.gitIn(wt, 'rev-parse', '--show-toplevel')}` },
+    { name: 'nope', why: 'no such branch' },
+  ]);
+  assert.equal(r.state.branch, 'main');
+  assert.equal(git('branch', '--list', 'a', 'b'), '');
+  assert.equal(git('rev-parse', 'c'), tips.c);
+  assert.equal(git('rev-parse', 'held'), tips.held);
+  const deleted = await deletedBranches(repo);
+  assert.deepEqual(deleted.map((d) => [d.name, d.sha]).sort(), [['a', tips.a], ['b', tips.b]]);
+  await restoreBranch(repo, { ref: deleted.find((d) => d.name === 'a')!.ref });
+  assert.equal(git('rev-parse', 'a'), tips.a);
+
+  // Nothing deletable: refused, saying why for each.
+  await assert.rejects(deleteBranches(repo, { branches: ['main', 'held'] }), /Nothing was deleted: main \(you're on it\), held \(checked out in/);
+  await assert.rejects(deleteBranches(repo, { branches: [] }), /Pick the branches/);
+});
+
+test('delete several branches on their remotes: one that moved since the fetch is skipped', async () => {
+  commit('base', { f: '1\n' });
+  const remote = t.remote();
+  git('push', '-q', '-u', 'origin', 'main');
+  git('push', '-q', 'origin', 'main:x', 'main:y', 'main:z');
+  git('fetch', '-q');
+  const other = t.tmp('legit-other-');
+  t.gitIn(other, 'clone', '-q', remote, '.');
+  t.gitIn(other, 'switch', '-q', 'z');
+  t.gitIn(other, 'commit', '-q', '--allow-empty', '-m', 'their work');
+  t.gitIn(other, 'push', '-q', 'origin', 'z');
+  const repo = await Repo.open(dir());
+
+  const r = await deleteRemoteBranches(repo, { refs: ['refs/remotes/origin/x', 'refs/remotes/origin/y', 'refs/remotes/origin/z'] });
+  assert.deepEqual(r.deleted, ['origin/x', 'origin/y']);
+  assert.deepEqual(r.skipped, [{ name: 'origin/z', why: "it has commits you haven't fetched" }]);
+  assert.equal(t.gitIn(remote, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'), 'main\nz');
+  assert.deepEqual((await deletedBranches(repo)).map((d) => [d.name, d.remote]).sort(), [['x', 'origin'], ['y', 'origin']]);
 });
 
 test('remote branches: list the untracked ones, check one out, delete one only as last seen', async () => {
