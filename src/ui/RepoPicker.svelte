@@ -7,6 +7,7 @@
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { invoke } from './lib/desktop.ts';
+  import { startCursor } from './lib/picker.ts';
   import { listWorktrees, newWorktree, openWorktree, removeWorktree } from './lib/worktrees.svelte.ts';
 
   interface RecentRepo {
@@ -17,17 +18,21 @@
     current: boolean;
   }
 
+  /** `field` is which of the row's keys the filter matched, `indices` the characters within it. */
   type Row =
-    | { kind: 'worktree'; w: WorktreeInfo; indices: number[] }
-    | { kind: 'new' }
-    | { kind: 'recent'; r: RecentRepo; indices: number[] }
-    | { kind: 'open' };
+    | { kind: 'worktree'; w: WorktreeInfo; score: number; field: number; indices: number[] }
+    | { kind: 'new'; score?: undefined }
+    | { kind: 'recent'; r: RecentRepo; score: number; field: number; indices: number[] }
+    | { kind: 'open'; score?: undefined };
 
   let open = $state(false);
   let list = $state<RecentRepo[] | null>(null);
   let trees = $state<WorktreeInfo[] | null>(null);
   let filter = $state('');
-  let active = $state(0);
+  /** The row arrowed or hovered to; until then the cursor is on the best match. */
+  let picked = $state<number | null>(null);
+  /** Enter pressed before the lists loaded: choose once they have. */
+  let pending = false;
   let button = $state<HTMLButtonElement>();
   let listEl = $state<HTMLElement>();
 
@@ -36,14 +41,21 @@
     // A repository without other worktrees only offers to add one.
     if (trees && trees.length > 1) {
       const keys = [(w: WorktreeInfo) => w.name, (w: WorktreeInfo) => w.branch ?? '', (w: WorktreeInfo) => w.short];
-      for (const { item, indices } of rank(trees, filter, { keys })) out.push({ kind: 'worktree', w: item, indices });
+      for (const { item, ...m } of rank(trees, filter, { keys })) out.push({ kind: 'worktree', w: item, ...m });
     }
     out.push({ kind: 'new' });
     if (!IS_TAURI) return out;
-    for (const { item, indices } of rank(list ?? [], filter, { keys: [(r) => r.name, (r) => r.short] })) out.push({ kind: 'recent', r: item, indices });
+    for (const { item, ...m } of rank(list ?? [], filter, { keys: [(r) => r.name, (r) => r.short] })) out.push({ kind: 'recent', r: item, ...m });
     out.push({ kind: 'open' });
     return out;
   });
+
+  const opens = (r: Row) => (r.kind === 'worktree' && !r.w.current && !r.w.missing) || (r.kind === 'recent' && !r.r.current);
+  // With nothing matching, a filter in the app is more likely a repository to open than a branch.
+  const active = $derived(
+    picked === null ? startCursor(rows, opens, IS_TAURI && filter.trim() ? rows.length - 1 : 0) : Math.min(picked, rows.length - 1),
+  );
+  const loading = $derived(trees === null || (IS_TAURI && list === null));
   const shownTrees = $derived(rows.filter((r) => r.kind === 'worktree').length);
   const shownRecent = $derived(rows.filter((r) => r.kind === 'recent').length);
 
@@ -55,12 +67,15 @@
     if (recent.status === 'rejected') toast.error(recent.reason);
     list = recent.status === 'fulfilled' ? recent.value : [];
     trees = worktrees.status === 'fulfilled' ? worktrees.value : [];
+    if (pending && open) choose(rows[active]);
+    pending = false;
   }
 
   export function show() {
     open = true;
     filter = '';
-    active = 0;
+    picked = null;
+    pending = false;
     load();
   }
 
@@ -105,11 +120,12 @@
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const n = rows.length;
-      active = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-      listEl?.querySelector(`[data-row="${active}"]`)?.scrollIntoView({ block: 'nearest' });
+      picked = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      listEl?.querySelector(`[data-row="${picked}"]`)?.scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      choose(rows[active]);
+      if (loading && picked === null) pending = true;
+      else choose(rows[active]);
     }
   }
 </script>
@@ -136,7 +152,7 @@
     <div class="panel">
       <input
         bind:value={filter}
-        oninput={() => (active = 0)}
+        oninput={() => (picked = null)}
         {onkeydown}
         placeholder={IS_TAURI ? 'Filter repositories and worktrees…' : 'Filter worktrees…'}
         spellcheck="false"
@@ -170,14 +186,18 @@
             aria-disabled={off}
             data-row={k}
             onclick={() => choose(r)}
-            onmousemove={() => (active = k)}
+            onmousemove={() => (picked = k)}
           >
             {#if r.kind === 'worktree'}
               {@const w = r.w}
               <span class="check">{#if w.current}<Check weight="bold" />{/if}</span>
-              <span class="name" class:gone={w.missing}><Highlight text={w.name} indices={r.indices} /></span>
-              <span class="branch mono">{w.branch ?? `detached @ ${w.head ? shortSha(w.head) : '?'}`}</span>
-              <span class="path muted" title={w.path}>{w.missing ? 'missing' : w.short}</span>
+              <span class="name" class:gone={w.missing}><Highlight text={w.name} indices={r.field === 0 ? r.indices : []} /></span>
+              <span class="branch mono">
+                {#if w.branch}<Highlight text={w.branch} indices={r.field === 1 ? r.indices : []} />{:else}detached @ {w.head ? shortSha(w.head) : '?'}{/if}
+              </span>
+              <span class="path muted" title={w.path}>
+                {#if w.missing}missing{:else}<Highlight text={w.short} indices={r.field === 2 ? r.indices : []} />{/if}
+              </span>
               {#if w.locked !== null}
                 <span class="lock muted" title="Locked{w.locked ? `: ${w.locked}` : ''}"><LockSimple /></span>
               {:else if !w.main && !w.current}
@@ -194,8 +214,8 @@
             {:else if r.kind === 'recent'}
               {@const repo = r.r}
               <span class="check">{#if repo.current}<Check weight="bold" />{/if}</span>
-              <span class="name"><Highlight text={repo.name} indices={r.indices} /></span>
-              <span class="path muted" title={repo.path}>{repo.short}</span>
+              <span class="name"><Highlight text={repo.name} indices={r.field === 0 ? r.indices : []} /></span>
+              <span class="path muted" title={repo.path}><Highlight text={repo.short} indices={r.field === 1 ? r.indices : []} /></span>
               <span class="forget">
                 <IconButton label="Remove from the list" size="sm" onclick={(e) => (e.stopPropagation(), forget(repo))}>
                   <X />

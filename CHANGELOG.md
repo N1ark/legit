@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- ⌘T: ↵ opens the repository or worktree your filter matches best, rather than creating a worktree.
+
 ## 0.3.0 — 2026-10-13
 
 - Worktrees: switch between a repo's worktrees from the repo name in the header, create one for a branch, and remove one.

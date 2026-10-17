@@ -12,8 +12,8 @@ legit [path]          # opens the repo at path (default: .) in Legit.app
 
 `legit` opens the app when it's installed and falls back to the browser otherwise (`--browser` forces
 the browser; `--port N` and `--no-open` apply there). The app is a single window showing one repo at a time. Click
-the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the last 30 you opened (filter them, remove
-one from the list) and **Open Repository…** for any other, under the repo's own worktrees. **File ▸ Open Recent**, **File ▸ Open Repository…**
+the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the last 30 you opened (filter them, and
+<kbd>↵</kbd> opens the best match; remove one from the list) and **Open Repository…** for any other, under the repo's own worktrees. **File ▸ Open Recent**, **File ▸ Open Repository…**
 (<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Switching is refused, saying
 why, while an operation you started is still running (a fetch you asked for included; a background fetch is simply
 dropped). Coming back to a repo finds it as
