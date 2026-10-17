@@ -1,11 +1,11 @@
 <script lang="ts">
   import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu } from 'purr';
   import { tick } from 'svelte';
-  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, CopySimple, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Trash, Users } from 'purr/icons';
+  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, CopySimple, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Stack, Trash, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import type { CommitInfo } from '../shared/types.ts';
   import Markdown from './Markdown.svelte';
-  import { copyToBranch, newBranch } from './lib/branches.svelte.ts';
+  import { copyToBranch, newBranch, rebuildOn } from './lib/branches.svelte.ts';
 
   let list = $state<HTMLOListElement>();
 
@@ -38,6 +38,23 @@
     };
   }
 
+  /** Make the current branch another one plus these commits, picked from the branch list. */
+  function rebuildEntry(commits: CommitInfo[]) {
+    const merge = commits.some((c) => c.merge);
+    const here = app.repo?.branch;
+    return {
+      label: `Rebuild ${here ?? 'branch'} on…`,
+      icon: Stack,
+      disabled: app.busy || !!app.repo?.blocked || merge || !here,
+      note: merge
+        ? "Merges can't be replayed."
+        : !here
+          ? 'HEAD is detached.'
+          : `With only ${commits.length > 1 ? `these ${commits.length} commits` : 'this commit'} on top; the others are dropped`,
+      run: () => rebuildOn(commits.map((c) => c.sha)),
+    };
+  }
+
   function oncontextmenu(e: MouseEvent, sha: string) {
     e.preventDefault();
     if (app.selected.includes(sha) && app.selected.length > 1) {
@@ -52,6 +69,7 @@
           run: () => app.squash(app.selection),
         },
         copyEntry(app.selection),
+        rebuildEntry(app.selection),
         'separator',
         {
           label: `Drop ${app.selection.length} commits`,
@@ -91,6 +109,7 @@
         run: () => newBranch(c.sha, `"${c.subject}"`),
       },
       copyEntry([c]),
+      rebuildEntry([c]),
       'separator',
       { label: 'Copy hash', icon: Copy, run: () => app.copy(c.sha, shortSha(c)) },
       { label: 'Copy short hash', icon: Hash, run: () => app.copy(shortSha(c)) },

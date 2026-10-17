@@ -3,8 +3,9 @@
 // Switching with uncommitted changes asks first, like GitHub Desktop: leave them on the branch
 // being left (stashed) or bring them along (`git switch`, which refuses if they'd be
 // overwritten). The question is asked before the request, so no lock is held while waiting.
-import { dialog, promptText, toast } from 'purr';
-import { app, shortSha } from './app.svelte.ts';
+import { confirmAction, dialog, promptText, toast } from 'purr';
+import { app, request, shortSha } from './app.svelte.ts';
+import type { RebuildPlan } from '../../shared/types.ts';
 
 export type Choice = 'leave' | 'bring';
 
@@ -29,16 +30,49 @@ class SwitchQuestion {
 
 export const question = new SwitchQuestion();
 
-/** Commits waiting for the branch picker to pick the branch to copy them to (see `copyToBranch`). */
-class CopyRequest {
-  shas = $state<string[] | null>(null);
+/** Commits waiting for the branch picker to pick a branch: to copy them to, or to rebuild this one on. */
+class CommitsRequest {
+  pending = $state<{ shas: string[]; mode: 'copy' | 'rebuild' } | null>(null);
 }
 
-export const copyRequest = new CopyRequest();
+export const commitsRequest = new CommitsRequest();
 
 /** Open the branch picker to cherry-pick `shas` onto another branch. */
 export function copyToBranch(shas: string[]) {
-  copyRequest.shas = shas;
+  commitsRequest.pending = { shas, mode: 'copy' };
+}
+
+/** Open the branch picker to rebuild the current branch on another from `shas` (see `rebuild`). */
+export function rebuildOn(shas: string[]) {
+  if (!app.repo?.branch) return toast.error('HEAD is detached: switch to a branch first.');
+  if (!shas.length) return toast.error('Select the commits to keep first.');
+  commitsRequest.pending = { shas, mode: 'rebuild' };
+}
+
+/**
+ * Make the current branch `base` plus `shas`, dropping its other commits, once confirmed with
+ * how many are kept and dropped.
+ */
+export async function rebuild(shas: string[], base: string): Promise<void> {
+  const here = app.repo?.branch;
+  let plan: RebuildPlan;
+  try {
+    plan = await request<RebuildPlan>(`/api/rebuild/plan?branch=${encodeURIComponent(base)}&shas=${shas.join(',')}`);
+  } catch (e) {
+    return void toast.error(e);
+  }
+  if (plan.unchanged) return void toast(`${here} already is ${base} plus ${plan.kept === 1 ? 'that commit' : 'those commits'}.`);
+  const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
+  const there = plan.there ? ` ${commits(plan.there)} of those ${plan.there === 1 ? 'is' : 'are'} already on ${base}.` : '';
+  const ok = await confirmAction(`Rebuild ${here} on ${base}?`, {
+    description:
+      `${here} becomes ${base} plus ${commits(plan.kept)}, in their order.` +
+      (plan.dropped ? ` Its ${plan.dropped === 1 ? 'other commit is' : `${plan.dropped} other commits are`} dropped.` : '') +
+      `${there} ⌘Z undoes it.`,
+    confirmLabel: `Keep ${commits(plan.kept)}${plan.dropped ? `, drop ${plan.dropped}` : ''}`,
+    danger: plan.dropped > 0,
+  });
+  if (ok) await app.sync('rebuild', { shas, branch: base }, undefined, true);
 }
 
 /**

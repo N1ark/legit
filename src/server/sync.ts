@@ -1,6 +1,6 @@
 // Syncing with other branches and remotes: fetch, pull (fast-forward, rebase or merge), merging
-// another branch in or rebasing onto it, and finishing or aborting a merge, rebase, cherry-pick
-// or revert that stopped halfway.
+// another branch in or rebasing onto it (or rebuilding on it from some commits), and finishing or
+// aborting a merge, rebase, cherry-pick or revert that stopped halfway.
 //
 // Fast-forwards and rebases happen in memory and move HEAD once, carrying uncommitted changes
 // along like `git switch` (git refuses, changing nothing, if they'd be overwritten). A rebase
@@ -8,13 +8,13 @@
 // it only starts from a clean working tree, so aborting it can always get back.
 
 import { existsSync } from 'node:fs';
-import { lstat, readFile, stat, unlink } from 'node:fs/promises';
+import { lstat, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { CommitDiff, Conflict, ConflictFile, EditStop, RepoState, SyncResult } from '../shared/types.ts';
+import type { CommitDiff, Conflict, ConflictFile, EditStop, RebuildPlan, RepoState, SyncResult } from '../shared/types.ts';
 import { DIFF_ARGS, parseDiff } from './diff.ts';
-import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
+import { type Git, GitError, type RawCommit, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
@@ -370,7 +370,20 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   if (commits.some((c, i) => i > 0 && c.parents[0] !== commits[i - 1].sha)) {
     throw new GitError(`The commits only on ${here} aren't a straight line; nothing was changed.`);
   }
+  const words = { doing: `Rebasing ${here} onto ${t.name}`, done: `Rebased ${here} onto ${t.name}.` };
+  const r = await replayOnto(repo, commits, target);
+  if (r.conflict) return rebaseStopping(repo, head, target, t, words, r.conflict);
+  await carry(repo, head, r.tip, t.label);
+  const skipped = r.dropped ? ` (${plural(r.dropped, 'commit')} already there ${r.dropped === 1 ? 'was' : 'were'} dropped)` : '';
+  return done(repo, `Rebased ${plural(r.out.length, 'commit')} of ${here} onto ${t.name}${skipped}.`, [r.tip], r.renamed);
+}
 
+/**
+ * `commits` replayed onto `target` in memory, through merge-tree, and checked. Commits that become
+ * empty are dropped, as `git rebase` does; at the first that conflicts, `conflict` says why.
+ */
+async function replayOnto(repo: Repo, commits: RawCommit[], target: string) {
+  const git = repo.git;
   const committer = await git.committerIdent();
   const merger = git.merger();
   let parent = target;
@@ -404,38 +417,54 @@ async function rebase(repo: Repo, head: string, target: string, t: Target, here:
   } finally {
     merger.close();
   }
-  if (conflict) return rebaseStopping(repo, head, target, t, here, conflict);
-  if (out.length) await repo.verify(target, parent, out);
-  await carry(repo, head, parent, t.label);
-  const skipped = dropped ? ` (${plural(dropped, 'commit')} already there ${dropped === 1 ? 'was' : 'were'} dropped)` : '';
-  return done(repo, `Rebased ${plural(out.length, 'commit')} of ${here} onto ${t.name}${skipped}.`, [parent], renamed);
+  if (!conflict && out.length) await repo.verify(target, parent, out);
+  return { tip: parent, out, renamed, dropped, conflict };
 }
 
 /**
  * A rebase that conflicts, as a real `git rebase`: it stops at each commit that conflicts for the
  * conflict view to resolve, then continues (or aborts, back to where it was). Like a merge, it only
  * starts from a working tree without changes to tracked files, so aborting gets back exactly.
+ * With `todo`, it's a `git rebase -i` that picks only those commits.
  */
-async function rebaseStopping(repo: Repo, head: string, target: string, t: Target, here: string, conflict: string): Promise<SyncResult> {
+async function rebaseStopping(
+  repo: Repo, head: string, target: string, t: Target, words: { doing: string; done: string }, conflict: string, todo?: RawCommit[],
+): Promise<SyncResult> {
   const git = repo.git;
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
   if (status) {
     throw new GitError(
-      `Rebasing ${here} onto ${t.name} conflicts. ${conflict} Resolving that means stopping at each conflicting commit, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
+      `${words.doing} conflicts. ${conflict} Resolving that means stopping at each conflicting commit, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
     );
   }
   await repo.backup(head, t.label);
-  const r = await git.run(
-    ['-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false', 'rebase', '--no-autosquash', '--no-fork-point', target],
-    { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } },
-  );
+  const file = todo ? join(tmpdir(), `legit-todo-${randomBytes(6).toString('hex')}`) : null;
+  let r: Awaited<ReturnType<Git['run']>>;
+  try {
+    if (file) await writeFile(file, todo!.map((c) => `pick ${c.sha}\n`).join(''));
+    r = await git.run(
+      [
+        '-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false',
+        ...(file ? ['-c', 'rebase.missingCommitsCheck=ignore', 'rebase', '-i', '--empty=drop'] : ['rebase']),
+        '--no-autosquash', '--no-fork-point', target,
+      ],
+      {
+        allowFail: true,
+        timeout: 600_000,
+        // The todo git writes is replaced by the picks.
+        env: { GIT_EDITOR: 'true', ...(file && { GIT_SEQUENCE_EDITOR: `cp '${file.replace(/'/g, "'\\''")}'` }) },
+      },
+    );
+  } finally {
+    if (file) await unlink(file).catch(() => {});
+  }
   const output = (r.err + r.out.toString('utf8')).trim();
   if (inProgress(git) === 'rebase') {
     const n = (await unmergedPaths(git)).size;
     return done(
       repo,
-      `Rebasing ${here} onto ${t.name} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.`,
+      `${words.doing} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.`,
     );
   }
   const after = await repo.head();
@@ -443,7 +472,91 @@ async function rebaseStopping(repo: Repo, head: string, target: string, t: Targe
     throw new GitError(after === head ? `Rebase failed; nothing was changed.\n${output}` : `Rebase failed.\n${output}`);
   }
   await repo.record({ label: t.label, before: head, after });
-  return done(repo, `Rebased ${here} onto ${t.name}.`, [after]);
+  return done(repo, words.done, [after]);
+}
+
+// ---- rebuild ----
+
+const isAncestor = async (git: Git, a: string, b: string) => (await git.run(['merge-base', '--is-ancestor', a, b], { allowFail: true })).code === 0;
+
+/**
+ * Rebuilding the current branch on `branch` from some of its commits: the commits picked that
+ * `branch` doesn't have, oldest first, and how many of the branch's own commits are dropped.
+ */
+async function planRebuild(repo: Repo, req: { shas: unknown; branch: unknown }) {
+  const git = repo.git;
+  const why = repo.blocked();
+  if (why) throw new GitError(why);
+  const here = await repo.currentBranch();
+  if (!here) throw new GitError('HEAD is detached; switch to a branch to rebuild it.');
+  const head = await repo.head();
+  if (!head) throw new GitError('This branch has no commits yet.');
+  const t: Target = { ...(await branchRef(git, req.branch)), how: 'rebase', label: 'rebuild' };
+  if (t.ref === `refs/heads/${here}`) throw new GitError(`Pick another branch than ${here} to rebuild it on.`);
+  const target = await git.text(['rev-parse', '-q', '--verify', `${t.ref}^{commit}`], { allowFail: true });
+  if (!target) throw new GitError(`${t.name} doesn't exist; nothing was changed.`);
+  const shas = req.shas;
+  if (!Array.isArray(shas) || !shas.length || !shas.every((s) => typeof s === 'string' && /^[0-9a-f]{4,64}$/.test(s))) {
+    throw new GitError('Pick the commits to keep first.');
+  }
+  const full = await Promise.all(shas.map((s: string) => git.text(['rev-parse', '-q', '--verify', `${s}^{commit}`], { allowFail: true })));
+  if (full.some((s) => !s)) throw new GitError("Some of those commits don't exist (any more); refresh. Nothing was changed.");
+  const want = new Set(full);
+  const own = (await git.text(['rev-list', '--reverse', '--topo-order', '--parents', head, '--not', target]))
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split(' '));
+  if (own.length > MAX_REPLAY) {
+    throw new GitError(`${here} has ${own.length} commits ${t.name} doesn't, more than legit rebuilds at once. Nothing was changed.`);
+  }
+  const picked = own.filter((r) => want.has(r[0]));
+  const merge = picked.find((r) => r.length > 2);
+  if (merge) throw new GitError(`${merge[0].slice(0, 7)} is a merge, which can't be replayed onto ${t.name}. Nothing was changed.`);
+  // Picked commits that aren't the branch's own are on `branch` already, or not on this branch at all.
+  const ownShas = new Set(own.map((r) => r[0]));
+  const there = [...want].filter((s) => !ownShas.has(s));
+  for (const s of there) {
+    if (!(await isAncestor(git, s, head))) throw new GitError(`${s.slice(0, 7)} isn't on ${here}; refresh. Nothing was changed.`);
+  }
+  if (!picked.length) {
+    throw new GitError(
+      `${there.length === 1 ? 'That commit is' : 'Those commits are'} already on ${t.name}, so there's nothing to rebuild with. Nothing was changed.`,
+    );
+  }
+  const dropped = own.length - picked.length;
+  return {
+    head, here, target, t, there: there.length, dropped,
+    picks: await git.loadCommits(picked.map((r) => r[0])),
+    unchanged: !dropped && (await isAncestor(git, target, head)),
+  };
+}
+
+/** What rebuilding the current branch on `branch` from `shas` would keep and drop, for the confirmation. */
+export async function rebuildPlan(repo: Repo, req: { shas: unknown; branch: unknown }): Promise<RebuildPlan> {
+  await repo.idle();
+  const p = await planRebuild(repo, req);
+  return { base: p.t.name, kept: p.picks.length, there: p.there, dropped: p.dropped, unchanged: p.unchanged };
+}
+
+/**
+ * Make the current branch `branch` plus some of its commits, oldest first, dropping its others:
+ * a rebase onto `branch` of only those. In memory, carrying uncommitted changes along, or a
+ * `git rebase -i` picking them, which stops at each conflict.
+ */
+export function rebuildBranch(repo: Repo, req: { shas: string[]; branch: string }): Promise<SyncResult> {
+  return repo.exclusive(async () => {
+    const p = await planRebuild(repo, req);
+    const { here, t } = p;
+    if (p.unchanged) return done(repo, `${here} already is ${t.name} plus those commits; nothing was changed.`);
+    const words = { doing: `Rebuilding ${here} on ${t.name}`, done: `Rebuilt ${here} on ${t.name}.` };
+    const r = await replayOnto(repo, p.picks, p.target);
+    if (r.conflict) return rebaseStopping(repo, p.head, p.target, t, words, r.conflict, p.picks);
+    await carry(repo, p.head, r.tip, t.label);
+    const there = p.there + r.dropped;
+    const skipped = there ? ` (${plural(there, 'picked commit')} already there ${there === 1 ? 'was' : 'were'} left out)` : '';
+    const dropped = p.dropped ? `; ${plural(p.dropped, 'other commit')} dropped` : '';
+    return done(repo, `Rebuilt ${here} on ${t.name} with ${plural(r.out.length, 'commit')}${dropped}${skipped}.`, [r.tip], r.renamed);
+  });
 }
 
 /**

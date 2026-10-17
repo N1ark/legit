@@ -2,19 +2,20 @@
   // The branch list: local branches, a "Create branch" entry for a new name, remote branches
   // without a local one, and recently deleted branches. Type to filter, ↑/↓ and ↵, or right-click
   // a row for its menu. In merge or rebase mode it lists the branches to merge or rebase onto
-  // instead: local ones but the current one, and every remote one; in copy mode, the local ones to
-  // cherry-pick commits onto. The arrow on a branch lists its commits the current one doesn't have,
-  // to cherry-pick some here. A branch checked out in another worktree switches to that worktree.
+  // instead: local ones but the current one, and every remote one, as in rebuild mode (the default
+  // branch first); in copy mode, the local ones to cherry-pick commits onto. The arrow on a branch
+  // lists its commits the current one doesn't have, to cherry-pick some here. A branch checked out
+  // in another worktree switches to that worktree.
   import { Button, Highlight, IconButton, Kbd, Popover, formatRelative, menu, rank, toast, type MaybeEntry } from 'purr';
   import {
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, Copy, CopySimple,
-    FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, PencilSimple, Plus, Square, Trash,
+    FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, PencilSimple, Plus, Square, Stack, Trash,
   } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import {
-    copyRequest, deleteBranch, deleteRemoteBranch, newBranch, renameBranch, restoreBranch, switchOp,
+    commitsRequest, deleteBranch, deleteRemoteBranch, newBranch, rebuild, renameBranch, restoreBranch, switchOp,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
@@ -29,7 +30,7 @@
   /** Deleted branches shown while the filter is empty. */
   const DELETED_SHOWN = 8;
 
-  type Mode = 'switch' | 'merge' | 'rebase' | 'copy' | 'commits';
+  type Mode = 'switch' | 'merge' | 'rebase' | 'rebuild' | 'copy' | 'commits';
   let mode = $state<Mode>('switch');
   let open = $state(false);
   let local = $state<BranchInfo[] | null>(null);
@@ -40,7 +41,7 @@
   let button = $state<HTMLButtonElement>();
   let listEl = $state<HTMLElement>();
   let input = $state<HTMLInputElement>();
-  /** Commits to copy to the branch picked (copy mode). */
+  /** Commits to copy to the branch picked (copy mode), or to rebuild this one with on it (rebuild mode). */
   let copying = $state<string[]>([]);
   /** The branch whose commits are listed (commits mode), those commits, and the ones picked. */
   let browsing = $state<string | null>(null);
@@ -51,6 +52,8 @@
   const here = $derived(app.repo?.branch ?? null);
   const names = $derived(new Set((local ?? []).map((b) => b.name)));
 
+  const rowName = (r: Row) => (r.kind === 'local' ? r.b.name : r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : null);
+
   const rows = $derived.by((): Row[] => {
     if (!local) return [];
     const typed = filter.trim();
@@ -59,7 +62,8 @@
     if (mode === 'copy' || mode === 'commits') return out;
     if (mode !== 'switch') {
       for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) out.push({ kind: 'remote', b: item, indices });
-      return out;
+      const base = mode === 'rebuild' && !typed ? out.findIndex((r) => rowName(r) === app.repo?.base?.name) : -1;
+      return base > 0 ? [out[base], ...out.slice(0, base), ...out.slice(base + 1)] : out;
     }
     if (typed && !names.has(typed) && !/\s/.test(typed)) out.push({ kind: 'create', name: typed });
     for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) {
@@ -69,6 +73,8 @@
     for (const { item, indices } of typed ? gone : gone.slice(0, DELETED_SHOWN)) out.push({ kind: 'deleted', b: item, indices });
     return out;
   });
+  /** The default branch is listed first (and so picked by ↵) when rebuilding. */
+  const promoted = $derived(mode === 'rebuild' && !filter.trim() && !!rows[0] && rowName(rows[0]) === app.repo?.base?.name);
 
   const key = (r: Row) => (r.kind === 'create' ? `create:${r.name}` : r.kind === 'local' ? `local:${r.b.name}` : `${r.kind}:${r.b.ref}`);
   const HEADINGS: Partial<Record<Row['kind'], string>> = { remote: 'Remote branches', deleted: 'Recently deleted' };
@@ -97,10 +103,10 @@
     ]);
   }
 
-  /** Open the list to switch branch, or to pick one to merge or rebase onto (or to copy commits to). */
+  /** Open the list to switch branch, or to pick one to merge, rebase or rebuild onto (or to copy commits to). */
   export async function show(m: Mode = 'switch') {
     if (disabled) return;
-    if ((m === 'merge' || m === 'rebase') && !here) return toast.error('HEAD is detached: switch to a branch first.');
+    if ((m === 'merge' || m === 'rebase' || m === 'rebuild') && !here) return toast.error('HEAD is detached: switch to a branch first.');
     open = true;
     filter = '';
     await setMode(m);
@@ -116,13 +122,13 @@
     input?.focus();
   }
 
-  // Copy to branch… in the commit list opens the list to pick the branch.
+  // Copy to branch… and Rebuild on… in the commit list open the list to pick the branch.
   $effect(() => {
-    const shas = copyRequest.shas;
-    if (!shas) return;
-    copyRequest.shas = null;
-    copying = shas;
-    show('copy');
+    const req = commitsRequest.pending;
+    if (!req) return;
+    commitsRequest.pending = null;
+    copying = req.shas;
+    show(req.mode);
   });
 
   /** List `name`'s commits that the current branch doesn't have, to cherry-pick some. */
@@ -155,6 +161,9 @@
     if (mode === 'copy' && r.kind === 'local') {
       open = false;
       app.sync('copyTo', { shas: copying, branch: r.b.name }, undefined, true);
+    } else if (mode === 'rebuild' && (r.kind === 'local' || r.kind === 'remote')) {
+      open = false;
+      rebuild(copying, rowName(r)!);
     } else if (mode !== 'switch' && (r.kind === 'local' || r.kind === 'remote')) {
       open = false;
       app.sync(mode, { branch: r.kind === 'local' ? r.b.name : `${r.b.remote}/${r.b.name}` });
@@ -323,11 +332,13 @@
       ? 'Merge a branch'
       : mode === 'rebase'
         ? 'Rebase onto a branch'
-        : mode === 'copy'
-          ? 'Copy commits to a branch'
-          : mode === 'commits'
-            ? `Commits on ${browsing}`
-            : 'Branches'}
+        : mode === 'rebuild'
+          ? 'Rebuild on a branch'
+          : mode === 'copy'
+            ? 'Copy commits to a branch'
+            : mode === 'commits'
+              ? `Commits on ${browsing}`
+              : 'Branches'}
     onclose={() => (open = false)}
     width="min(560px, calc(100vw - 32px))"
     padding="var(--gap-4)"
@@ -339,6 +350,7 @@
           <IconButton label="Back to switching branches" size="sm" onclick={() => setMode('switch')}><ArrowLeft /></IconButton>
           {#if mode === 'merge'}<GitMerge /> Merge a branch into <b class="mono">{here}</b>
           {:else if mode === 'rebase'}<GitPullRequest /> Rebase <b class="mono">{here}</b> onto a branch
+          {:else if mode === 'rebuild'}<Stack /> Rebuild <b class="mono">{here}</b> on a branch with {copying.length === 1 ? '1 commit' : `${copying.length} commits`}
           {:else if mode === 'copy'}<CopySimple /> Copy {copying.length === 1 ? '1 commit' : `${copying.length} commits`} to a branch
           {:else}<GitBranch /> Commits on <b class="mono">{browsing}</b> that <b class="mono">{here}</b> doesn't have{/if}
         </div>
@@ -352,11 +364,13 @@
           ? 'Branch to merge…'
           : mode === 'rebase'
             ? 'Branch to rebase onto…'
-            : mode === 'copy'
-              ? 'Branch to copy to…'
-              : mode === 'commits'
-                ? 'Filter commits…'
-                : 'Switch to or create a branch…'}
+            : mode === 'rebuild'
+              ? 'Branch to rebuild on…'
+              : mode === 'copy'
+                ? 'Branch to copy to…'
+                : mode === 'commits'
+                  ? 'Filter commits…'
+                  : 'Switch to or create a branch…'}
         spellcheck="false"
         class="field-input mono"
       />
@@ -396,7 +410,7 @@
       {:else}
         <ol bind:this={listEl} role="listbox" aria-label="Branches">
           {#each rows as r, k (key(r))}
-            {#if HEADINGS[r.kind] && rows[k - 1]?.kind !== r.kind}
+            {#if HEADINGS[r.kind] && rows[k - 1]?.kind !== r.kind && !(promoted && k === 0)}
               <li class="heading muted" role="presentation">{HEADINGS[r.kind]}</li>
             {/if}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -425,6 +439,7 @@
                     <FolderSimple />{folder(b.worktree)}
                   </span>
                 {/if}
+                {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                 {#if b.track}<span class="track">{b.track}</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
@@ -433,6 +448,7 @@
                 <span class="check"><CloudArrowDown /></span>
                 <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                 <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
               {:else}
@@ -476,6 +492,13 @@
         <p class="foot muted">
           Cherry-picks them onto the branch without switching to it, in memory: refused, changing nothing, if anything conflicts (switch to
           it and cherry-pick there to resolve conflicts). <span class="mono">⌘Z</span> undoes it.
+        </p>
+      {:else if mode === 'rebuild'}
+        <p class="foot muted">
+          {here} becomes the branch picked plus the selected commits, oldest first; its other commits are dropped (it asks first, with how
+          many). In memory, with uncommitted changes coming along unless they'd be overwritten; if a commit conflicts, a real
+          <span class="mono">git rebase</span> of only those commits stops at each conflict for you to resolve.
+          <span class="mono">⌘Z</span> undoes it.
         </p>
       {:else if mode === 'merge'}
         <p class="foot muted">
@@ -593,6 +616,12 @@
   .track {
     font-size: var(--fs-xs);
     color: var(--warn);
+    flex-shrink: 0;
+  }
+
+  .default {
+    font-size: var(--fs-xs);
+    color: var(--theme2);
     flex-shrink: 0;
   }
 

@@ -40,6 +40,7 @@
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
   import { newWorktree } from './lib/worktrees.svelte.ts';
+  import { rebuildOn } from './lib/branches.svelte.ts';
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -58,6 +59,7 @@
     redo: () => (typing() ? document.execCommand('redo') : app.redo()),
     branch: (mode?: 'merge' | 'rebase') => branchPicker?.show(mode),
     rebaseOnBase: () => app.rebaseOnBase(),
+    rebuild: () => rebuildOn(app.selection.map((c) => c.sha)),
     newWorktree: () => newWorktree(),
     help: () => (help = true),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.

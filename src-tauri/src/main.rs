@@ -92,6 +92,7 @@ fn main() {
             "merge" => eval_focused(app, "window.__legit?.branch('merge')"),
             "rebase" => eval_focused(app, "window.__legit?.branch('rebase')"),
             "rebase-base" => eval_focused(app, "window.__legit?.rebaseOnBase()"),
+            "rebuild" => eval_focused(app, "window.__legit?.rebuild()"),
             "worktree" => eval_focused(app, "window.__legit?.newWorktree()"),
             "shortcuts" => eval_focused(app, "window.__legit?.help()"),
             _ => {}
@@ -561,6 +562,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, "branch", "Switch Branch…", true, None::<&str>)?,
             &MenuItem::with_id(app, "merge", "Merge a Branch…", true, None::<&str>)?,
             &MenuItem::with_id(app, "rebase", "Rebase on a Branch…", true, None::<&str>)?,
+            &MenuItem::with_id(app, "rebuild", "Rebuild on a Branch with the Selected Commits…", true, None::<&str>)?,
             &sep()?,
             &MenuItem::with_id(app, "rebase-base", "Rebase on the Default Branch", true, None::<&str>)?,
             &sep()?,

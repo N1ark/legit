@@ -386,6 +386,18 @@ export interface SyncResult extends OpResult {
   message: string;
 }
 
+/** What rebuilding the current branch on another from some of its commits would do. */
+export interface RebuildPlan {
+  /** The branch it's rebuilt on, e.g. origin/main. */
+  base: string;
+  /** Picked commits replayed on it, picked ones it already has, and the branch's other commits (dropped). */
+  kept: number;
+  there: number;
+  dropped: number;
+  /** The branch already is the base plus those commits. */
+  unchanged: boolean;
+}
+
 export interface CreateBranchRequest {
   name: string;
   /** Commit to start from; HEAD when absent. */
