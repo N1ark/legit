@@ -3,10 +3,10 @@
 // email to its account). Emails are only ever sent to api.github.com, and only for repos
 // hosted there. Results are cached on disk, so each email is looked up at most once a month.
 
-import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { githubToken } from './gh/client.ts';
 import type { Git } from './git.ts';
 
 type Entry = { url: string | null; at: number };
@@ -24,7 +24,6 @@ const GITHUB_REMOTE = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
 
 let cache: Promise<Map<string, Entry>> | null = null;
 let saveTimer: NodeJS.Timeout | undefined;
-let token: Promise<string | null> | null = null;
 /** Set when GitHub rate-limits us; lookups pause until then. */
 let limitedUntil = 0;
 
@@ -41,24 +40,6 @@ function saveCache(map: Map<string, Entry>) {
     await mkdir(dirname(CACHE_FILE), { recursive: true });
     await writeFile(CACHE_FILE, JSON.stringify(Object.fromEntries(map)));
   }, 500);
-}
-
-/** GITHUB_TOKEN / GH_TOKEN, else the gh CLI's login (read-only use: looking up commits). */
-function githubToken(): Promise<string | null> {
-  token ??= (async () => {
-    const env = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    if (env) return env;
-    for (const gh of ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh']) {
-      const t = await new Promise<string | null>((done) =>
-        execFile(gh, ['auth', 'token', '--hostname', 'github.com'], { timeout: 3000 }, (err, out) =>
-          done(err ? null : out.trim() || null),
-        ),
-      );
-      if (t) return t;
-    }
-    return null;
-  })();
-  return token;
 }
 
 /** owner/repo of the first github.com remote (origin preferred). */

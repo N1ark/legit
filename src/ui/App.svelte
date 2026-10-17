@@ -17,7 +17,7 @@
     type Binding,
   } from 'purr';
   import { ArrowUUpLeft, ArrowUUpRight, Gear, PencilSimpleLine, Warning } from 'purr/icons';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
   import StashPanel from './StashPanel.svelte';
@@ -35,7 +35,9 @@
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
+  import PrView from './gh/PrView.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
+  import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
@@ -76,15 +78,26 @@
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
-    const focus = () => app.refresh();
+    const focus = () => {
+      app.refresh();
+      gh.refreshIfOlder(30_000);
+    };
+    const poll = setInterval(() => gh.refreshIfOlder(60_000), 60_000);
     const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
     window.addEventListener('pagehide', leave);
     return () => {
+      clearInterval(poll);
       events.close();
       window.removeEventListener('focus', focus);
       window.removeEventListener('pagehide', leave);
     };
+  });
+
+  // The branch's pull request follows the branch, its tip and what was last fetched of it.
+  $effect(() => {
+    void [app.repo?.branch, app.repo?.head, app.repo?.push?.tip];
+    if (app.repo) untrack(() => gh.refresh());
   });
 
   type Action =
@@ -223,7 +236,11 @@
       {#if finder.open}
         <div class="find"><div class="bar"><FindBar /></div></div>
       {/if}
-      {#if app.stash}
+      {#if gh.view?.kind === 'pr'}
+        {#key gh.view.number}
+          <PrView number={gh.view.number} />
+        {/key}
+      {:else if app.stash}
         {#key app.stash.sha}
           <StashView stash={app.stash} />
         {/key}

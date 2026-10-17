@@ -8,6 +8,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
 import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
+import './gh/mock/index.ts';
+import { githubRoute } from './gh/routes.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
   deleteBranches, deleteRemoteBranches, remotes, setUpstream, unsetUpstream,
@@ -229,6 +231,12 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
       const { emails } = await readBody(req);
       return send(res, 200, await avatars(repo.git, Array.isArray(emails) ? emails.slice(0, 2000) : []));
+    }
+    // /api/gh/<name>: GitHub, through server/gh/routes.ts.
+    const gh = /^\/api\/gh\/(\w+)$/.exec(path)?.[1];
+    if (gh) {
+      if (req.method === 'POST' && req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
+      return send(res, 200, (await githubRoute(repo, req.method ?? 'GET', gh, req.method === 'POST' ? await readBody(req) : query)) ?? null);
     }
     if (path === '/api/work') {
       const changes = await repo.work();

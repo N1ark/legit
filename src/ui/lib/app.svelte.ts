@@ -2,6 +2,7 @@ import { IS_TAURI, copyText, toast } from 'purr';
 import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
+import type { GhView } from './github.svelte.ts';
 import type {
   CommitInfo, DiffSummary, DisplaySettings, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
   Stashes, SyncResult,
@@ -367,6 +368,7 @@ class App {
     const c = this.bySha.get(sha);
     if (!c) return;
     this.stash = null;
+    this.ghView = null;
     const anchor = this.anchor ? this.bySha.get(this.anchor) : undefined;
     if (mode === 'toggle' && !c.side) {
       this.selected = this.selected.includes(sha)
@@ -390,6 +392,7 @@ class App {
   /** Move selection up (-1) or down (+1). */
   step(dir: number, extend = false) {
     this.stash = null;
+    this.ghView = null;
     const cur = this.anchor ?? this.selected[0];
     // "Uncommitted changes" sits above the newest commit.
     if (cur === WORK) {
@@ -529,6 +532,7 @@ class App {
 
   selectWork() {
     this.stash = null;
+    this.ghView = null;
     this.selected = [WORK];
     this.anchor = WORK;
   }
@@ -557,6 +561,8 @@ class App {
 
   /** The stash shown in place of the selected commit, if any (from the stashes panel). */
   stash = $state<ShownStash | null>(null);
+  /** A GitHub view shown in place of a commit (see lib/github.svelte.ts); picking a commit leaves it. */
+  ghView = $state<GhView | null>(null);
 
   undo = () => this.op('undo');
   redo = () => this.op('redo');
