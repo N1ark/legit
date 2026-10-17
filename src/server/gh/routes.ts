@@ -6,6 +6,7 @@ import { ghRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import { notificationsGet, notificationsPost } from './notifications.ts';
 import { prForBranch } from './pulls.ts';
+import { stackGet, stackPost } from './stack.ts';
 import type { GithubStatus } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
@@ -28,8 +29,15 @@ const core: Record<string, GetRoute> = {
   pr: (repo, q) => prForBranch(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
 };
 
-export const getRoutes: Record<string, GetRoute> = { ...core, ...notificationsGet };
-export const postRoutes: Record<string, PostRoute> = { ...notificationsPost };
+export const getRoutes: Record<string, GetRoute> = {
+  ...core,
+  ...notificationsGet,
+  ...stackGet,
+};
+export const postRoutes: Record<string, PostRoute> = {
+  ...notificationsPost,
+  ...stackPost,
+};
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
 
