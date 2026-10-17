@@ -20,9 +20,9 @@ export function matchesIn(text: string, query: string, sensitive = caseSensitive
 }
 
 /** `segs` cut where matches of length `len` start (`starts`, ascending): `m` is 1 in a match, 2 in the current one. */
-export function markSegments(segs: Segment[], starts: number[], len: number, current = -1): (Segment & { m: number })[] {
+export function markSegments<S extends Segment>(segs: S[], starts: number[], len: number, current = -1): (S & { m: number })[] {
   if (!starts.length) return segs.map((s) => ({ ...s, m: 0 }));
-  const out: (Segment & { m: number })[] = [];
+  const out: (S & { m: number })[] = [];
   let pos = 0;
   let k = 0;
   for (const s of segs) {
@@ -33,7 +33,7 @@ export function markSegments(segs: Segment[], starts: number[], len: number, cur
       const inside = k < starts.length && starts[k] <= at;
       const end = inside ? starts[k] + len : k < starts.length ? starts[k] : Infinity;
       const to = Math.min(s.t.length, end - pos);
-      out.push({ t: s.t.slice(from, to), c: s.c, m: inside ? (starts[k] === current ? 2 : 1) : 0 });
+      out.push({ ...s, t: s.t.slice(from, to), m: inside ? (starts[k] === current ? 2 : 1) : 0 });
       from = to;
     }
     pos += s.t.length;

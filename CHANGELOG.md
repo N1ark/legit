@@ -6,6 +6,7 @@
 - A commit's author is one `Name <email>` field, like a co-author, and suggests people from the history too.
 - Rebuild a branch on another with only the commits you select (right-click ▸ **Rebuild on…**), resolving conflicts commit by commit.
 - **Hide whitespace** above a diff shows lines that only changed whitespace as unchanged.
+- In a partly changed line, the words that changed are highlighted.
 
 ## 0.3.0 — 2026-10-13
 

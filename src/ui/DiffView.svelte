@@ -39,6 +39,7 @@
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
+  import { cutWords, wordDiff } from './lib/worddiff.ts';
   import {
     ADDED,
     type Expansion,
@@ -423,6 +424,24 @@
     show: (k: number) => showMatch(found[k]),
   };
   const hitNow = $derived(found[finder.currentIn(source)] ?? null);
+
+  // Words changed within a line, worked out as its rows are shown.
+  const words = new WeakMap<FileRows, (r: number) => number[] | null>();
+
+  /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`); null when it's plain text. */
+  function lineSegments(i: number, r: number) {
+    const rows = contents[i];
+    const text = rows.text[r];
+    const tok = tokens[i];
+    let diff = words.get(rows);
+    if (!diff) words.set(rows, (diff = wordDiff(rows)));
+    const changed = diff(r);
+    const at = hits.get(i)?.get(r);
+    if (!tok && !changed && !at) return null;
+    const segs = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
+    const cut = changed ? cutWords(segs, changed) : segs.map((seg) => ({ ...seg, w: false }));
+    return markSegments(cut, at ?? [], finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1);
+  }
 
   onMount(() => finder.register(source));
 
@@ -894,7 +913,6 @@
         {@const f = files[i]}
         {@const state = fileState(f)}
         {@const rows = contents[i]}
-        {@const tok = tokens[i]}
         <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
@@ -1051,11 +1069,9 @@
                                 onblur={closeUnchanged}
                                 {@attach attachEditor}
                               ></textarea></span
-                            >{:else}<span class="code"
-                            >{#if hits.get(i)?.has(r)}{#each markSegments(tok ? segments(tok, r, rows.text[r]) : [{ t: rows.text[r], c: '' }], hits.get(i)!.get(r)!, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) as seg}{#if seg.m}<mark
-                                    class={['hit', seg.m === 2 && 'now', seg.c]}>{seg.t}</mark
-                                  >{:else if seg.c}<span class={seg.c}>{seg.t}</span>{:else}{seg.t}{/if}{/each}{:else if tok}{#each segments(tok, r, rows.text[r]) as seg}{#if seg.c}<span class={seg.c}
-                                    >{seg.t}</span
+                            >{:else}{@const segs = lineSegments(i, r)}<span class="code"
+                            >{#if segs}{#each segs as seg}{#if seg.m}<mark class={['hit', seg.m === 2 && 'now', seg.c, seg.w && 'wd']}>{seg.t}</mark
+                                  >{:else if seg.c || seg.w}<span class={[seg.c, seg.w && 'wd']}>{seg.t}</span
                                   >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
                                 class="eof"
                                 title="No newline at end of file">⏎̸</span
@@ -1499,6 +1515,15 @@
 
   .editor[readonly] {
     opacity: 0.6;
+  }
+
+  /* Words changed within a line: a stronger tint of its own. */
+  .ta .wd:not(.hit) {
+    background: var(--add-sel);
+  }
+
+  .td .wd:not(.hit) {
+    background: var(--del-sel);
   }
 
   .hit {
