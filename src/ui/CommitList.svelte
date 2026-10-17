@@ -5,6 +5,7 @@
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import type { CommitInfo } from '../shared/types.ts';
   import Markdown from './Markdown.svelte';
+  import CommitChecks from './gh/CommitChecks.svelte';
   import { copyToBranch, newBranch, rebuildOn } from './lib/branches.svelte.ts';
 
   let list = $state<HTMLOListElement>();
@@ -255,6 +256,7 @@
         <span class="meta" title={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
       {/if}
       <span class="meta">{formatRelative(c.author.time * 1000)}</span>
+      {#if c.pushed}<CommitChecks sha={c.sha} />{/if}
       <span class="meta pushed">{#if c.pushed}<CloudCheck />{/if}</span>
     </li>
     {#if c.merge && app.expanded[c.sha] === null}
