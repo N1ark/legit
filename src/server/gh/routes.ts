@@ -9,6 +9,7 @@ import { notificationsGet, notificationsPost } from './notifications.ts';
 import { prForBranch } from './pulls.ts';
 import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
+import { prviewGet, prviewPost } from './prview.ts';
 import type { GithubStatus } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
@@ -37,12 +38,14 @@ export const getRoutes: Record<string, GetRoute> = {
   ...stackGet,
   ...issuesGet,
   ...checksGet,
+  ...prviewGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,
   ...stackPost,
   ...issuesPost,
   ...checksPost,
+  ...prviewPost,
 };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');

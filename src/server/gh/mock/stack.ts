@@ -6,7 +6,7 @@ import { prNode } from './pulls.ts';
 import { db, onGraphql, onRest } from './registry.ts';
 
 /** A db pull in the REST API's shape. */
-const restPull = (p: any) => {
+export const restPull = (p: any) => {
   const n = prNode(p);
   return {
     number: n.number, title: n.title, body: n.body ?? '', html_url: n.url, state: n.state === 'OPEN' ? 'open' : 'closed', draft: n.isDraft,
@@ -47,12 +47,3 @@ onRest('POST /repos/:owner/:repo/pulls', (_, __, body) => {
   return restPull(p);
 });
 
-onRest('PATCH /repos/:owner/:repo/pulls/:number', ({ number }, _, body) => {
-  const p = db.pulls.find((x: any) => x.number === Number(number));
-  if (!p) throw new GithubError('GitHub: Not Found', 404);
-  if (body.base !== undefined) p.baseRefName = body.base;
-  if (body.title !== undefined) p.title = body.title;
-  if (body.body !== undefined) p.body = body.body;
-  if (body.state === 'closed' || body.state === 'open') p.state = body.state === 'closed' ? 'CLOSED' : 'OPEN';
-  return restPull(p);
-});
