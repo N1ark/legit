@@ -12,6 +12,7 @@
   import { app, request, shortSha } from './lib/app.svelte.ts';
   import { discardChanges } from './lib/discard.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
+  import { refComplete } from './gh/ref-complete.svelte.ts';
 
   type Sel = Record<string, SvelteSet<number>>;
   let work = $state.raw<WorkState | null>(null);
@@ -198,8 +199,8 @@
   </div>
 
   <div class="meta">
-    <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
-    <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true"></textarea>
+    <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" {@attach refComplete} />
+    <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true" {@attach refComplete}></textarea>
     <div class="people">
       <span class="muted label">Co-authors</span>
       <Coauthors bind:value={coauthors} />

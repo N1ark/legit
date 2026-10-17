@@ -3,3 +3,4 @@
 import './pulls.ts';
 import './notifications.ts';
 import './stack.ts';
+import './issues.ts';

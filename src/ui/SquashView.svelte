@@ -10,6 +10,7 @@
   import { app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { squashDiffKey, squashFields } from './lib/squash.ts';
+  import { refComplete } from './gh/ref-complete.svelte.ts';
 
   /** Newest first. */
   let { commits }: { commits: CommitInfo[] } = $props();
@@ -113,8 +114,8 @@
     {#if editable}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="form" oninput={() => (edited = true)}>
-        <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" />
-        <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true"></textarea>
+        <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" {@attach refComplete} />
+        <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true" {@attach refComplete}></textarea>
         <div class="people">
           <span class="muted label">Co-authors</span>
           <Coauthors bind:value={coauthors} oninput={() => (edited = true)} />

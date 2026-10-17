@@ -35,6 +35,7 @@
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
+  import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
@@ -823,6 +824,19 @@
     if (files[i].status !== 'D') app.openInZed(files[i].path, firstChange(i));
   }
 
+  /** GitHub links and issues for row r's line, or for the file's picked lines when r is one of them. */
+  function githubEntries(i: number, r: number): MaybeEntry[] {
+    const f = files[i];
+    const rows = contents[i];
+    if (f.status === 'D') return [];
+    const s = sel[f.path];
+    const lines = [lineFor(rows, r) ?? 0];
+    if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
+      for (let k = 0; k < rows.ci.length; k++) if (s.has(rows.ci[k]) || s.has(rows.c2[k])) lines.push(lineFor(rows, k) ?? 0);
+    }
+    return lineEntries(summary.sha, f.path, lines);
+  }
+
   function openMenu(e: MouseEvent, i: number) {
     // The line being edited keeps the field's own menu (paste...).
     if ((e.target as HTMLElement).closest('.editor')) return;
@@ -844,6 +858,7 @@
       'separator',
       { label: 'Copy path', icon: Copy, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
       { label: 'Copy relative path', icon: Copy, run: () => app.copy(f.path, 'relative path') },
+      ...(onLine ? githubEntries(i, r) : []),
       ...(fileActions ? ['separator' as const, ...fileActions(f)] : []),
     ]);
   }

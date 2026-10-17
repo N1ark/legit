@@ -11,6 +11,7 @@
   import { formatPerson, parseAuthor, parsePeople } from './lib/people.ts';
   import { splitTitle } from './lib/split.ts';
   import { type DiffPosition, app, shortSha } from './lib/app.svelte.ts';
+  import { refComplete } from './gh/ref-complete.svelte.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
@@ -275,6 +276,7 @@
         spellcheck="true"
         onblur={() => editing === 'subject' && (editing = null)}
         {@attach focusEnd}
+        {@attach refComplete}
       />
     {:else}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -298,6 +300,7 @@
         spellcheck="true"
         onblur={() => editing === 'body' && (editing = null)}
         {@attach focusEnd}
+        {@attach refComplete}
       ></textarea>
     {:else if body.trim() || !readonly}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->

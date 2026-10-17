@@ -38,6 +38,7 @@
   import Notifications from './gh/Notifications.svelte';
   import PrView from './gh/PrView.svelte';
   import PrChip from './gh/PrChip.svelte';
+  import GithubMenu from './gh/GithubMenu.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
@@ -195,6 +196,7 @@
     <Notifications />
     <StashPanel />
     <Backups />
+    <GithubMenu />
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = true)}><Gear /></IconButton>
   </header>
 

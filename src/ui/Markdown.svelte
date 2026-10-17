@@ -1,8 +1,12 @@
 <script lang="ts">
   // A commit message rendered as markdown, built as elements from the lexer's tokens (never as
   // HTML, so a message's own tags show as text). `#123` links to the repository's GitHub issue.
-  import { isMac } from 'purr';
+  import { isMac, tooltip } from 'purr';
   import { app } from './lib/app.svelte.ts';
+  import RefIcon from './gh/RefIcon.svelte';
+  import { refCard } from './lib/gh-links.ts';
+  import { refs } from './lib/gh-refs.svelte.ts';
+  import type { IssueRef } from '../shared/gh-issues.ts';
   import { type RefToken, type Token, type Tokens, lexBlocks, lexInline, refUrl, safeHref } from './lib/markdown.ts';
 
   let {
@@ -33,13 +37,21 @@
   const tip = (href: string) => (links === 'mod' ? `${MOD}-click to open ${href}` : href);
 </script>
 
-{#snippet link(href: string | null, title: string | null | undefined, inner: Token[])}
+<!-- `ref`: what a `#123` link points at, once known, shown as its state's icon and a hover card. -->
+{#snippet link(href: string | null, title: string | null | undefined, inner: Token[], ref?: IssueRef | null)}
   {#if href && links !== 'off'}
-    <a {href} title={title || tip(href)} tabindex={links === 'mod' ? -1 : undefined} target="_blank" rel="noopener noreferrer" onclick={(e) => follow(e, href)}
-      >{@render spans(inner)}</a
+    <a
+      {href}
+      title={ref ? undefined : title || tip(href)}
+      use:tooltip={ref ? { html: refCard(ref, links === 'mod' ? `${MOD}-click to open` : undefined) } : null}
+      tabindex={links === 'mod' ? -1 : undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      onclick={(e) => follow(e, href)}
+      >{#if ref}<RefIcon {ref} />{/if}{@render spans(inner)}</a
     >
   {:else}
-    {@render spans(inner)}
+    {#if ref}<RefIcon {ref} />{/if}{@render spans(inner)}
   {/if}
 {/snippet}
 
@@ -70,7 +82,7 @@
       {@const r = t as unknown as RefToken}
       {@const href = refUrl(r, app.repo?.github)}
       {#if href}
-        {@render link(href, null, [plain(r.raw)])}
+        {@render link(href, null, [plain(r.raw)], refs.get(r.repo ?? app.repo?.github, r.number))}
       {:else}{r.raw}{/if}
     {:else if t.type === 'checkbox'}
       <input type="checkbox" class="task" checked={(t as Tokens.Checkbox).checked} disabled />
@@ -150,6 +162,12 @@
   pre code {
     padding: 0;
     background: none;
+  }
+
+  .md-inline :global(.ref-icon),
+  .md :global(.ref-icon) {
+    margin-right: 0.2em;
+    vertical-align: -0.125em;
   }
 
   .task {
