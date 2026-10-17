@@ -3,8 +3,12 @@
 
 import { toast } from 'purr';
 import { app } from './app.svelte.ts';
+import { checks } from './gh-checks.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import type { GhNotification, GhNotifications } from '../../shared/gh-notifications.ts';
+
+/** The branch a CI notification is about: GitHub titles them "CI workflow run failed for main branch". */
+export const ciBranch = (title: string) => /\bfor (\S+) branch$/.exec(title)?.[1] ?? null;
 
 class Notifications {
   /** Newest first; null until loaded. */
@@ -53,15 +57,18 @@ class Notifications {
     };
   }
 
-  /** A pull request of this repo, which legit can show itself. */
+  /** A pull request of this repo, or a CI run on the current branch, which legit can show itself. */
   here(n: GhNotification): boolean {
-    return n.type === 'PullRequest' && n.number !== null && n.repo.toLowerCase() === gh.status?.repo?.toLowerCase();
+    if (n.repo.toLowerCase() !== gh.status?.repo?.toLowerCase()) return false;
+    if (n.type === 'PullRequest') return n.number !== null;
+    return n.type === 'CheckSuite' && !!checks.showHead && ciBranch(n.title) === app.repo?.branch;
   }
 
   /** Show it (in legit when it can, else on GitHub) and mark it read. */
   open(n: GhNotification) {
-    if (this.here(n)) gh.showPr(n.number!);
-    else app.openUrl(n.url);
+    if (!this.here(n)) app.openUrl(n.url);
+    else if (n.type === 'CheckSuite') checks.showHead?.();
+    else gh.showPr(n.number!);
     if (n.unread) this.change('notifsRead', n, (x) => ({ ...x, unread: false }));
   }
 

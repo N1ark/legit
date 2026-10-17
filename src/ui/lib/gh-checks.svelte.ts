@@ -28,6 +28,8 @@ class Checks {
   /** The checks popover: which commit, hung off what. */
   open = $state<{ sha: string; anchor: HTMLElement } | null>(null);
   log = $state<LogTarget | null>(null);
+  /** Opens the header chip's popover; set by the chip while it shows (a notification about this branch's CI uses it). */
+  showHead: (() => void) | null = null;
 
   private wanted = new Map<string, { rows: number; since: number }>();
   private queued = new Set<string>();

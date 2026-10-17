@@ -59,6 +59,19 @@
     };
   });
 
+  $effect(() => {
+    if (!target) return;
+    const sha = target;
+    const show = () => {
+      const chip = document.querySelector<HTMLElement>('[data-checks-chip]');
+      if (chip && checks.open?.sha !== sha) checks.show(sha, chip);
+    };
+    checks.showHead = show;
+    return () => {
+      if (checks.showHead === show) checks.showHead = null;
+    };
+  });
+
   const label = $derived(
     !target ? ''
     : !data ? `Checks on ${shortSha(target)}: loading`
@@ -75,6 +88,7 @@
 
 {#if target && data?.counts.total && state}
   <button
+    data-checks-chip
     class="btn btn--ghost btn--sm chip {state}"
     aria-label={label}
     use:tooltip={label}
