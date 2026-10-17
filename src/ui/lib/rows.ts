@@ -8,6 +8,7 @@
 
 import { moreAfter } from '../../shared/context.ts';
 import type { FileLines, HunkData } from '../../shared/types.ts';
+import { whitespacePairs } from '../../shared/whitespace.ts';
 
 export const HUNK = 0;
 export const CONTEXT = 1;
@@ -15,6 +16,8 @@ export const ADDED = 2;
 export const REMOVED = 3;
 /** After the last hunk, while the file may go on: shows more of it. */
 export const TAIL = 4;
+/** A removed line and the added one it became, changing only whitespace (when that's hidden): shown as one. */
+export const SPACED = 5;
 
 /** Header rows: a hunk's, or the one after the last hunk. */
 export const isHead = (kind: number) => kind === HUNK || kind === TAIL;
@@ -48,14 +51,18 @@ export interface FileRows {
   /** Old / new line numbers, 0 when absent. */
   o: Uint32Array;
   n: Uint32Array;
-  /** Change index (the split selection's unit) of '+'/'-' rows, else -1. */
+  /** Change index (the split selection's unit) of '+'/'-' rows, else -1; a SPACED row's removed line. */
   ci: Int32Array;
+  /** A SPACED row's added line's change index, else -1. */
+  c2: Int32Array;
   eof: Uint8Array;
   /** The gap a header row opens onto, else -1. */
   gap: Int32Array;
   /** Every gap, when the file's other lines can be shown (else empty), and its lines not shown yet. */
   gaps: Gap[];
   hidden: (number | null)[];
+  /** Whitespace-only changes are shown as SPACED rows. */
+  ws: boolean;
 }
 
 export const noExpansion = (): Expansion => ({ file: null, top: [], bottom: [] });
@@ -91,22 +98,27 @@ function gapsOf(hunks: HunkData[], file: FileLines | null): Gap[] {
   return gaps;
 }
 
-/** The file's rows: `expandable` when its other lines can be shown, with `x` of them shown. */
-export function buildRows(hunks: HunkData[], expandable = false, x: Expansion = noExpansion()): FileRows {
+/**
+ * The file's rows: `expandable` when its other lines can be shown, with `x` of them shown; `ws`
+ * hides whitespace-only changes (each removed and added pair as one SPACED row).
+ */
+export function buildRows(hunks: HunkData[], expandable = false, x: Expansion = noExpansion(), ws = false): FileRows {
   const gaps = expandable && hunks.length ? gapsOf(hunks, x.file) : [];
   const kind: number[] = [];
   const text: string[] = [];
   const o: number[] = [];
   const n: number[] = [];
   const ci: number[] = [];
+  const c2: number[] = [];
   const eof: number[] = [];
   const gap: number[] = [];
-  const push = (k: number, s: string, on: number, nn: number, c = -1, e = 0, g = -1) => {
+  const push = (k: number, s: string, on: number, nn: number, c = -1, e = 0, g = -1, d = -1) => {
     kind.push(k);
     text.push(s);
     o.push(on);
     n.push(nn);
     ci.push(c);
+    c2.push(d);
     eof.push(e);
     gap.push(g);
   };
@@ -129,15 +141,57 @@ export function buildRows(hunks: HunkData[], expandable = false, x: Expansion = 
     const h = hunks[k];
     if (!g || k === 0 || left !== 0) push(HUNK, h.header, 0, 0, -1, 0, g ? k : -1);
     if (g && bottom) shown(g, g.end! - bottom + 1, g.end!);
+    const ends = new Set(h.eof);
+    const pairs = ws ? whitespacePairs(h.types, h.text, (j) => ends.has(j)) : null;
+    if (!pairs?.size) {
+      let ol = h.oldStart;
+      let nl = h.newStart;
+      for (let j = 0; j < h.text.length; j++) {
+        const t = h.types[j];
+        const e = +ends.has(j);
+        if (t === '+') push(ADDED, h.text[j], 0, nl++, change++, e);
+        else if (t === '-') push(REMOVED, h.text[j], ol++, 0, change++, e);
+        else push(CONTEXT, h.text[j], ol++, nl++, -1, e);
+      }
+      continue;
+    }
+    // Each line's numbers first: a run of changes then shows in order around its pairs.
+    const lo: number[] = [];
+    const ln: number[] = [];
+    const lc: number[] = [];
     let ol = h.oldStart;
     let nl = h.newStart;
-    const ends = new Set(h.eof);
-    for (let j = 0; j < h.text.length; j++) {
-      const t = h.types[j];
-      const e = +ends.has(j);
-      if (t === '+') push(ADDED, h.text[j], 0, nl++, change++, e);
-      else if (t === '-') push(REMOVED, h.text[j], ol++, 0, change++, e);
-      else push(CONTEXT, h.text[j], ol++, nl++, -1, e);
+    for (const t of h.types) {
+      lo.push(t === '+' ? 0 : ol++);
+      ln.push(t === '-' ? 0 : nl++);
+      lc.push(t === ' ' ? -1 : change++);
+    }
+    const line = (j: number) =>
+      push(h.types[j] === '+' ? ADDED : h.types[j] === '-' ? REMOVED : CONTEXT, h.text[j], lo[j], ln[j], lc[j], +ends.has(j));
+    const paired = new Set(pairs.values());
+    for (let j = 0; j < h.text.length; ) {
+      if (h.types[j] === ' ') {
+        line(j++);
+        continue;
+      }
+      let end = j;
+      while (end < h.types.length && h.types[end] !== ' ') end++;
+      let a = j;
+      let b = j;
+      const upTo = (r: number, d: number) => {
+        for (; a < r; a++) if (h.types[a] === '-') line(a);
+        for (; b < d; b++) if (h.types[b] === '+' && !paired.has(b)) line(b);
+      };
+      for (let p = j; p < end; p++) {
+        const d = pairs.get(p);
+        if (d === undefined) continue;
+        upTo(p, d);
+        push(SPACED, h.text[d], lo[p], ln[d], lc[p], +ends.has(d), -1, lc[d]);
+        a = p + 1;
+        b = d + 1;
+      }
+      upTo(end, end);
+      j = end;
     }
   }
   return {
@@ -147,11 +201,29 @@ export function buildRows(hunks: HunkData[], expandable = false, x: Expansion = 
     o: Uint32Array.from(o),
     n: Uint32Array.from(n),
     ci: Int32Array.from(ci),
+    c2: Int32Array.from(c2),
     eof: Uint8Array.from(eof),
     gap: Int32Array.from(gap),
     gaps,
     hidden,
+    ws,
   };
+}
+
+/** The changes of rows a to b (either way round). */
+export function changesIn(rows: FileRows, a: number, b: number): number[] {
+  const out: number[] = [];
+  for (let r = Math.min(a, b); r <= Math.max(a, b); r++) {
+    if (rows.ci[r] >= 0) out.push(rows.ci[r]);
+    if (rows.c2[r] >= 0) out.push(rows.c2[r]);
+  }
+  return out;
+}
+
+/** The row showing change c, or -1. */
+export function rowOfChange(rows: FileRows, c: number): number {
+  for (let r = 0; r < rows.ci.length; r++) if (rows.ci[r] === c || rows.c2[r] === c) return r;
+  return -1;
 }
 
 /** The rows as hunks (a header row, then lines) for the highlighter, which works row for row. */

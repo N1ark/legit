@@ -278,9 +278,9 @@
                 danger: true,
                 confirm: 'Click again to discard',
                 note: 'From your file, and the index if staged. It can be restored.',
-                run: () => discard({ [f.path]: [line] }),
+                run: () => discard({ [f.path]: line }),
               },
-              block.length > 1 && {
+              block.length > line.length && {
                 label: `Discard these ${block.length} changes`,
                 icon: Trash,
                 danger: true,

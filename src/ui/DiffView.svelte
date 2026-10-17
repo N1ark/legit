@@ -1,3 +1,10 @@
+<script module lang="ts">
+  import { persisted } from 'purr';
+
+  // Shown as unchanged lines in every diff, kept across diffs.
+  const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false);
+</script>
+
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
@@ -14,8 +21,8 @@
     fixedRange,
     menu,
     offsets,
-    persisted,
     rowAt,
+    Switch,
     toast,
     variableRange,
   } from 'purr';
@@ -24,7 +31,7 @@
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
   import { formatSize, imageType } from '../shared/files.ts';
-  import type { DiffSummary, FileSummary, Selection } from '../shared/types.ts';
+  import type { DiffSummary, FileSummary, HunkData, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
@@ -38,13 +45,16 @@
     type FileRows,
     HUNK,
     REMOVED,
+    SPACED,
     TAIL,
     buildRows,
+    changesIn,
     isHead,
     moveTokens,
     noExpansion,
     rowHunks,
     rowMap,
+    rowOfChange,
   } from './lib/rows.ts';
 
   let {
@@ -79,8 +89,8 @@
      * (`on`). Files' `mixed` lines show as neither until picked.
      */
     onstage?: (path: string, lines: number[] | 'all', on: boolean) => void;
-    /** More entries for a changed line's menu: the line, and the block of changes around it. */
-    changeActions?: (f: FileSummary, line: number, block: number[]) => MaybeEntry[];
+    /** More entries for a changed line's menu: its changes (two for a line whose whitespace changed), and the block of changes around it. */
+    changeActions?: (f: FileSummary, line: number[], block: number[]) => MaybeEntry[];
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -171,7 +181,7 @@
   );
 
   /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
-  const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows;
+  const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows - (hideWhitespace.value ? files[i].ws : 0);
   /** Where each of file i's rows starts, in rows, when some of its lines wrap; null when none can. */
   const wrapCache = new WeakMap<FileRows, { cols: number; at: Uint32Array }>();
   function wrapped(i: number): Uint32Array | null {
@@ -284,7 +294,7 @@
       (res) => {
         if (!alive) return;
         const next = { ...contents };
-        for (const i of want) next[i] = buildRows(res[i], expandable(files[i]));
+        for (const i of want) next[i] = build(i, res[i]);
         // In place before highlighting is queued: a job is dropped once its rows aren't the file's.
         contents = next;
         for (const i of want) queueHighlight(i, next[i]);
@@ -296,10 +306,15 @@
     );
   });
 
+  /** File i's rows from its hunks, with the lines shown between them and whitespace as the switch has it. */
+  const build = (i: number, hunks: HunkData[]) =>
+    buildRows(hunks, expandable(files[i]), expansions[i] ?? noExpansion(), hideWhitespace.value);
+
   function queueHighlight(i: number, rows: FileRows) {
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
-    const key = `${summary.sha}:${i}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '');
+    const key =
+      `${summary.sha}:${i}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (rows.ws ? ':ws' : '');
     const want = () => alive && contents[i] === rows;
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
@@ -329,20 +344,47 @@
     }
     const before = contents[i];
     // Its size is known once the file is (after the last hunk); a short gap shows all at once.
-    const left = buildRows(before.hunks, true, x).hidden[k] ?? 0;
+    const left = build(i, before.hunks).hidden[k] ?? 0;
     const n = left <= STEP ? left : STEP;
     // Nothing comes before the first hunk's gap but the file's start, so it only grows upwards.
     const s = k === 0 ? 'bottom' : side;
     x[s][k] = (x[s][k] ?? 0) + n;
-    const rows = buildRows(before.hunks, true, x);
-    // Lines keep their highlighting (and the line being edited stays so) where they moved to.
+    replaceRows(i, build(i, before.hunks));
+  }
+
+  /** File i shown as `rows` now: lines keep their highlighting (and the line being edited stays so) where they moved to. */
+  function replaceRows(i: number, rows: FileRows) {
+    const before = contents[i];
     const moved = rowMap(before, rows);
     if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows) };
-    if (editing?.i === i) editing.r = moved[editing.r];
+    if (editing?.i === i) {
+      const n = before.n[editing.r];
+      const r = moved[editing.r] >= 0 ? moved[editing.r] : rows.n.findIndex((m, k) => m === n && !isHead(rows.kind[k]));
+      if (r >= 0) editing.r = r;
+      else editing = null;
+    }
     hoverBlock = null;
     contents = { ...contents, [i]: rows };
     queueHighlight(i, rows);
   }
+
+  // Hiding whitespace (or showing it again) rebuilds every file loaded; the file at the top of the view stays there.
+  $effect(() => {
+    const ws = hideWhitespace.value;
+    untrack(() => {
+      const a = held;
+      for (const k of Object.keys(contents)) {
+        const i = Number(k);
+        if (contents[i].ws !== ws) replaceRows(i, build(i, contents[i].hunks));
+      }
+      if (!a || !scroller || a.k >= files.length) return;
+      const drift = tops[a.k] + Math.min(a.offset, tops[a.k + 1] - tops[a.k]) - view.top;
+      if (Math.abs(drift) >= 1) {
+        scroller.scrollTop += drift;
+        measure();
+      }
+    });
+  });
 
   // ⌘F: matches of the find bar's query in every file's lines, collapsed files included (all
   // contents are loaded for it), in order. The bar is App's; this view is one of its sources.
@@ -394,7 +436,7 @@
       (res) => {
         if (!alive) return;
         const next = { ...contents };
-        for (const i of want) if (!next[i]) next[i] = buildRows(res[i], expandable(files[i]));
+        for (const i of want) if (!next[i]) next[i] = build(i, res[i]);
         contents = next;
         for (const i of want) queueHighlight(i, next[i]);
       },
@@ -456,7 +498,9 @@
     };
   }
 
-  const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed }), { a: 0, r: 0 }));
+  const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed, ws: t.ws + f.ws }), { a: 0, r: 0, ws: 0 }));
+  /** Every change of file f only changes whitespace. */
+  const onlyWhitespace = (f: FileSummary) => f.ws > 0 && 2 * f.ws === changes(f);
 
   // Selection (split), or what's staged. A file with no line changes (binary, mode-only) uses index 0 as "whole file".
   const changes = (f: FileSummary) => f.added + f.removed;
@@ -486,8 +530,9 @@
     const f = files[i];
     if (readonly || !f.partial) return toggleFile(f);
     const rows = contents[i];
-    const idx: number[] = [];
-    for (let r = headerRow + 1; r < rows.kind.length && !isHead(rows.kind[r]); r++) if (rows.ci[r] >= 0) idx.push(rows.ci[r]);
+    let end = headerRow + 1;
+    while (end < rows.kind.length && !isHead(rows.kind[end])) end++;
+    const idx = changesIn(rows, headerRow, end - 1);
     const s = sel[f.path];
     const on = !idx.every((c) => s.has(c));
     for (const c of idx) on ? s.add(c) : s.delete(c);
@@ -501,9 +546,9 @@
     if (above > 0 && scroller) scroller.scrollTop -= above;
   }
 
-  // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed.
-  // Starting on the block strip (left of the line numbers) works in whole blocks: runs of
-  // consecutive changed lines.
+  // Drag-select: mousedown picks add/remove, dragging applies it to every change crossed (`last`
+  // is a row). Starting on the block strip (left of the line numbers) works in whole blocks: runs
+  // of consecutive changed lines.
   let drag: { path: string; on: boolean; last: number; block: boolean; touched: Set<number> } | null = null;
   let hoverBlock = $state<{ i: number; a: number; b: number } | null>(null);
 
@@ -519,12 +564,28 @@
   const onStrip = (e: Event) => !!(e.target as HTMLElement).closest('.blk');
   let anchor: { path: string; ci: number } | null = null;
 
-  function setRange(path: string, a: number, b: number, on: boolean, touched?: Set<number>) {
+  /** Pick (or unpick) the changes of rows a to b. */
+  function setRange(path: string, rows: FileRows, a: number, b: number, on: boolean, touched?: Set<number>) {
     const s = sel[path];
-    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) {
-      on ? s.add(k) : s.delete(k);
-      touched?.add(k);
+    for (const c of changesIn(rows, a, b)) {
+      on ? s.add(c) : s.delete(c);
+      touched?.add(c);
     }
+  }
+
+  /** How much of row r's changes is picked: 0, 1 (half of a SPACED row's two) or 2 (all). */
+  function pickedOf(path: string, rows: FileRows, r: number): 0 | 1 | 2 {
+    const s = sel[path];
+    const a = s.has(rows.ci[r]);
+    if (rows.c2[r] < 0) return a ? 2 : 0;
+    const b = s.has(rows.c2[r]);
+    return a && b ? 2 : a || b ? 1 : 0;
+  }
+
+  /** Row r has a change staged in a version that's neither side's, and not picked. */
+  function mixedAt(path: string, rows: FileRows, r: number): boolean {
+    const m = mixed.get(path);
+    return !!onstage && !!m && changesIn(rows, r, r).some((c) => m.has(c) && !sel[path].has(c));
   }
 
   /** The end of a drag: what it crossed is staged or unstaged in one go. */
@@ -561,27 +622,25 @@
     const s = sel[f.path];
     const touched = new Set<number>();
     // A line whose staged version is neither side's is staged with the rest of its block.
-    const whole = onStrip(e) || (!!onstage && !!mixed.get(f.path)?.has(ci) && !s.has(ci));
+    const whole = onStrip(e) || mixedAt(f.path, rows, r);
     if (whole) {
       const [a, b] = blockAt(rows, r);
-      const [lo, hi] = [rows.ci[a], rows.ci[b]];
-      let all = true;
-      for (let c = lo; c <= hi; c++) if (!s.has(c)) all = false;
-      setRange(f.path, lo, hi, !all, touched);
-      drag = { path: f.path, on: !all, last: ci, block: true, touched };
+      const all = changesIn(rows, a, b).every((c) => s.has(c));
+      setRange(f.path, rows, a, b, !all, touched);
+      drag = { path: f.path, on: !all, last: r, block: true, touched };
       anchor = { path: f.path, ci };
       return;
     }
-    if (e.shiftKey && anchor?.path === f.path) {
-      const on = s.has(anchor.ci);
-      setRange(f.path, anchor.ci, ci, on, touched);
+    const from = e.shiftKey && anchor?.path === f.path ? rowOfChange(rows, anchor.ci) : -1;
+    if (from >= 0) {
+      const on = s.has(anchor!.ci);
+      setRange(f.path, rows, from, r, on, touched);
       stageLines(f.path, touched, on);
       return;
     }
-    const on = !s.has(ci);
-    on ? s.add(ci) : s.delete(ci);
-    touched.add(ci);
-    drag = { path: f.path, on, last: ci, block: false, touched };
+    const on = pickedOf(f.path, rows, r) < 2;
+    setRange(f.path, rows, r, r, on, touched);
+    drag = { path: f.path, on, last: r, block: false, touched };
     anchor = { path: f.path, ci };
   }
 
@@ -594,18 +653,17 @@
     const ci = rows?.ci[p.r] ?? -1;
     if (ci < 0) return;
     const path = files[p.i].path;
-    const s = sel[path];
     anchor = { path, ci };
+    const touched = new Set<number>();
     // A line whose staged version is neither side's is staged with the rest of its block.
-    if (onstage && mixed.get(path)?.has(ci) && !s.has(ci)) {
+    if (mixedAt(path, rows, p.r)) {
       const [a, b] = blockAt(rows, p.r);
-      const touched = new Set<number>();
-      setRange(path, rows.ci[a], rows.ci[b], true, touched);
+      setRange(path, rows, a, b, true, touched);
       return stageLines(path, touched, true);
     }
-    const on = !s.has(ci);
-    on ? s.add(ci) : s.delete(ci);
-    stageLines(path, [ci], on);
+    const on = pickedOf(path, rows, p.r) < 2;
+    setRange(path, rows, p.r, p.r, on, touched);
+    stageLines(path, touched, on);
   }
 
   function over(e: MouseEvent, i: number) {
@@ -620,12 +678,12 @@
       if (hoverBlock?.i !== i || hoverBlock.a !== a) hoverBlock = { i, a, b };
     } else if (hoverBlock) hoverBlock = null;
     if (!drag || drag.path !== files[i].path || ci < 0) return;
-    setRange(drag.path, drag.last, ci, drag.on, drag.touched);
+    setRange(drag.path, rows, drag.last, r, drag.on, drag.touched);
     if (drag.block) {
       const [a, b] = blockAt(rows, r);
-      setRange(drag.path, rows.ci[a], rows.ci[b], drag.on, drag.touched);
+      setRange(drag.path, rows, a, b, drag.on, drag.touched);
     }
-    drag.last = ci;
+    drag.last = r;
   }
 
   /** Row r of file i is a line of the commit's version of a text file (added or unchanged). */
@@ -698,27 +756,31 @@
 
   function lineActions(i: number, r: number): MaybeEntry[] {
     const f = files[i];
-    const ci = contents[i].ci[r];
-    const count = Object.values(sel).reduce((n, s) => n + s.size, 0);
-    const many = ci >= 0 && sel[f.path].has(ci) && count > 1;
     const rows = contents[i];
+    const ci = rows.ci[r];
+    const mine = changesIn(rows, r, r);
+    const count = Object.values(sel).reduce((n, s) => n + s.size, 0);
+    const many = ci >= 0 && pickedOf(f.path, rows, r) === 2 && count > mine.length;
     let block: number[] = [];
     if (ci >= 0) {
       const [a, b] = blockAt(rows, r);
-      block = [...rows.ci.slice(a, b + 1)];
+      block = changesIn(rows, a, b);
     }
+    const kind = rows.kind[r];
     return [
-      ...(changeActions && ci >= 0 ? changeActions(f, ci, block) : []),
+      ...(changeActions && ci >= 0 ? changeActions(f, mine, block) : []),
       canEdit(i, r) && { label: 'Edit line', icon: PencilSimple, note: 'Or double-click it', run: () => startEdit(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
           ? `Remove ${count} picked changes from commit`
-          : contents[i].kind[r] === ADDED
+          : kind === ADDED
             ? "Don't add this line"
-            : 'Keep this removed line',
+            : kind === SPACED
+              ? "Keep this line's old whitespace"
+              : 'Keep this removed line',
         icon: Eraser,
         note: 'Takes the change out of the commit',
-        run: () => onremove!(many ? picked() : { [f.path]: [ci] }),
+        run: () => onremove!(many ? picked() : { [f.path]: mine }),
       },
     ];
   }
@@ -777,8 +839,8 @@
 
   const statusLabel = { A: 'added', D: 'deleted', M: '', T: 'type changed', R: 'renamed', C: 'copied' };
   const statusColor = { A: 'var(--add)', D: 'var(--del)', M: undefined, T: undefined, R: undefined, C: undefined };
-  const MARK = [' ', ' ', '+', '-'];
-  const KIND = ['', 'tc', 'ta', 'td'];
+  const MARK = [' ', ' ', '+', '-', ' ', '~'];
+  const KIND = ['', 'tc', 'ta', 'td', '', 'tw'];
 </script>
 
 <svelte:window onmouseup={up} />
@@ -786,12 +848,25 @@
 <div class="diff">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
   <div class="summary muted">
-    <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
-    <span class="add">+{totals.a}</span>
-    <span class="del">−{totals.r}</span>
-    {#if generatedCount}
-      <span>· {generatedCount} generated {generatedCount === 1 ? 'file' : 'files'} collapsed</span>
-    {/if}
+    <div class="stats">
+      <div class="line">
+        <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
+        <span class="add">+{totals.a}</span>
+        <span class="del">−{totals.r}</span>
+        {#if generatedCount}
+          <span>· {generatedCount} generated {generatedCount === 1 ? 'file' : 'files'} collapsed</span>
+        {/if}
+      </div>
+      <div class="line">
+        <label class="ws" title="Show lines whose only change is whitespace as unchanged (~); picking one still picks both of its changes">
+          <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
+          Hide whitespace
+        </label>
+        {#if hideWhitespace.value && totals.ws}
+          <span>· {totals.ws} {totals.ws === 1 ? 'line' : 'lines'} changed only in whitespace</span>
+        {/if}
+      </div>
+    </div>
     {#if !readonly && files.length}
       <span class="hint">{hint}</span>
     {/if}
@@ -860,6 +935,9 @@
             {/if}
             {#if f.generated}
               <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
+            {/if}
+            {#if hideWhitespace.value && onlyWhitespace(f)}
+              <Tag label="whitespace only" title="Every change in this file only changes whitespace" />
             {/if}
             <span class="spacer"></span>
             <span class="add mono">+{f.added}</span>
@@ -943,14 +1021,16 @@
                         {@const kind = rows.kind[r]}
                         {@const ci = rows.ci[r]}
                         {@const edit = editing?.i === i && editing.r === r ? editing : null}
+                        {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
                         <div
                           class="line {KIND[kind]}"
-                          class:sel={(kind === ADDED || kind === REMOVED) && sel[f.path].has(ci)}
-                          class:mixed={onstage && ci >= 0 && !sel[f.path].has(ci) && mixed.get(f.path)?.has(ci)}
+                          class:sel={pick === 2}
+                          class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
                           style:height={edit || cols ? `${rowSpan(i, r) * ROW}px` : undefined}
                           data-r={r}
+                          title={kind === SPACED ? 'Only whitespace changed' : undefined}
                         >
                           <span class="gutter"
                             ><span
@@ -1028,14 +1108,35 @@
   .summary {
     display: flex;
     gap: var(--sp-4);
-    align-items: baseline;
+    align-items: center;
     font-size: var(--fs-sm);
     padding: 0 var(--gap-2) var(--sp-4);
+    white-space: nowrap;
+  }
+
+  .stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .stats .line {
+    display: flex;
+    gap: var(--sp-4);
+    align-items: center;
   }
 
   .hint {
     margin-left: auto;
     font-size: var(--fs-xs);
+    white-space: normal;
+  }
+
+  .ws {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    cursor: pointer;
   }
 
   .add {
@@ -1198,13 +1299,13 @@
     padding: 0;
   }
 
-  .lines:not(.readonly) :is(.ta, .td) .blk {
+  .lines:not(.readonly) :is(.ta, .td, .tw) .blk {
     cursor: pointer;
     box-shadow: inset 3px 0 0 transparent;
     transition: box-shadow var(--dur);
   }
 
-  .lines:not(.readonly) :is(.ta, .td) .blk:hover,
+  .lines:not(.readonly) :is(.ta, .td, .tw) .blk:hover,
   .lines:not(.readonly) .line.blkhover .blk {
     box-shadow: inset 5px 0 0 var(--theme2);
   }
@@ -1314,8 +1415,12 @@
     color: var(--del);
   }
 
-  .lines:not(.readonly) :is(.ta, .td) .gutter {
+  .lines:not(.readonly) :is(.ta, .td, .tw) .gutter {
     cursor: pointer;
+  }
+
+  .tw .mark {
+    color: var(--muted);
   }
 
   /* Text that isn't the file's stays out of a copy. */
@@ -1325,7 +1430,8 @@
   }
 
   .lines:not(.readonly) .ta:not(.sel):hover .gutter,
-  .lines:not(.readonly) .td:not(.sel):hover .gutter {
+  .lines:not(.readonly) .td:not(.sel):hover .gutter,
+  .lines:not(.readonly) .tw:not(.sel):hover .gutter {
     background: var(--theme-soft);
   }
 
@@ -1349,6 +1455,10 @@
 
   .line.td.sel {
     background: var(--del-sel);
+  }
+
+  .line.tw.sel {
+    background: var(--theme-soft);
   }
 
   .line.sel .code {

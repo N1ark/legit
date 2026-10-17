@@ -151,6 +151,8 @@ export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   syntax?: string;
   /** Rows the file renders: one per hunk header and per diff line, and one after the last hunk when the file may go on. */
   rows: number;
+  /** Removed lines that come back added with only their whitespace changed (rows saved when whitespace is hidden). */
+  ws: number;
   /** Widest line, in columns (tabs count as 4). */
   width: number;
   /** Binary files and images: their size in bytes before and after (absent on a side without one). */
