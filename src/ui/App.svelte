@@ -36,6 +36,7 @@
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import PrView from './gh/PrView.svelte';
+  import PrChip from './gh/PrChip.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
@@ -178,6 +179,7 @@
     {#if app.repo}
       <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
+      <PrChip />
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<Spinner label="Working" />{/if}

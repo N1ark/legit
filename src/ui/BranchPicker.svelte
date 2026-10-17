@@ -24,6 +24,8 @@
   import { integrateEntries } from './lib/integrate.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
+  import PrBadge from './gh/PrBadge.svelte';
+  import { prs } from './lib/gh-prs.svelte.ts';
 
   type Row =
     | { kind: 'local'; b: BranchInfo; indices: number[] }
@@ -157,6 +159,7 @@
     if (m === 'upstream') tracker = branch ?? here;
     open = true;
     filter = '';
+    prs.loadBranches();
     await setMode(m);
   }
 
@@ -584,6 +587,7 @@
                 <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
                 <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
                 <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
                 {#if b.worktree}
                   <span class="worktree muted" title="Checked out in {b.worktree}; choosing it switches to that worktree">
                     <FolderSimple />{folder(b.worktree)}
