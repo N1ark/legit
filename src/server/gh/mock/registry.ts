@@ -3,8 +3,8 @@
 
 import { GithubError } from '../client.ts';
 
-type GraphqlHandler = (vars: Record<string, any>) => unknown;
-type RestHandler = (params: Record<string, string>, query: URLSearchParams, body: any) => unknown;
+type GraphqlHandler = (vars: Record<string, any>) => unknown | Promise<unknown>;
+type RestHandler = (params: Record<string, string>, query: URLSearchParams, body: any) => unknown | Promise<unknown>;
 
 const graphqlHandlers = new Map<string, GraphqlHandler>();
 const restHandlers: { method: string; pattern: RegExp; keys: string[]; fn: RestHandler }[] = [];
@@ -34,7 +34,7 @@ export async function mockGraphql(query: string, vars: Record<string, unknown>):
   const name = /\b(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? '';
   const fn = graphqlHandlers.get(name);
   if (!fn) throw new GithubError(`GitHub mock: no handler for GraphQL operation "${name}".`, 500);
-  return structuredClone(fn(vars));
+  return structuredClone(await fn(vars));
 }
 
 export async function mockRest(method: string, path: string, body: unknown): Promise<unknown> {
@@ -44,7 +44,7 @@ export async function mockRest(method: string, path: string, body: unknown): Pro
     const m = h.method === method ? h.pattern.exec(url.pathname) : null;
     if (!m) continue;
     const params = Object.fromEntries(h.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
-    return structuredClone(h.fn(params, url.searchParams, body) ?? null);
+    return structuredClone((await h.fn(params, url.searchParams, body)) ?? null);
   }
   throw new GithubError(`GitHub mock: no handler for ${method} ${url.pathname}.`, 404);
 }
