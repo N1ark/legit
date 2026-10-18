@@ -56,7 +56,7 @@
   let browsing = $state<string | null>(null);
   let theirs = $state.raw<{ commits: CommitInfo[]; total: number } | null>(null);
   const picked = new SvelteSet<string>();
-  /** Local branches selected with ⌘/⇧-click (switch mode), where a ⇧-click range starts, and those selected then. */
+  /** Branches selected with ⌘/⇧-click (switch mode), by row key; where a ⇧-click range starts, and those selected then. */
   const chosen = new SvelteSet<string>();
   let anchor = $state<string | null>(null);
   let pickedBefore: string[] = [];
@@ -150,8 +150,8 @@
       get<DeletedBranch[]>('/api/branches/deleted'),
       mode === 'upstream' ? get<string[]>('/api/remotes') : remoteNames,
     ]);
-    const left = new Set(local.map((b) => b.name));
-    for (const name of [...chosen]) if (!left.has(name)) chosen.delete(name);
+    const left = new Set([...local.map((b) => `local:${b.name}`), ...remote.map((b) => `remote:${b.ref}`)]);
+    for (const k of [...chosen]) if (!left.has(k)) chosen.delete(k);
   }
 
   /**
@@ -219,47 +219,62 @@
   const many = (n: number) => `${n} branch${n === 1 ? '' : 'es'}`;
   /** A branch's upstream when it's a remote-tracking branch (`<remote>/<branch>`); the server checks it names a remote. */
   const remoteUpstream = (b: BranchInfo) => (b.upstream?.includes('/') && b.track !== 'gone' ? b.upstream : '');
-  const isChosen = (r: Row) => mode === 'switch' && r.kind === 'local' && chosen.has(r.b.name);
+  const selectable = (r: Row) => mode === 'switch' && (r.kind === 'local' || r.kind === 'remote');
+  const isChosen = (r: Row) => selectable(r) && chosen.has(key(r));
 
-  const selection = $derived((local ?? []).filter((b) => chosen.has(b.name)));
+  const selection = $derived((local ?? []).filter((b) => chosen.has(`local:${b.name}`)));
+  /** The remote branches selected, deleted on their remotes with the rest. */
+  const remoteSelection = $derived(remote.filter((b) => chosen.has(`remote:${b.ref}`)));
   const deletable = $derived(selection.filter((b) => !b.current && !b.worktree));
   const kept = $derived(
     selection
       .filter((b) => b.current || b.worktree)
       .map((b) => `${b.name} (${b.worktree ? `checked out in ${folder(b.worktree)}` : "you're on it"})`),
   );
-  const upstreams = $derived(deletable.map(remoteUpstream).filter(Boolean).map((u) => `refs/remotes/${u}`));
+  const upstreams = $derived(
+    deletable.map(remoteUpstream).filter(Boolean).map((u) => `refs/remotes/${u}`).filter((ref) => !remoteSelection.some((b) => b.ref === ref)),
+  );
+  const toDelete = $derived(deletable.length + remoteSelection.length);
 
   /**
-   * ⌘/Ctrl-click adds or removes a local branch, ⇧-click adds the range from the last one ⌘-clicked
-   * (as in Finder, see `pick`); a plain click chooses it.
+   * ⌘/Ctrl-click adds or removes a branch, local or remote, ⇧-click adds the range from the last one
+   * ⌘-clicked (as in Finder, see `pick`); a plain click chooses it.
    */
   function onrowclick(e: MouseEvent, r: Row) {
     const toggle = isMac ? e.metaKey : e.ctrlKey;
-    if (mode !== 'switch' || r.kind !== 'local' || !(toggle || e.shiftKey)) return choose(r);
-    const shown = rows.flatMap((x) => (x.kind === 'local' ? [x.b.name] : []));
-    const next = pick({ chosen: [...chosen], anchor, base: pickedBefore }, shown, r.b.name, e.shiftKey);
+    if (!selectable(r) || !(toggle || e.shiftKey)) return choose(r);
+    const shown = rows.filter(selectable).map(key);
+    const next = pick({ chosen: [...chosen], anchor, base: pickedBefore }, shown, key(r), e.shiftKey);
     chosen.clear();
-    for (const name of next.chosen) chosen.add(name);
+    for (const k of next.chosen) chosen.add(k);
     [anchor, pickedBefore] = [next.anchor, next.base];
   }
 
-  /** Delete the selected branches; the server skips the ones that can't be, and the toast says which. */
+  /** Delete the selected branches, here and on their remotes; the server skips the ones that can't be, and the toasts say which. */
   async function deleteChosen() {
-    if (!(await deleteBranches([...chosen]))) return false;
-    chosen.clear();
-    return true;
+    const names = selection.map((b) => b.name);
+    const refs = remoteSelection.map((b) => b.ref);
+    const ok = (!names.length || (await deleteBranches(names))) && (!refs.length || (await deleteRemoteBranches(refs)));
+    if (ok) chosen.clear();
+    return ok;
   }
 
+  /** What deleting the selection does beyond this repo, and what it leaves. */
+  const bulkNote = $derived(
+    [remoteSelection.length && `${remoteSelection.length} on the remote, for everyone`, kept.length && `skips ${kept.join(', ')}`, 'restorable for two weeks']
+      .filter(Boolean)
+      .join(' · '),
+  );
+
   function bulkMenu(): MaybeEntry[] {
-    const n = deletable.length;
+    const n = toDelete;
     return [
       {
         label: `Delete ${many(n)}`,
         icon: Trash,
         danger: true,
         disabled: !n,
-        note: kept.length ? `Skips ${kept.join(', ')}.` : 'Restorable for two weeks.',
+        note: bulkNote,
         confirm: `Delete ${many(n)}`,
         run: () => act(deleteChosen, true),
       },
@@ -606,9 +621,10 @@
                 {@render browseButton(r)}
               {:else if r.kind === 'remote'}
                 {@const b = r.b}
-                <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
+                <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
                 <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                 <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                {#if prs.byRemote[`${b.remote}/${b.name}`]}<PrBadge pr={prs.byRemote[`${b.remote}/${b.name}`]} />{/if}
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
@@ -625,17 +641,15 @@
       {/if}
       {#if mode === 'switch' && chosen.size > 1}
         <div class="pick bulk">
-          <span class="foot muted">
-            {chosen.size} selected{#if kept.length}; skips {kept.join(', ')}{/if} · restorable for two weeks
-          </span>
+          <span class="foot muted">{chosen.size} selected · {bulkNote}</span>
           <Button size="sm" variant="ghost" onclick={() => chosen.clear()}><X /> Clear</Button>
           <ConfirmButton
             size="sm"
-            confirmLabel="Click again to delete {many(deletable.length)}"
-            disabled={!deletable.length || app.busy}
+            confirmLabel="Click again to delete {many(toDelete)}"
+            disabled={!toDelete || app.busy}
             onconfirm={() => act(deleteChosen, true)}
           >
-            <Trash /> Delete {many(deletable.length)}
+            <Trash /> Delete {many(toDelete)}
           </ConfirmButton>
         </div>
       {/if}
