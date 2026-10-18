@@ -2,7 +2,7 @@
   // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
   // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
   // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts.
-  import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, type HelpGroup } from 'purr';
+  import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, tooltip, type HelpGroup } from 'purr';
   import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Warning, X } from 'purr/icons';
   import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
@@ -88,8 +88,8 @@
   }
 
   const SCOPES: { scope: Scope; title: string; description: () => string }[] = [
-    { scope: 'repo', title: 'This repo', description: () => `Only in ${app.repo?.name ?? 'this repo'}; these win over the ones for all repos.` },
-    { scope: 'global', title: 'All repos', description: () => 'In every repo legit opens.' },
+    { scope: 'repo', title: 'This repo', description: () => `Only in ${app.repo?.name ?? 'this repo'}; overrides all repos` },
+    { scope: 'global', title: 'All repos', description: () => 'Every repo legit opens' },
   ];
 
   const groups = [
@@ -139,7 +139,7 @@
                     bind:value={rule.grammar}
                     oninput={() => changed(scope)}
                   />
-                  <span class="problem" class:on={problem} title={problem}>{#if problem}<Warning weight="bold" />{/if}</span>
+                  <span class="problem" class:on={problem} use:tooltip={problem}>{#if problem}<Warning weight="bold" />{/if}</span>
                   <IconButton
                     label="Remove rule"
                     size="sm"
@@ -160,11 +160,9 @@
           </SettingGroup>
         {/each}
         <p class="note muted">
-          Files without a rule are highlighted by their extension. A grammar is the name of one in Zed's installed
-          extensions{info.grammars.length ? ` (${info.grammars.map((g) => g.grammar).join(', ')})` : ''}, or a folder with a
-          compiled grammar (<code>*.wasm</code>, from <code>tree-sitter build --wasm</code>) and its
-          <code>highlights.scm</code>; a relative one is in the repo. Patterns without a slash match the file name at any
-          depth; the last matching rule wins.
+          A grammar is one in Zed's installed extensions, or a folder (relative to the repo) with a compiled grammar
+          (<code>*.wasm</code>, from <code>tree-sitter build --wasm</code>) and its <code>highlights.scm</code>. Patterns
+          without a slash match file names at any depth; the last matching rule wins.
         </p>
       {:else if section === 'lines'}
         {#each SCOPES as { scope, title, description } (scope)}
@@ -201,9 +199,9 @@
             </SettingRow>
           </SettingGroup>
         {/each}
-        <p class="note muted">Leave a field empty for this repo to use the one for all repos; <code>none</code> turns it off here.</p>
+        <p class="note muted"><code>none</code> turns a setting off for this repo.</p>
       {:else if section === 'shortcuts'}
-        <p class="note muted lead">Press <Kbd hint="?" /> anywhere to see these over the app.</p>
+        <p class="note muted lead"><Kbd hint="?" /> shows these anywhere.</p>
         <ShortcutList groups={shortcuts} />
       {:else}
         {#each SCOPES as { scope, title, description } (scope)}
@@ -237,9 +235,8 @@
           </SettingGroup>
         {/each}
         <p class="note muted">
-          Generated files start collapsed in diffs: built in, lockfiles, minified bundles, source maps, snapshots and
-          protobuf output, and anything marked <code>linguist-generated</code> in <code>.gitattributes</code>. These add
-          to them. Patterns without a slash match the file name at any depth.
+          On top of the built-in ones: lockfiles, minified bundles, source maps, snapshots, protobuf output and anything
+          <code>linguist-generated</code> in <code>.gitattributes</code>. Patterns without a slash match file names at any depth.
         </p>
       {/if}
       {#if section !== 'shortcuts'}

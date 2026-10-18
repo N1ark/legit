@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast } from 'purr';
+  import { ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast, tooltip } from 'purr';
   import { ClockCounterClockwise } from 'purr/icons';
   import type { Backup } from '../shared/types.ts';
   import DiscardedList from './DiscardedList.svelte';
@@ -44,21 +44,20 @@
     padding="var(--sp-4)"
   >
     <div class="head">
-      <b>Backups</b>
-      <span class="muted">Taken before every operation, kept in <code>refs/legit/backups</code>.</span>
+      <b use:tooltip={'Taken before every operation, in refs/legit/backups'}>Backups</b>
     </div>
     {#if list === null}
       <p class="muted">Loading…</p>
     {:else if !list.length}
-      <p class="muted">No backups for this branch yet.</p>
+      <p class="muted">None for this branch yet.</p>
     {:else}
       <ol>
         {#each list as b (b.ref)}
           <li>
             <span class="label">before {b.label}</span>
             <span class="mono sha">{shortSha(b.sha)}</span>
-            <span class="subject" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
-            <span class="muted when" title={formatFull(b.time)}>{formatRelative(b.time)}</span>
+            <span class="subject" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+            <span class="muted when" use:tooltip={formatFull(b.time)}>{formatRelative(b.time)}</span>
             {#if b.sha === app.repo?.head}
               <span class="muted now">current</span>
             {:else}
@@ -85,11 +84,6 @@
     gap: var(--gap-1);
     padding: var(--gap-1) var(--gap-3) var(--gap-4);
     font-size: var(--fs-sm);
-  }
-
-  code {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
   }
 
   p {

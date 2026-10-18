@@ -2,7 +2,7 @@
   // The repository name in the header. It opens this repository's other worktrees, to switch to
   // one, add one or remove one; in the desktop app, the recent repositories too: pick one to
   // switch to it, or open another.
-  import { Highlight, IS_TAURI, IconButton, Popover, rank, toast } from 'purr';
+  import { Highlight, IS_TAURI, IconButton, Popover, rank, toast, tooltip } from 'purr';
   import { CaretDown, Check, FolderOpen, FolderPlus, LockSimple, Trash, X } from 'purr/icons';
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
@@ -135,7 +135,7 @@
   class="btn btn--ghost repo"
   onclick={() => (open ? (open = false) : show())}
   aria-expanded={open}
-  title={IS_TAURI ? `${app.repo?.root}: switch repository or worktree (⌘T)` : `${app.repo?.root}: worktrees`}
+  use:tooltip={IS_TAURI ? `${app.repo?.root} (⌘T)` : app.repo?.root}
 >
   <span>{app.repo?.name}</span>
   <CaretDown />
@@ -154,7 +154,7 @@
         bind:value={filter}
         oninput={() => (picked = null)}
         {onkeydown}
-        placeholder={IS_TAURI ? 'Filter repositories and worktrees…' : 'Filter worktrees…'}
+        placeholder="Filter…"
         spellcheck="false"
         class="field-input"
       />
@@ -171,7 +171,7 @@
           {:else if r.kind === 'recent' && rows[k - 1]?.kind !== 'recent'}
             <li class="heading muted" role="presentation">Recent repositories</li>
           {:else if r.kind === 'open' && list && !shownRecent}
-            <li class="heading muted" role="presentation">{list.length ? 'No matching repository.' : 'No recent repositories.'}</li>
+            <li class="heading muted" role="presentation">{list.length ? 'No match' : 'No recent repositories'}</li>
           {/if}
           {@const off = switches(r) && !!app.switchBlocker}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -195,11 +195,11 @@
               <span class="branch mono">
                 {#if w.branch}<Highlight text={w.branch} indices={r.field === 1 ? r.indices : []} />{:else}detached @ {w.head ? shortSha(w.head) : '?'}{/if}
               </span>
-              <span class="path muted" title={w.path}>
+              <span class="path muted" use:tooltip={w.path}>
                 {#if w.missing}missing{:else}<Highlight text={w.short} indices={r.field === 2 ? r.indices : []} />{/if}
               </span>
               {#if w.locked !== null}
-                <span class="lock muted" title="Locked{w.locked ? `: ${w.locked}` : ''}"><LockSimple /></span>
+                <span class="lock muted" use:tooltip={`Locked${w.locked ? `: ${w.locked}` : ''}`}><LockSimple /></span>
               {:else if !w.main && !w.current}
                 <span class="forget">
                   <IconButton label={w.missing ? 'Forget this worktree' : 'Remove this worktree…'} size="sm" onclick={(e) => (e.stopPropagation(), remove(w))}>
@@ -209,13 +209,12 @@
               {/if}
             {:else if r.kind === 'new'}
               <span class="check"><FolderPlus /></span>
-              <span class="name">New worktree…</span>
-              {#if trees && trees.length < 2}<span class="path muted">Check a branch out in a folder of its own</span>{/if}
+              <span class="name" use:tooltip={'Check a branch out in a folder of its own'}>New worktree…</span>
             {:else if r.kind === 'recent'}
               {@const repo = r.r}
               <span class="check">{#if repo.current}<Check weight="bold" />{/if}</span>
               <span class="name"><Highlight text={repo.name} indices={r.field === 0 ? r.indices : []} /></span>
-              <span class="path muted" title={repo.path}><Highlight text={repo.short} indices={r.field === 1 ? r.indices : []} /></span>
+              <span class="path muted" use:tooltip={repo.path}><Highlight text={repo.short} indices={r.field === 1 ? r.indices : []} /></span>
               <span class="forget">
                 <IconButton label="Remove from the list" size="sm" onclick={(e) => (e.stopPropagation(), forget(repo))}>
                   <X />
@@ -229,7 +228,7 @@
         {/each}
       </ol>
       {#if filter && trees && trees.length > 1 && !shownTrees}
-        <p class="muted">No matching worktree.</p>
+        <p class="muted">No match</p>
       {/if}
     </div>
   </Popover>

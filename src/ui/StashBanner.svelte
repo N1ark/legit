@@ -21,7 +21,7 @@
       placement="inline"
       icon={Archive}
       title="Stashed changes"
-      lines={[`${n} file${n === 1 ? '' : 's'} you left on ${s.branch}, ${formatRelative(s.time)}.`]}
+      lines={[`${n} file${n === 1 ? '' : 's'} left on ${s.branch} ${formatRelative(s.time)}`]}
       ondismiss={() => (dismissed = s.sha)}
       dismissLabel="Not now"
     >

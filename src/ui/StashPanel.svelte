@@ -1,10 +1,11 @@
 <script lang="ts">
   // The stash list (apply, restore = pop, drop), plus dropped stashes, which legit keeps for two
   // weeks under refs/legit/stashes and which can still be applied.
-  import { Button, ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast } from 'purr';
+  import { Button, ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast, tooltip } from 'purr';
   import { Archive } from 'purr/icons';
   import type { StashEntry, Stashes } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   let open = $state(false);
   let data = $state<Stashes | null>(null);
@@ -51,18 +52,12 @@
     padding="var(--sp-4)"
   >
     <div class="head">
-      <div class="title">
-        <b>Stashes</b>
-        {#if app.hasWork}
-          <Button size="sm" disabled={app.busy || !!app.repo?.blocked} onclick={() => run('stash', {}, 'Stashed your changes')}>
-            Stash all changes
-          </Button>
-        {/if}
-      </div>
-      <span class="muted">
-        A stash is only applied when it can't conflict with your files. Dropped ones are kept for two weeks in
-        <code>refs/legit/stashes</code>.
-      </span>
+      <b>Stashes</b>
+      {#if app.hasWork}
+        <Button size="sm" disabled={app.busy || !!app.repo?.blocked} onclick={() => run('stash', {}, 'Stashed your changes')}>
+          Stash all
+        </Button>
+      {/if}
     </div>
     {#if data === null}
       <p class="muted">Loading…</p>
@@ -74,19 +69,19 @@
           {#each data.entries as s (s.sha)}
             <li>
               <span class="mono sha">{shortSha(s.sha)}</span>
-              <button class="subject" title="Show its changes" onclick={() => view(s, false)}>{title(s)}</button>
-              <span class="muted files" title={s.files.join('\n')}>{files(s)}</span>
-              <span class="muted when" title={formatFull(s.time)}>{formatRelative(s.time)}</span>
+              <button class="subject" use:tooltip={'Show its changes'} onclick={() => view(s, false)}>{title(s)}</button>
+              <span class="muted files" use:tooltip={s.files.join('\n')}>{files(s)}</span>
+              <span class="muted when" use:tooltip={formatFull(s.time)}>{formatRelative(s.time)}</span>
               <Button
                 size="sm"
                 variant="primary"
-                title="Apply it, then remove it from the stash list"
+                {@attach tip("Apply it, then remove it from the list; only if it can't conflict with your files")}
                 disabled={app.busy}
                 onclick={() => run('stashPop', { sha: s.sha }, 'Restored the stashed changes')}>Restore</Button
               >
               <Button
                 size="sm"
-                title="Apply it and keep it in the stash list"
+                {@attach tip("Apply it and keep it in the list; only if it can't conflict with your files")}
                 disabled={app.busy}
                 onclick={() => run('stashApply', { sha: s.sha }, 'Applied the stash; it stays in the list')}>Apply</Button
               >
@@ -102,18 +97,18 @@
         </ol>
       {/if}
       {#if data.dropped.length}
-        <div class="section muted">Dropped or restored, kept for two weeks</div>
+        <div class="section muted"><span use:tooltip={'Kept for two weeks in refs/legit/stashes'}>Dropped or restored</span></div>
         <ol>
           {#each data.dropped as d (d.ref)}
             <li>
               <span class="mono sha">{shortSha(d.sha)}</span>
-              <button class="subject" title="Show its changes" onclick={() => view({ ...d, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] }, true)}>
+              <button class="subject" use:tooltip={'Show its changes'} onclick={() => view({ ...d, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] }, true)}>
                 {title({ message: d.message, branch: /: legit: on ([^:]+)$/.exec(d.message)?.[1] })}
               </button>
-              <span class="muted when" title={formatFull(d.time)}>{d.label === 'pop' ? 'restored' : 'dropped'} {formatRelative(d.time)}</span>
+              <span class="muted when" use:tooltip={formatFull(d.time)}>{d.label === 'pop' ? 'restored' : 'dropped'} {formatRelative(d.time)}</span>
               <Button
                 size="sm"
-                title="Apply these changes again"
+                {@attach tip('Apply these changes again')}
                 disabled={app.busy}
                 onclick={() => run('stashApply', { sha: d.sha }, 'Applied the dropped stash')}>Apply</Button
               >
@@ -128,22 +123,11 @@
 <style>
   .head {
     display: flex;
-    flex-direction: column;
-    gap: var(--gap-1);
-    padding: var(--gap-1) var(--gap-3) var(--gap-4);
-    font-size: var(--fs-sm);
-  }
-
-  .title {
-    display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--gap-4);
-  }
-
-  code {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
+    padding: var(--gap-1) var(--gap-3) var(--gap-4);
+    font-size: var(--fs-sm);
   }
 
   p {

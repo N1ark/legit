@@ -12,30 +12,26 @@
   {@const q = question.pending}
   <Modal
     label="Uncommitted changes"
-    title="You have uncommitted changes"
+    title={files ? `${files} uncommitted file${files === 1 ? '' : 's'}` : 'Uncommitted changes'}
     onclose={() => q.answer(null)}
     layer="dialog"
     width="min(440px, calc(100vw - 32px))"
     mobile="keep"
     padded
   >
-    <p>
-      What should happen to your changes{files ? ` (${files} file${files === 1 ? '' : 's'})` : ''} when you switch to
-      <b class="mono">{q.to}</b>?
-    </p>
     <div class="choices">
       <Button onclick={() => q.answer('leave')} disabled={!q.from}>
         <span class="choice">
           <b>Leave my changes on <span class="mono">{q.from ?? 'this commit'}</span></b>
           <span class="muted">
-            {q.from ? "They're stashed, and offered back when you return." : 'Only possible on a branch.'}
+            {q.from ? 'Stashed, and offered back when you return' : 'Only on a branch'}
           </span>
         </span>
       </Button>
       <Button variant="primary" onclick={() => q.answer('bring')} data-autofocus>
         <span class="choice">
           <b>Bring my changes to <span class="mono">{q.to}</span></b>
-          <span>Uses <code>git switch</code>, which refuses if they'd be overwritten.</span>
+          <span>Refused if they'd be overwritten</span>
         </span>
       </Button>
     </div>
@@ -43,10 +39,6 @@
 {/if}
 
 <style>
-  p {
-    margin: 0 0 var(--sp-4);
-  }
-
   .choices {
     display: flex;
     flex-direction: column;
@@ -71,13 +63,5 @@
     font-size: var(--fs-xs);
     font-weight: 400;
     white-space: normal;
-  }
-
-  /* A tint of the button's own text colour, so the chip reads on any fill, hovered or not. */
-  code {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    background: color-mix(in oklab, currentColor 16%, transparent);
-    color: inherit;
   }
 </style>

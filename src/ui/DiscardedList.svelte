@@ -1,9 +1,10 @@
 <script lang="ts">
   // The backups panel's "Discarded changes": what each discard threw away, ready to put back.
-  import { Button, ConfirmButton, formatFull, formatRelative } from 'purr';
+  import { Button, ConfirmButton, formatFull, formatRelative, tooltip } from 'purr';
   import type { Discarded } from '../shared/types.ts';
   import { app } from './lib/app.svelte.ts';
   import { names, restoreDiscarded } from './lib/discard.ts';
+  import { tip } from './lib/tip.ts';
 
   let list = $state<Discarded[] | null>(null);
   /** Files that changed since the discard, by ref: putting those back needs a confirmed overwrite. */
@@ -28,31 +29,31 @@
 
 <div class="head">
   <b>Discarded changes</b>
-  <span class="muted">Saved before every discard and kept for two weeks, in <code>refs/legit/discarded</code>.</span>
+  <span class="muted" use:tooltip={'Saved before every discard, in refs/legit/discarded'}>kept two weeks</span>
 </div>
 {#if list === null}
   <p class="muted">Loading…</p>
 {:else if !list.length}
-  <p class="muted">Nothing discarded lately.</p>
+  <p class="muted">None lately.</p>
 {:else}
   <ol>
     {#each list as d (d.ref)}
       {@const changed = conflicts[d.ref]}
       <li>
-        <span class="label" title={d.label}>{d.label.startsWith('replaced') ? 'replaced' : 'discarded'}</span>
-        <span class="files mono" title={d.files.join('\n')}>{files(d)}</span>
-        <span class="muted when" title={formatFull(d.time)}>{formatRelative(d.time)}</span>
+        <span class="label" use:tooltip={d.label}>{d.label.startsWith('replaced') ? 'replaced' : 'discarded'}</span>
+        <span class="files mono" use:tooltip={d.files.join('\n')}>{files(d)}</span>
+        <span class="muted when" use:tooltip={formatFull(d.time)}>{formatRelative(d.time)}</span>
         {#if changed}
           <ConfirmButton size="sm" confirmLabel="Click to overwrite" onconfirm={() => restore(d, true)} disabled={app.busy}>
             Overwrite
           </ConfirmButton>
         {:else}
-          <Button size="sm" onclick={() => restore(d)} disabled={app.busy} title="Put these files back as they were">Restore</Button>
+          <Button size="sm" onclick={() => restore(d)} disabled={app.busy} {@attach tip('Put these files back as they were')}>Restore</Button>
         {/if}
       </li>
       {#if changed}
         <li class="warn">
-          {names(changed)} changed since. Overwriting saves {changed.length === 1 ? 'it' : 'them'} first.
+          {names(changed)} changed since; overwriting saves {changed.length === 1 ? 'it' : 'them'} first.
         </li>
       {/if}
     {/each}
@@ -62,17 +63,12 @@
 <style>
   .head {
     display: flex;
-    flex-direction: column;
-    gap: var(--gap-1);
+    align-items: baseline;
+    gap: var(--gap-3);
     margin-top: var(--gap-4);
     padding: var(--gap-4) var(--gap-3);
     border-top: 1px solid var(--border);
     font-size: var(--fs-sm);
-  }
-
-  code {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
   }
 
   p {

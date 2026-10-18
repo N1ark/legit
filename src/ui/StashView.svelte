@@ -8,6 +8,7 @@
   import DiffView from './DiffView.svelte';
   import Markdown from './Markdown.svelte';
   import { type ShownStash, app, shortSha } from './lib/app.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   let { stash }: { stash: ShownStash } = $props();
 
@@ -55,17 +56,17 @@
       <span class="muted">{formatAbsolute(stash.time)}</span>
       <span class="spacer"></span>
       {#if stash.dropped}
-        <Button variant="primary" disabled={app.busy} title="Apply these changes again" onclick={() => run('stashApply', 'Applied the dropped stash', false)}>
+        <Button variant="primary" disabled={app.busy} {@attach tip('Apply these changes again')} onclick={() => run('stashApply', 'Applied the dropped stash', false)}>
           Apply
         </Button>
       {:else}
         <Button
           variant="primary"
           disabled={app.busy}
-          title="Apply it, then remove it from the stash list"
+          {@attach tip("Apply it, then remove it from the list; only if it can't conflict with your files")}
           onclick={() => run('stashPop', 'Restored the stashed changes', true)}>Restore</Button
         >
-        <Button disabled={app.busy} title="Apply it and keep it in the stash list" onclick={() => run('stashApply', 'Applied the stash; it stays in the list', false)}>
+        <Button disabled={app.busy} {@attach tip("Apply it and keep it in the list; only if it can't conflict with your files")} onclick={() => run('stashApply', 'Applied the stash; it stays in the list', false)}>
           Apply
         </Button>
         <ConfirmButton
