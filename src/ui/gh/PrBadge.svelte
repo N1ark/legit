@@ -37,8 +37,9 @@
     color: var(--success);
   }
 
+  /* Open too, so green, but quieter; its icon is the outline. */
   .draft {
-    color: var(--muted);
+    color: color-mix(in oklab, var(--success) 60%, var(--muted));
   }
 
   .merged {
