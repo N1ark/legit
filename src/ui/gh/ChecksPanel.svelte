@@ -9,6 +9,7 @@
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { STATE_LABEL, describeCounts, duration, formatDuration } from '../lib/gh-checks.ts';
   import { FINISHED, type CheckGroup, type CheckJob, type CheckState, type JobStep } from '../../shared/gh-checks.ts';
+  import { tip } from '../lib/tip.ts';
 
   interface Props {
     sha: string;
@@ -53,7 +54,7 @@
 {#if !data}
   <p class="muted note"><Spinner size={12} /> Loading…</p>
 {:else if !data.groups.length}
-  <p class="muted note">No checks ran on this commit.</p>
+  <p class="muted note">No checks</p>
 {:else}
   {#each data.groups as g (g.key)}
     <section aria-label={stateText(g.state, g.name)}>
@@ -108,12 +109,12 @@
               <span class="twisty"></span>
             {/if}
             <span class="st" use:tooltip={STATE_LABEL[j.state]} aria-label={STATE_LABEL[j.state]} role="img"><CheckIcon state={j.state} /></span>
-            <span class="name" title={j.description ?? j.name}>
+            <span class="name" use:tooltip={j.description ?? j.name}>
               {j.name}
               {#if j.description}<span class="muted desc">{j.description}</span>{/if}
             </span>
-            {#if j.required}<Tag label="Required" title="Required by the base branch's protection rules" />{/if}
-            <span class="muted time" title={j.startedAt ? `Started ${formatFull(Date.parse(j.startedAt))}` : undefined}
+            {#if j.required}<span use:tooltip={"Required by the base branch's protection rules"}><Tag label="Required" /></span>{/if}
+            <span class="muted time" use:tooltip={j.startedAt ? `Started ${formatFull(Date.parse(j.startedAt))}` : null}
               >{j.state === 'pending' ? 'queued' : took(j.state, j.startedAt, j.completedAt)}</span
             >
             {#if j.jobId !== null}
@@ -126,7 +127,7 @@
                 >
               {/if}
               {#if j.state === 'failure'}
-                <Button size="sm" variant="danger" onclick={() => openLog(j)} title="Show the log of the step that failed">
+                <Button size="sm" variant="danger" onclick={() => openLog(j)} {@attach tip('Show the log of the step that failed')}>
                   <FileText /> Log
                 </Button>
               {:else}
@@ -147,9 +148,9 @@
           </li>
           {#if open}
             {#if !steps}
-              <li class="steps muted"><Spinner size={12} /> Loading steps…</li>
+              <li class="steps muted"><Spinner size={12} /> Loading…</li>
             {:else if !steps.steps.length}
-              <li class="steps muted">No steps yet: the job is queued.</li>
+              <li class="steps muted">Queued</li>
             {:else}
               {#each steps.steps as s (s.number)}
                 {@const clickable = hasLog(j) && s.state !== 'skipped'}

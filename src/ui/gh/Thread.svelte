@@ -1,7 +1,7 @@
 <script lang="ts">
   // A review thread: a bar saying where it is and who said what (a click opens or closes it), its
   // comments, and a reply box with Resolve. Resolved threads start closed.
-  import { Avatar, Button, Kbd, Tag, TextArea, Twisty, matches } from 'purr';
+  import { Avatar, Button, Kbd, Tag, TextArea, Twisty, matches, tooltip } from 'purr';
   import { CheckCircle, ArrowCounterClockwise } from 'purr/icons';
   import ReviewComment from './ReviewComment.svelte';
   import { reviews } from '../lib/gh-review.svelte.ts';
@@ -82,12 +82,14 @@
       <span class="muted count">{thread.comments.length - 1} {thread.comments.length === 2 ? 'reply' : 'replies'}{others > 1 ? ` · ${others} people` : ''}</span>
     {/if}
     {#if thread.comments.some((c) => c.pending)}<Tag color="var(--warn)" label="Pending" />{/if}
-    {#if thread.outdated}<Tag label="Outdated" title="The lines it was on have changed since" />{/if}
+    {#if thread.outdated}<span use:tooltip={'The lines it was on have changed since'}><Tag label="Outdated" /></span>{/if}
     {#if moved && !thread.outdated}
-      <Tag label="Earlier version" title="Made on an earlier version of this commit; found here by the line's text" />
+      <span use:tooltip={"Made on an earlier version of this commit; found here by the line's text"}><Tag label="Earlier version" /></span>
     {/if}
     {#if thread.resolved}
-      <Tag color="var(--success)" title={thread.resolvedBy ? `Resolved by ${thread.resolvedBy}` : 'Resolved'}><span class="tag-icon"><CheckCircle /> Resolved</span></Tag>
+      <span use:tooltip={thread.resolvedBy ? `Resolved by ${thread.resolvedBy}` : null}
+        ><Tag color="var(--success)"><span class="tag-icon"><CheckCircle /> Resolved</span></Tag></span
+      >
     {/if}
   </button>
   {#if open}
@@ -111,7 +113,7 @@
             value={draft}
             oninput={(e) => (reviews.replies[thread.id] = e.currentTarget.value)}
             rows={3}
-            placeholder="Reply… (markdown)"
+            placeholder="Reply…"
             aria-label="Reply"
             onkeydown={replyKey}
             autofocus={replying}

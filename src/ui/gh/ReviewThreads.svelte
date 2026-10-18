@@ -14,7 +14,7 @@
 
   interface Props {
     number: number;
-    /** After "Show in diff", "Finish your review" or "Overview", for a popover holding it to close. */
+    /** After "Show in diff", "Finish review" or "Overview", for a popover holding it to close. */
     ondone?: () => void;
   }
   let { number, ondone }: Props = $props();
@@ -79,16 +79,15 @@
   {#if data?.pending}
     <div class="pending">
       <span>
-        You have <b>{data.pending.comments}</b>
-        {data.pending.comments === 1 ? 'comment' : 'comments'} pending in your review: only you see them until it's submitted.
+        <b>{data.pending.comments}</b> pending {data.pending.comments === 1 ? 'comment' : 'comments'}: only you see them until you submit.
       </span>
-      <Button size="sm" variant="primary" onclick={() => (gh.showPr(number), ondone?.())}>Finish your review</Button>
+      <Button size="sm" variant="primary" onclick={() => (gh.showPr(number), ondone?.())}>Finish review</Button>
     </div>
   {/if}
   {#if !data}
     <p class="muted">Loading…</p>
   {:else if !files.length}
-    <p class="muted">No comments on lines yet. Pick lines in a commit of this pull request to comment on them.</p>
+    <p class="muted">None yet. Pick lines in a commit to comment on them.</p>
   {:else}
     {#each files as f (f.path)}
       <div class="file">

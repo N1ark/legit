@@ -1,7 +1,7 @@
 <script lang="ts">
   // A new GitHub issue: its title, a markdown description (written or previewed), labels and
   // assignees. Closing it without creating keeps what was typed for next time.
-  import { Avatar, Button, Kbd, Modal, Segmented, Spinner, Tag, TextArea, TextField, errorMessage, matches, menu } from 'purr';
+  import { Avatar, Button, Kbd, Modal, Segmented, Spinner, Tag, TextArea, TextField, errorMessage, matches, menu, tooltip } from 'purr';
   import { Tag as TagIcon, UserPlus } from 'purr/icons';
   import { untrack } from 'svelte';
   import Markdown from '../Markdown.svelte';
@@ -100,7 +100,7 @@
           { id: 'preview', label: 'Preview' },
         ]}
       />
-      <span class="muted hint">Markdown. Type # to mention an issue or pull request.</span>
+      <span class="muted hint">Markdown · # to mention</span>
     </div>
     {#if mode === 'write'}
       <TextArea bind:value={body} rows={10} placeholder="Description" aria-label="Description" {@attach refComplete} />
@@ -112,10 +112,12 @@
     <div class="pick">
       <Button size="sm" disabled={!meta} onclick={pickLabels}><TagIcon /> Labels</Button>
       {#each labels as name (name)}
-        <Tag title={labelOf(name)?.description ?? undefined} onremove={() => (labels = toggle(labels, name))} removeLabel="Remove {name}">
-          {@const color = labelOf(name)?.color}
-          <span class="dot" style:background={color ? `#${color}` : 'var(--faint)'}></span>{name}
-        </Tag>
+        <span use:tooltip={labelOf(name)?.description}>
+          <Tag onremove={() => (labels = toggle(labels, name))} removeLabel="Remove {name}">
+            {@const color = labelOf(name)?.color}
+            <span class="dot" style:background={color ? `#${color}` : 'var(--faint)'}></span>{name}
+          </Tag>
+        </span>
       {/each}
     </div>
     <div class="pick">
@@ -129,7 +131,7 @@
     {#if metaError}
       <p class="muted">Couldn't load the labels and assignees: {metaError}</p>
     {:else if !meta}
-      <p class="muted"><Spinner size={12} /> Loading labels and assignees…</p>
+      <p class="muted"><Spinner size={12} /> Loading…</p>
     {/if}
   </div>
 

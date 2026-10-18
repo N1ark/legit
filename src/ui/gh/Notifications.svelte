@@ -1,7 +1,7 @@
 <script lang="ts">
   // The bell in the header: GitHub notifications, this repo's or everyone's. A pull request of this
   // repo opens in legit's own view; anything else opens on GitHub. Opening one marks it read.
-  import { Badge, Button, EmptyState, IconButton, Popover, Segmented, formatFull, formatRelative, persisted } from 'purr';
+  import { Badge, Button, EmptyState, IconButton, Popover, Segmented, formatFull, formatRelative, persisted, tooltip } from 'purr';
   import {
     ArrowSquareOut, Bell, BellSlash, ChatsCircle, Check, CheckCircle, EnvelopeOpen, GitCommit, GitPullRequest, IssueOpened as IssueIcon, PlayCircle, Tag,
   } from 'purr/icons';
@@ -107,16 +107,16 @@
     {:else if notifications.items === null}
       <p class="muted">Loading…</p>
     {:else if !items.length}
-      <EmptyState icon={CheckCircle} text="All caught up" hint={scope.value === 'repo' ? `Nothing from ${repo}.` : 'No notifications.'} />
+      <EmptyState icon={CheckCircle} text="All caught up" />
     {:else}
       <ol>
         {#each items as n (n.id)}
           {@const Icon = ICONS[n.type]}
           <li class:unread={n.unread}>
-            <span class="icon" title={kind[n.type]}><Icon /></span>
+            <span class="icon" use:tooltip={kind[n.type]}><Icon /></span>
             <button
               class="main"
-              title={notifications.here(n) ? 'Open in legit' : 'Open on GitHub'}
+              use:tooltip={notifications.here(n) ? 'Open in legit' : 'Open on GitHub'}
               onclick={() => show(n)}
             >
               <span class="title">{n.title}</span>
@@ -125,7 +125,7 @@
                 {#if scope.value === 'all' || !inRepo(n)}<span class="repo">{n.repo}</span>{/if}
                 {#if n.number}<span>#{n.number}</span>{/if}
                 <span>{n.reason}</span>
-                <span title={formatFull(n.updatedAt)}>{formatRelative(n.updatedAt)}</span>
+                <span use:tooltip={formatFull(n.updatedAt)}>{formatRelative(n.updatedAt)}</span>
               </span>
             </button>
             <span class="actions">

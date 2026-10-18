@@ -139,7 +139,7 @@
     {/if}
   {/snippet}
   {#if !log}
-    <p class="muted loading"><Spinner size={14} /> Loading the log…</p>
+    <p class="muted loading"><Spinner size={14} /> Loading…</p>
   {:else}
     <div class="body">
       <nav aria-label="Steps">
@@ -162,8 +162,8 @@
         {#if step}
           {#if step.skipped}
             <p class="muted cut">
-              The first {step.skipped} lines are left out.
-              {#if stepUrl}<a href={stepUrl} target="_blank" rel="noreferrer">See them on GitHub</a>{/if}
+              {step.skipped} earlier lines left out.
+              {#if stepUrl}<a href={stepUrl} target="_blank" rel="noreferrer">On GitHub</a>{/if}
             </p>
           {/if}
           {#each step.lines as l, i (i)}
@@ -181,7 +181,7 @@
               >
             </div>
           {:else}
-            <p class="muted cut">This step wrote nothing.</p>
+            <p class="muted cut">No output</p>
           {/each}
         {/if}
       </div>

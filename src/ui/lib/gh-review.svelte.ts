@@ -18,7 +18,7 @@ export interface Draft {
   startLine?: number;
   startSide?: DiffSide;
   body: string;
-  /** The picked lines' new text, for "Suggest a change"; null when they're removed lines. */
+  /** The picked lines' new text, for "Suggest"; null when they're removed lines. */
   suggest: string[] | null;
 }
 
@@ -119,7 +119,7 @@ class Reviews {
     try {
       const r = await ghPost<{ line: number }>('reviewApply', { path, startLine, lines, replacement });
       app.workChanged();
-      toast.success(`Applied the suggestion to ${path} (line ${r.line}). It's in your uncommitted changes.`);
+      toast.success(`Applied the suggestion to ${path}:${r.line}`);
       return true;
     } catch (e) {
       toast.error(e);

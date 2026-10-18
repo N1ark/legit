@@ -1,5 +1,6 @@
 <script lang="ts">
   // A pull request's state icon and number, coloured by its state, which its label also says.
+  import { tooltip } from 'purr';
   import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'purr/icons';
   import { STATE_LABEL } from '../lib/gh-pr.ts';
   import type { PullRequest } from '../../shared/github.ts';
@@ -15,7 +16,7 @@
   const label = $derived(`Pull request #${pr.number}, ${STATE_LABEL[pr.state].toLowerCase()}: ${pr.title}`);
 </script>
 
-<span class="pr {pr.state}" title={label} aria-label={label} role="img">
+<span class="pr {pr.state}" use:tooltip={label} aria-label={label} role="img">
   <Icon weight={pr.state === 'draft' ? 'regular' : 'bold'} />
   <span class="n">#{pr.number}</span>
   {#if word && pr.state !== 'open'}<span class="word">{STATE_LABEL[pr.state]}</span>{/if}

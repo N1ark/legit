@@ -64,7 +64,7 @@
       </div>
     {:else}
       <div class="empty muted">
-        {#if completion.loading}<Spinner size={12} /> Looking…{:else}No issue or pull request matches “{completion.query}”.{/if}
+        {#if completion.loading}<Spinner size={12} /> Looking…{:else}No match{/if}
       </div>
     {/each}
   </div>

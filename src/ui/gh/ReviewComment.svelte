@@ -1,7 +1,7 @@
 <script lang="ts">
   // One comment of a review thread: who and when, its markdown (suggestions as small diffs), its
   // reactions, and for the viewer's own, editing and deleting.
-  import { Avatar, Button, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, menu } from 'purr';
+  import { Avatar, Button, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, menu, tooltip } from 'purr';
   import { ArrowSquareOut, Copy, DotsThree, PencilSimple, Smiley, Trash } from 'purr/icons';
   import Markdown from '../Markdown.svelte';
   import Suggestion from './Suggestion.svelte';
@@ -75,9 +75,9 @@
   <div class="head">
     <Avatar name={who} src={comment.author?.avatar} size={20} round />
     <b class="who">{who}</b>
-    <span class="muted when" title={formatFull(comment.createdAt)}>{formatRelative(comment.createdAt)}</span>
-    {#if comment.lastEditedAt}<span class="muted" title="Edited {formatFull(comment.lastEditedAt)}">· edited</span>{/if}
-    {#if comment.pending}<Tag color="var(--warn)" label="Pending" title="Part of your review, which isn't submitted yet: only you see it" />{/if}
+    <span class="muted when" use:tooltip={formatFull(comment.createdAt)}>{formatRelative(comment.createdAt)}</span>
+    {#if comment.lastEditedAt}<span class="muted" use:tooltip={`Edited ${formatFull(comment.lastEditedAt)}`}>· edited</span>{/if}
+    {#if comment.pending}<span use:tooltip={'Only you see it until your review is submitted'}><Tag color="var(--warn)" label="Pending" /></span>{/if}
     <span class="spacer"></span>
     <IconButton label="React" size="sm" onclick={react}><Smiley /></IconButton>
     <IconButton label="More" size="sm" onclick={actions}><DotsThree weight="bold" /></IconButton>
@@ -107,7 +107,7 @@
           class="reaction"
           class:mine={r.mine}
           aria-pressed={r.mine}
-          title="{NAMES[r.content]}: {r.count}{r.mine ? ', you included' : ''}"
+          use:tooltip={`${NAMES[r.content]}: ${r.count}${r.mine ? ', you included' : ''}`}
           onclick={() => reviews.react(number, comment, r.content)}>{EMOJI[r.content]} {r.count}</button
         >
       {/each}

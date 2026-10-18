@@ -5,6 +5,7 @@
   import { FileArrowDown } from 'purr/icons';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { commentedLines } from '../lib/gh-threads.ts';
+  import { tip } from '../lib/tip.ts';
   import type { ReviewThread } from '../../shared/gh-review.ts';
 
   interface Props {
@@ -37,11 +38,13 @@
       onclick={apply}
       loading={applying}
       disabled={!before}
-      title={before
-        ? `Replace ${before.length === 1 ? 'this line' : `these ${before.length} lines`} in your copy of ${thread.path}, if ${before.length === 1 ? 'it still reads' : 'they still read'} the same; the change shows in your uncommitted changes`
-        : "Only suggestions on the new side's lines can be applied"}
+      {@attach tip(
+        before
+          ? `Replace ${before.length === 1 ? 'this line' : `these ${before.length} lines`} in your copy of ${thread.path}, if unchanged; it shows in your uncommitted changes`
+          : "Only suggestions on the new side's lines can be applied",
+      )}
     >
-      <FileArrowDown /> Apply to my files
+      <FileArrowDown /> Apply
     </Button>
   </div>
   <div class="lines mono">

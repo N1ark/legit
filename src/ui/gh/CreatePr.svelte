@@ -48,14 +48,14 @@
   const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
   const pushNote = $derived(
     !push ? ''
-    : push.publish ? `Publishes ${branch} to ${push.remote} first.`
-    : push.ahead && !push.behind ? `Pushes ${commits(push.ahead)} to ${push.remote}/${push.branch} first.`
+    : push.publish ? `Publishes ${branch} to ${push.remote} first`
+    : push.ahead && !push.behind ? `Pushes ${commits(push.ahead)} to ${push.remote}/${push.branch} first`
     : '',
   );
   /** Nothing on this branch that the base doesn't have: GitHub would refuse it. */
   const empty = $derived(info?.base === base && !info.commits.length);
   const optionLabel = (b: string) =>
-    b === info?.trunk ? `${b} (default branch)` : b === info?.suggested?.base ? `${b} (stack on #${info.suggested.number})` : b;
+    b === info?.trunk ? `${b} (default)` : b === info?.suggested?.base ? `${b} (stack on #${info.suggested.number})` : b;
 
   async function submit() {
     if (!title.trim() || !base || sending || empty) return;
@@ -82,17 +82,17 @@
         </select>
       </Field>
       <p class="muted note">
-        {info.base !== base ? 'Loading its commits…'
-        : empty ? `${branch} has nothing ${base} doesn't have yet.`
-        : `${commits(info.commits.length)} on ${branch} that ${base} doesn't have.`}
+        {info.base !== base ? 'Loading…'
+        : empty ? `Nothing ${base} doesn't have yet.`
+        : `${commits(info.commits.length)} ${base} doesn't have.`}
         {#if info.suggested && base !== info.suggested.base}
-          {branch} was started from <span class="mono">{info.suggested.base}</span>, which has #{info.suggested.number}: stack on it
-          to show only this branch's changes.
+          Started from <span class="mono">{info.suggested.base}</span> (#{info.suggested.number}): stack on it to show only this
+          branch's changes.
         {/if}
       </p>
       <TextField label="Title" bind:value={title} bind:input={titleInput} oninput={() => (edited = true)} disabled={sending} />
       <TextArea label="Description" bind:value={body} oninput={() => (edited = true)} rows={8} disabled={sending} placeholder="Markdown" />
-      <Checkbox label="Draft" hint="Not ready for review yet; it can't be merged until it's marked ready." bind:checked={draft} disabled={sending} />
+      <Checkbox label="Draft" bind:checked={draft} disabled={sending} />
     </div>
   {/if}
   {#snippet footer()}
@@ -100,7 +100,7 @@
     <Button variant="ghost" onclick={onclose}>Cancel</Button>
     <Button variant="primary" onclick={submit} disabled={!info || !title.trim() || sending || empty}>
       {#if sending}<Spinner label="Creating" />{:else}<GitPullRequest />{/if}
-      {draft ? 'Create draft pull request' : 'Create pull request'}
+      {draft ? 'Create draft PR' : 'Create PR'}
       <Kbd hint="⌘↩" />
     </Button>
   {/snippet}

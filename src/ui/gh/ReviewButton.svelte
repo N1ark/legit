@@ -6,6 +6,7 @@
   import ReviewThreads from './ReviewThreads.svelte';
   import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
+  import { tip } from '../lib/tip.ts';
 
   const pr = $derived(reviews.pr);
   const data = $derived(pr ? (reviews.byNumber[pr.number] ?? null) : null);
@@ -26,7 +27,7 @@
       variant="ghost"
       aria-expanded={open}
       onclick={() => (open = !open)}
-      title="Review threads of #{pr.number}{data.pending ? `; ${data.pending.comments} of your comments are pending` : ''}"
+      {@attach tip(`Review threads of #${pr.number}${data.pending ? `; ${data.pending.comments} of your comments are pending` : ''}`)}
     >
       <ChatsCircle />
       {unresolved ? `${unresolved} unresolved` : `${data.threads.length} resolved`}

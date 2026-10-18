@@ -1,10 +1,11 @@
 <script lang="ts">
-  // A new comment on lines of a diff: markdown, "Suggest a change" for the new side's lines, then
+  // A new comment on lines of a diff: markdown, "Suggest" for the new side's lines, then
   // posted alone or into the viewer's review (starting one). ⌘↵ does the first, Esc cancels.
   import { Button, Kbd, TextArea, matches } from 'purr';
   import { ChatCircleText, NotePencil, X } from 'purr/icons';
   import { type DiffReview, type Draft, reviews } from '../lib/gh-review.svelte.ts';
   import { suggestionBlock } from '../lib/gh-threads.ts';
+  import { tip } from '../lib/tip.ts';
 
   interface Props {
     review: DiffReview;
@@ -67,22 +68,22 @@
     <span>Comment on {lines}</span>
     {#if draft.suggest}
       <span class="spacer"></span>
-      <Button size="sm" variant="ghost" onclick={suggest} title="Insert a suggestion block with these lines' text, to edit into what they should be">
-        <NotePencil /> Suggest a change
+      <Button size="sm" variant="ghost" onclick={suggest} {@attach tip("Insert a suggestion block with these lines' text, to edit into what they should be")}>
+        <NotePencil /> Suggest
       </Button>
     {/if}
   </div>
-  <TextArea bind:value={draft.body} bind:textarea rows={4} placeholder="Leave a comment (markdown)" aria-label="Comment" onkeydown={key} mono={false} />
+  <TextArea bind:value={draft.body} bind:textarea rows={4} placeholder="Comment…" aria-label="Comment" onkeydown={key} mono={false} />
   <div class="buttons">
     {#if pending}
-      <Button size="sm" variant="primary" onclick={() => send(true)} loading={sending === 'review'} disabled={!draft.body.trim() || !!why} title={why ?? undefined}>
+      <Button size="sm" variant="primary" onclick={() => send(true)} loading={sending === 'review'} disabled={!draft.body.trim() || !!why} {@attach tip(why)}>
         Add to review <Kbd hint="⌘↩" />
       </Button>
-      <Button size="sm" onclick={() => send(false)} loading={sending === 'now'} disabled={!draft.body.trim() || !!why} title={why ?? 'Post it now, on its own'}>
+      <Button size="sm" onclick={() => send(false)} loading={sending === 'now'} disabled={!draft.body.trim() || !!why} {@attach tip(why ?? 'Post it now, on its own')}>
         Comment now
       </Button>
     {:else}
-      <Button size="sm" variant="primary" onclick={() => send(false)} loading={sending === 'now'} disabled={!draft.body.trim() || !!why} title={why ?? undefined}>
+      <Button size="sm" variant="primary" onclick={() => send(false)} loading={sending === 'now'} disabled={!draft.body.trim() || !!why} {@attach tip(why)}>
         Comment <Kbd hint="⌘↩" />
       </Button>
       <Button
@@ -90,7 +91,7 @@
         onclick={() => send(true)}
         loading={sending === 'review'}
         disabled={!draft.body.trim() || !!why}
-        title={why ?? 'Keep it in a review only you see, to submit with your other comments'}
+        {@attach tip(why ?? 'Keep it in a review only you see, to submit with your other comments')}
       >
         Start a review
       </Button>
