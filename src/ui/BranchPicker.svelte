@@ -22,6 +22,7 @@
     restoreBranch, setUpstream, switchOp, unsetUpstream,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
+  import { pick } from './lib/picker.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
   import PrBadge from './gh/PrBadge.svelte';
@@ -54,9 +55,10 @@
   let browsing = $state<string | null>(null);
   let theirs = $state.raw<{ commits: CommitInfo[]; total: number } | null>(null);
   const picked = new SvelteSet<string>();
-  /** Local branches selected with ⌘/⇧-click (switch mode), and where a ⇧-click range starts. */
+  /** Local branches selected with ⌘/⇧-click (switch mode), where a ⇧-click range starts, and those selected then. */
   const chosen = new SvelteSet<string>();
   let anchor = $state<string | null>(null);
+  let pickedBefore: string[] = [];
   /** The branch whose upstream is being picked (upstream mode), and the remotes, longest name first. */
   let tracker = $state<string | null>(null);
   let remoteNames = $state<string[]>([]);
@@ -225,20 +227,18 @@
   );
   const upstreams = $derived(deletable.map(remoteUpstream).filter(Boolean).map((u) => `refs/remotes/${u}`));
 
-  /** ⌘/Ctrl-click adds or removes a local branch, ⇧-click selects the range from the last one; a plain click chooses it. */
+  /**
+   * ⌘/Ctrl-click adds or removes a local branch, ⇧-click adds the range from the last one ⌘-clicked
+   * (as in Finder, see `pick`); a plain click chooses it.
+   */
   function onrowclick(e: MouseEvent, r: Row) {
     const toggle = isMac ? e.metaKey : e.ctrlKey;
     if (mode !== 'switch' || r.kind !== 'local' || !(toggle || e.shiftKey)) return choose(r);
     const shown = rows.flatMap((x) => (x.kind === 'local' ? [x.b.name] : []));
-    const [from, to] = [anchor ? shown.indexOf(anchor) : -1, shown.indexOf(r.b.name)];
-    if (e.shiftKey && from >= 0) {
-      chosen.clear();
-      for (const name of shown.slice(Math.min(from, to), Math.max(from, to) + 1)) chosen.add(name);
-      return;
-    }
-    if (chosen.has(r.b.name)) chosen.delete(r.b.name);
-    else chosen.add(r.b.name);
-    anchor = r.b.name;
+    const next = pick({ chosen: [...chosen], anchor, base: pickedBefore }, shown, r.b.name, e.shiftKey);
+    chosen.clear();
+    for (const name of next.chosen) chosen.add(name);
+    [anchor, pickedBefore] = [next.anchor, next.base];
   }
 
   /** Delete the selected branches; the server skips the ones that can't be, and the toast says which. */
