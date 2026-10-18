@@ -33,8 +33,11 @@ class Checks {
 
   private wanted = new Map<string, { rows: number; since: number }>();
   private queued = new Set<string>();
+  /** Asked about, no answer yet. */
+  private asking = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private loads = new Map<string, number>();
+  private rowsAt = 0;
   /** The pull request a commit heads, for which of its checks are required. */
   private prs = new Map<string, number>();
 
@@ -55,14 +58,17 @@ class Checks {
   /** Ask again about the rows that may have changed: still running, or recent and without checks yet. */
   refreshRows() {
     const now = Date.now();
+    if (now - this.rowsAt < 15_000) return;
+    this.rowsAt = now;
     this.queue(
       [...this.wanted].filter(([sha, w]) => !(sha in this.rollups) || this.rollups[sha] === 'pending' || (this.rollups[sha] === null && now - w.since < RECENT)).map(([sha]) => sha),
     );
   }
 
   private queue(shas: string[]) {
-    for (const s of shas) this.queued.add(s);
-    this.timer ??= setTimeout(() => this.flush(), 50);
+    for (const s of shas) if (!this.asking.has(s)) this.queued.add(s);
+    // Rows mount a few at a time as the list renders: gather them into one request.
+    if (this.queued.size) this.timer ??= setTimeout(() => this.flush(), 250);
   }
 
   private async flush() {
@@ -71,12 +77,16 @@ class Checks {
     if (!gh.ready || !this.queued.size) return;
     const shas = [...this.queued];
     this.queued.clear();
+    for (const s of shas) this.asking.add(s);
     for (let i = 0; i < shas.length; i += 100) {
+      const chunk = shas.slice(i, i + 100);
       try {
-        const got = await ghRequest<Record<string, RollupState | null>>('checksRollups', { shas: shas.slice(i, i + 100).join(',') });
+        const got = await ghRequest<Record<string, RollupState | null>>('checksRollups', { shas: chunk.join(',') });
         this.rollups = { ...this.rollups, ...got };
       } catch {
         // Background: the dots stay as they were.
+      } finally {
+        for (const s of chunk) this.asking.delete(s);
       }
     }
   }

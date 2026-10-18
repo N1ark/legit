@@ -42,6 +42,9 @@ export const ghPost = <T,>(name: string, body: unknown = {}) => ghRequest<T>(nam
 /** What the main area shows instead of a commit, when not null. */
 export type GhView = { kind: 'pr'; number: number };
 
+/** How often a refresh that found the same pull request still has the views reload theirs. */
+const TICK_EVERY = 30_000;
+
 class Github {
   status = $state<GithubStatus | null>(null);
   /** The current branch's pull request (null: none, or not on GitHub); undefined until looked up. */
@@ -54,6 +57,7 @@ class Github {
 
   private branch: string | null = null;
   private lastAt = 0;
+  private tickAt = 0;
   private statusAt = 0;
   private statusLoad: Promise<void> | null = null;
   private gen = 0;
@@ -81,8 +85,14 @@ class Github {
       }
       const pr = await ghRequest<PullRequest | null>('pr', { branch, fresh: opts.fresh ? 1 : null });
       if (gen === this.gen) {
+        const changed = JSON.stringify(pr) !== JSON.stringify(this.pr);
         this.pr = pr;
-        this.tick++;
+        // Every edit here refreshes, but GitHub hasn't changed because of it: the views reload
+        // their own data when the pull request did, when asked to, and otherwise at most this often.
+        if (changed || opts.fresh || Date.now() - this.tickAt > TICK_EVERY) {
+          this.tickAt = Date.now();
+          this.tick++;
+        }
       }
     } catch (e) {
       if (gen === this.gen && opts.fresh) toast.error(e);
