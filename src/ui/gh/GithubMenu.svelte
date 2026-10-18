@@ -39,7 +39,7 @@
         !!error && 'separator',
         { label: 'New issue…', icon: IssueOpened, disabled: !!why, note: why, run: () => openNewIssue() },
         gh.pr
-          ? { label: `Pull request #${gh.pr.number}`, icon: GitPullRequest, run: () => gh.showPr(gh.pr!.number) }
+          ? { label: `Pull request #${gh.pr.number}`, icon: GitPullRequest, hint: 'p', run: () => gh.showPr(gh.pr!.number) }
           : { label: 'New pull request…', icon: GitPullRequest, disabled: !!why, note: why, run: () => openCreatePr() },
         'separator',
         link('Open repository on GitHub'),

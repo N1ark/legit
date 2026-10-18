@@ -1,9 +1,10 @@
 <script lang="ts">
   // Every review thread of pull request `number`, by file, unresolved first: each opens in place to
   // read and answer, and "Show in diff" selects the commit it's on and scrolls to it. Also says
-  // how many comments of the viewer's review are pending, with a way to finish it.
+  // how many comments of the viewer's review are pending, with a way to finish it. In a popover
+  // (`ondone`), it also leads to the pull request's overview.
   import { Button, IconButton } from 'purr';
-  import { ArrowsClockwise, Crosshair } from 'purr/icons';
+  import { Article, ArrowsClockwise, Crosshair } from 'purr/icons';
   import Thread from './Thread.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
@@ -13,7 +14,7 @@
 
   interface Props {
     number: number;
-    /** After "Show in diff" or "Finish your review", for a popover holding it to close. */
+    /** After "Show in diff", "Finish your review" or "Overview", for a popover holding it to close. */
     ondone?: () => void;
   }
   let { number, ondone }: Props = $props();
@@ -70,6 +71,9 @@
       <span class="muted">{unresolved} unresolved{data.threads.length > unresolved ? ` · ${data.threads.length - unresolved} resolved` : ''}</span>
     {/if}
     <span class="spacer"></span>
+    {#if ondone}
+      <Button size="sm" variant="ghost" onclick={() => (gh.showPr(number), ondone())}><Article /> Overview</Button>
+    {/if}
     <IconButton label="Refresh" size="sm" onclick={refresh} disabled={refreshing}><ArrowsClockwise /></IconButton>
   </div>
   {#if data?.pending}

@@ -96,6 +96,14 @@ class Github {
     app.ghView = { kind: 'pr', number };
   }
 
+  /** The overview of the current branch's pull request, or back to the commits if it's already shown. */
+  togglePr() {
+    const pr = this.pr;
+    if (!pr) return toast(this.ready ? `${app.repo?.branch ?? 'HEAD'} has no pull request.` : (this.status?.error ?? 'This repository is not on GitHub.'));
+    if (this.view?.kind === 'pr' && this.view.number === pr.number) this.close();
+    else this.showPr(pr.number);
+  }
+
   close() {
     app.ghView = null;
   }

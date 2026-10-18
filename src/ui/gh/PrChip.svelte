@@ -1,10 +1,11 @@
 <script lang="ts">
   // The current branch's pull request, in the header: its state and number, opening a card with
-  // its title, branches and author, links to it, and the stack it's in (pull requests based on
-  // one another's branches), trunk at the bottom as `gt log` draws it. Choosing one switches to
-  // its branch; when the branch it's stacked on has moved on or was merged, the card offers to
-  // restack it. A branch without a pull request gets "Create pull request" instead.
-  import { Avatar, Button, Callout, ConfirmButton, Popover } from 'purr';
+  // its title, branches and author, the way to its overview (first; P from anywhere) and to
+  // GitHub, and the stack it's in (pull requests based on one another's branches), trunk at the
+  // bottom as `gt log` draws it. Choosing one switches to its branch; when the branch it's stacked
+  // on has moved on or was merged, the card offers to restack it. The chip is lit while the
+  // overview is shown. A branch without a pull request gets "Create pull request" instead.
+  import { Avatar, Button, Callout, ConfirmButton, Kbd, Popover } from 'purr';
   import { ArrowSquareOut, Article, GitBranch, GitPullRequest, Stack, Warning } from 'purr/icons';
   import { untrack } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
@@ -29,6 +30,8 @@
   const chipLabel = $derived(
     pr ? `Pull request #${pr.number}, ${STATE_LABEL[pr.state].toLowerCase()}${plan ? ', needs restack' : ''}: ${pr.title}` : '',
   );
+  /** Its overview is what the main area shows. */
+  const shown = $derived(!!pr && gh.view?.kind === 'pr' && gh.view.number === pr.number);
 
   // The stack follows each refresh of the pull request (its branch, its tip, what was fetched).
   $effect(() => {
@@ -70,7 +73,7 @@
 </script>
 
 {#if pr}
-  <button bind:this={button} class="btn btn--ghost chip" onclick={show} aria-expanded={open} aria-label={chipLabel} title={chipLabel}>
+  <button bind:this={button} class="btn btn--ghost chip" class:shown onclick={show} aria-expanded={open} aria-label={chipLabel} title={chipLabel}>
     <PrBadge {pr} word />
     {#if plan}<span class="needs" aria-hidden="true"><Warning weight="bold" /></span>{/if}
   </button>
@@ -83,10 +86,10 @@
 {#if open && button && pr}
   <Popover anchor={button} label="Pull request #{pr.number}" onclose={() => (open = false)} width="min(520px, calc(100vw - 32px))" padding="var(--sp-4)">
     <div class="card">
-      <div class="head">
+      <button class="head" title="Show its overview" onclick={overview}>
         <PrBadge {pr} word />
         <span class="title"><Markdown text={pr.title} inline links="off" /></span>
-      </div>
+      </button>
       <div class="meta muted">
         <span class="mono refs" title="{pr.head} merges into {pr.base}">{pr.base} ← {pr.head}</span>
         {#if pr.author}
@@ -94,8 +97,8 @@
         {/if}
       </div>
       <div class="actions">
+        <Button size="sm" variant="primary" onclick={overview}><Article /> Overview <Kbd hint="p" /></Button>
         <Button size="sm" onclick={() => app.openUrl(pr.url)}><ArrowSquareOut /> Open on GitHub</Button>
-        <Button size="sm" variant="ghost" onclick={overview}><Article /> Overview</Button>
       </div>
 
       {#if plan}
@@ -182,6 +185,10 @@
     gap: var(--gap-2);
   }
 
+  .chip.shown {
+    background: var(--theme-soft);
+  }
+
   .needs {
     display: inline-flex;
     color: var(--warn);
@@ -201,6 +208,15 @@
     font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--color2);
+    text-align: left;
+    min-width: 0;
+  }
+
+  @media (hover: hover) {
+    .head:hover .title {
+      color: var(--theme2);
+      text-decoration: underline;
+    }
   }
 
   .head :global(.pr) {

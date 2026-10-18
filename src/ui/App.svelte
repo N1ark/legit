@@ -106,7 +106,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'find' | 'findNext' | 'findPrev';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -129,6 +129,7 @@
     { keys: 'b', action: 'branch', label: 'Switch branch' },
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
+    { keys: 'p', action: 'pr', label: "Show the branch's pull request" },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository or worktree' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
@@ -157,6 +158,7 @@
     else if (action === 'merge' || action === 'rebase') branchPicker?.show(action);
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
+    else if (action === 'pr') gh.togglePr();
     else if (action === 'settings') settings = true;
     else if (action === 'find') finder.start();
     else if (action === 'findNext' || action === 'findPrev') {
