@@ -3,7 +3,7 @@ import { purr } from 'purr/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [purr({ weights: ['regular', 'bold'] }), svelte()],
+  plugins: [purr({ weights: ['regular', 'bold', 'fill'] }), svelte()],
   // The highlight worker lazy-loads grammars, which needs code splitting.
   worker: { format: 'es' },
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1000 },
