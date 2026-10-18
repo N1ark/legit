@@ -33,7 +33,10 @@ export function githubToken(): Promise<string | null> {
     }
     return null;
   })();
-  return token;
+  // No token yet (gh timed out, or isn't signed in): look again next time rather than for good.
+  const asked = token;
+  asked.then((t) => t === null && token === asked && resetToken());
+  return asked;
 }
 
 /** Forget the token, so the next call looks again (after `gh auth login`, say). */
