@@ -32,6 +32,13 @@ onGraphql('PrStack', (v) => {
   return { repository };
 });
 
+// `hN`: the pull requests with that head, for the remote branches.
+onGraphql('RemotePrs', (v) => {
+  const repository: Record<string, unknown> = {};
+  for (const [k, name] of Object.entries(v)) if (/^h\d+$/.test(k)) repository[k] = { nodes: db.pulls.filter((p: any) => p.headRefName === name).reverse().map(prNode) };
+  return { repository };
+});
+
 onRest('POST /repos/:owner/:repo/pulls', (_, __, body) => {
   const head = String(body.head ?? '').replace(/^[^:]+:/, '');
   if (!db.tips[`origin/${head}`]) throw invalid(`head ${head} doesn't exist on acme/widgets (push it first).`);

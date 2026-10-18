@@ -1,4 +1,4 @@
-// Pull requests around the current branch: every local branch's (badges in the branch list), the
+// Pull requests around the current branch: every branch's (badges in the branch list), the
 // stack it's in (the header's pull request chip), restacking it, and opening a pull request.
 
 import { toast } from 'purr';
@@ -12,6 +12,8 @@ import type { PullRequest } from '../../shared/github.ts';
 class Prs {
   /** Each local branch's pull request, by branch name (once the branch list asked). */
   byBranch = $state.raw<Record<string, PullRequest>>({});
+  /** Each remote-tracking branch's, by `remote/branch`. */
+  byRemote = $state.raw<Record<string, PullRequest>>({});
   /** The stack the current branch's pull request is in; null when there's none. */
   stack = $state.raw<PrStack | null>(null);
   /** The "Create pull request" dialog is open. */
@@ -23,10 +25,12 @@ class Prs {
 
   async loadBranches(fresh = false) {
     this.branchesAsked = true;
-    if (!gh.ready) return void (this.byBranch = {});
-    try {
-      this.byBranch = await ghRequest<Record<string, PullRequest>>('prBranches', { fresh: fresh ? 1 : null });
-    } catch {}
+    if (!gh.ready) return void ([this.byBranch, this.byRemote] = [{}, {}]);
+    const q = { fresh: fresh ? 1 : null };
+    await Promise.all([
+      ghRequest<Record<string, PullRequest>>('prBranches', q).then((r) => (this.byBranch = r), () => {}),
+      ghRequest<Record<string, PullRequest>>('prRemoteBranches', q).then((r) => (this.byRemote = r), () => {}),
+    ]);
   }
 
   async loadStack(fresh = false) {

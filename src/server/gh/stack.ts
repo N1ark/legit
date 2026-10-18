@@ -38,6 +38,8 @@ interface Context {
   headRemote: string;
   /** Every local and remote-tracking ref → its SHA. */
   refs: Map<string, string>;
+  /** The remotes on GitHub, and their `owner/name` there (lowercase). */
+  remotes: { name: string; repo: string }[];
   current: string | null;
 }
 
@@ -71,7 +73,7 @@ async function context(repo: Repo, r: GhRepos): Promise<Context> {
   const byHeadName = new Map<string, Local>();
   for (const l of locals) if (!byHeadName.has(l.head) || l.name === l.head) byHeadName.set(l.head, l);
   return {
-    git, r, locals, byHead: byHeadName, baseRemote, headRemote, current,
+    git, r, locals, byHead: byHeadName, baseRemote, headRemote, current, remotes,
     refs: new Map(refs.split('\n').filter(Boolean).map((l) => l.split(' ') as [string, string])),
   };
 }
@@ -133,6 +135,47 @@ async function branchPrs(repo: Repo, fresh: boolean): Promise<Record<string, Pul
   const c = await context(repo, r);
   const heads = byHead((await batch(c, fresh)).prs);
   return Object.fromEntries(c.locals.flatMap((l) => (heads.has(l.head) ? [[l.name, heads.get(l.head)!]] : [])));
+}
+
+/** GitHub's pull request nodes of each branch name asked about. */
+const remoteFound = new Map<string, { at: number; value: Promise<Record<string, any[]>> }>();
+
+/**
+ * The remote-tracking branches' pull requests, by `remote/branch`: the most recently committed-to
+ * of every remote on GitHub, each matched to pull requests from that remote's owner.
+ */
+async function remoteBranchPrs(repo: Repo, fresh: boolean): Promise<Record<string, PullRequest>> {
+  const r = await ghRepos(repo);
+  if (!r) return {};
+  const c = await context(repo, r);
+  const out = await c.git.text(['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/remotes']);
+  const wanted: { key: string; owner: string; name: string }[] = [];
+  for (const ref of out.split('\n')) {
+    // The longest remote name that fits, as a remote's name may hold a slash.
+    const remote = c.remotes.filter((x) => ref.startsWith(`refs/remotes/${x.name}/`)).sort((a, b) => b.name.length - a.name.length)[0];
+    const name = remote ? ref.slice(`refs/remotes/${remote.name}/`.length) : 'HEAD';
+    if (name !== 'HEAD') wanted.push({ key: `${remote.name}/${name}`, owner: remote.repo.split('/')[0], name });
+    if (wanted.length === MAX_BRANCHES) break;
+  }
+  const names = [...new Set(wanted.map((w) => w.name))];
+  if (!names.length) return {};
+  const key = `${r.base}\0${names.join('\0')}`;
+  if (fresh) remoteFound.delete(key);
+  const nodes = await cached(remoteFound, key, 15_000, async () => {
+    const vars: Record<string, string> = { owner: r.owner, name: r.name };
+    const fields = names.map((h, i) => {
+      vars[`h${i}`] = h;
+      return `h${i}: pullRequests(headRefName: $h${i}, first: 10, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }`;
+    });
+    const decl = Object.keys(vars).map((k) => `$${k}: String!`).join(', ');
+    const d = await graphql(`query RemotePrs(${decl}) { repository(owner: $owner, name: $name) { ${fields.join('\n')} } }`, vars);
+    // Kept as GitHub's nodes: which is a branch's depends on whose remote it's on.
+    return Object.fromEntries(names.map((h, i) => [h, d.repository?.[`h${i}`]?.nodes ?? []]));
+  });
+  return Object.fromEntries(wanted.flatMap((w) => {
+    const pr = pickPr(nodes[w.name] ?? [], w.owner);
+    return pr ? [[w.key, pr]] : [];
+  }));
 }
 
 const isAncestor = async (git: Git, a: string, b: string) => (await git.run(['merge-base', '--is-ancestor', a, b], { allowFail: true })).code === 0;
@@ -310,6 +353,7 @@ async function retarget(repo: Repo, req: { number: unknown; base: unknown }): Pr
 
 export const stackGet: Record<string, GetRoute> = {
   prBranches: (repo, q) => branchPrs(repo, q.get('fresh') === '1'),
+  prRemoteBranches: (repo, q) => remoteBranchPrs(repo, q.get('fresh') === '1'),
   prStack: (repo, q) => prStack(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
   prCreateInfo: (repo, q) => createInfo(repo, q.get('branch') ?? '', q.get('base')),
 };
