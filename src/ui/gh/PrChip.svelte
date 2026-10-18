@@ -76,7 +76,7 @@
   </button>
 {:else if canCreate}
   <Button variant="ghost" size="sm" onclick={openCreatePr} title="Open a pull request for {app.repo?.branch} on GitHub">
-    <GitPullRequest /> Create pull request
+    <GitPullRequest /> Create PR
   </Button>
 {/if}
 

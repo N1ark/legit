@@ -53,7 +53,7 @@
   const fetchLabel = $derived(
     fetchProgress.length ? progressSummary(fetchProgress)
     : app.fetching ? 'Fetching…'
-    : fetched ? `Fetched ${formatRelative(fetched, { now: Math.max(now, fetched) })}`
+    : fetched ? formatRelative(fetched, { now: Math.max(now, fetched) })
     : 'Fetch',
   );
   const fetchTitle = $derived(
