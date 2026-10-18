@@ -123,8 +123,8 @@ async function removable(w: WorktreeInfo): Promise<string | null> {
 
 /**
  * Remove a worktree: its folder (ignored files included) and git's record of it. Its branch
- * stays; a detached HEAD that no branch, tag or remote branch has is saved first. A worktree
- * whose folder is already gone is only forgotten.
+ * stays; a detached HEAD that no branch, tag or remote branch has is saved first (even when its
+ * folder is already gone, and the worktree is only forgotten).
  */
 export function removeWorktree(repo: Repo, req: { path: string }): Promise<OpResult> {
   return repo.exclusive(async () => {
@@ -134,8 +134,9 @@ export function removeWorktree(repo: Repo, req: { path: string }): Promise<OpRes
     if (why) throw new GitError(`Couldn't remove ${w.name}. ${why} Nothing was changed.`);
 
     let saved: string | null = null;
-    if (!w.branch && w.head && !w.missing) {
-      const lost = await repo.git.text(['rev-list', '-n1', w.head, '--not', '--branches', '--tags', '--remotes']);
+    // A missing one's too: its folder is gone, but its commits are still in the repository.
+    if (!w.branch && w.head) {
+      const lost = await repo.git.text(['rev-list', '-n1', w.head, '--not', '--branches', '--tags', '--remotes'], { allowFail: true });
       if (lost) {
         saved = `${DELETED}/${w.name.replace(/[^\w-]+/g, '-') || 'worktree'}/${Date.now()}`;
         await repo.git.run(['update-ref', '-m', `legit: backup before removing worktree ${w.name}`, saved, w.head, '']);

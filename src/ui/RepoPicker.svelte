@@ -2,13 +2,14 @@
   // The repository name in the header. It opens this repository's other worktrees, to switch to
   // one, add one or remove one; in the desktop app, the recent repositories too: pick one to
   // switch to it, or open another.
-  import { Highlight, IS_TAURI, IconButton, Popover, rank, toast, tooltip } from 'purr';
+  import { ConfirmButton, Highlight, IS_TAURI, IconButton, Popover, rank, toast, tooltip } from 'purr';
   import { CaretDown, Check, FolderOpen, FolderPlus, LockSimple, Trash, X } from 'purr/icons';
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { invoke } from './lib/desktop.ts';
   import { startCursor } from './lib/picker.ts';
-  import { listWorktrees, newWorktree, openWorktree, removeWorktree } from './lib/worktrees.svelte.ts';
+  import { tip } from './lib/tip.ts';
+  import { listWorktrees, newWorktree, openWorktree, removeWorktree, removeWorktreeTip } from './lib/worktrees.svelte.ts';
 
   interface RecentRepo {
     path: string;
@@ -81,11 +82,11 @@
 
   async function choose(r: Row | undefined) {
     if (!r) return;
+    if (r.kind === 'worktree' && r.w.missing) return toast(`${r.w.short} is gone: click its bin twice to forget it.`);
     open = false;
     if (r.kind === 'new') return newWorktree();
     if (r.kind === 'worktree') {
       if (r.w.current) return;
-      if (r.w.missing) return removeWorktree(r.w);
       return openWorktree(r.w.path);
     }
     if (r.kind === 'recent' && r.r.current) return;
@@ -109,8 +110,7 @@
   }
 
   async function remove(w: WorktreeInfo) {
-    open = false;
-    if (await removeWorktree(w)) show();
+    if (await removeWorktree(w)) load();
   }
 
   /** Switching away is refused while something runs; adding or removing a worktree isn't. */
@@ -201,10 +201,19 @@
               {#if w.locked !== null}
                 <span class="lock muted" use:tooltip={`Locked${w.locked ? `: ${w.locked}` : ''}`}><LockSimple /></span>
               {:else if !w.main && !w.current}
-                <span class="forget">
-                  <IconButton label={w.missing ? 'Forget this worktree' : 'Remove this worktree…'} size="sm" onclick={(e) => (e.stopPropagation(), remove(w))}>
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <span class="forget" onclick={(e) => e.stopPropagation()}>
+                  <ConfirmButton
+                    variant="ghost"
+                    size="sm"
+                    class="btn--danger"
+                    confirmLabel={w.missing ? 'Click again to forget' : 'Click again to remove'}
+                    onconfirm={() => remove(w)}
+                    aria-label={w.missing ? 'Forget this worktree' : 'Remove this worktree'}
+                    {@attach tip(removeWorktreeTip(w))}
+                  >
                     <Trash />
-                  </IconButton>
+                  </ConfirmButton>
                 </span>
               {/if}
             {:else if r.kind === 'new'}
@@ -346,7 +355,8 @@
   }
 
   li:hover .forget,
-  li.is-cursor .forget {
+  li.is-cursor .forget,
+  .forget:focus-within {
     visibility: visible;
   }
 </style>

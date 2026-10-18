@@ -126,4 +126,13 @@ test('remove a worktree: refused when it has changes, is current, main or locked
   await removeWorktree(repo, { path: e.path });
   assert.equal((await worktrees(repo)).length, 1);
   await assert.rejects(removeWorktree(repo, { path: e.path }), /no worktree at/);
+
+  // Gone, and detached on a commit no branch has: that commit is still saved.
+  const g = await addWorktree(repo, { branch: 'w', path: '../legit-gone' });
+  t.gitIn(g.path, 'switch', '-q', '--detach');
+  t.gitIn(g.path, 'commit', '-q', '--allow-empty', '-m', 'stranded');
+  const stranded = t.gitIn(g.path, 'rev-parse', 'HEAD');
+  rmSync(g.path, { recursive: true, force: true });
+  await removeWorktree(repo, { path: g.path });
+  assert.deepEqual((await deletedBranches(repo)).map((b) => [b.name, b.sha]), [['legit-gone', stranded], ['legit-detached', lonely]]);
 });

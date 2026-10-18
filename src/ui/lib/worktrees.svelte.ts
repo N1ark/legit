@@ -51,19 +51,19 @@ export async function newWorktree(start: { branch?: string; from?: string; what?
   return true;
 }
 
-/** Remove a worktree, after asking: its folder goes, its branch stays. */
+/**
+ * Remove a worktree, once its button was clicked twice: its folder goes, its branch stays (the
+ * server refuses one with uncommitted changes or untracked files, and keeps commits only it has).
+ */
 export async function removeWorktree(w: WorktreeInfo): Promise<boolean> {
-  const answer = await dialog.ask({
-    title: `Remove ${w.name}?`,
-    description: w.missing
-      ? `${w.short} is already gone; this only forgets the worktree.`
-      : `Deletes ${w.short}, ignored files included. ${
-          w.branch ? `The branch ${w.branch} stays.` : 'Commits only it has are kept under Recently deleted branches.'
-        } Refused if it has uncommitted changes or untracked files.`,
-    confirmLabel: 'Remove worktree',
-    danger: true,
-  });
-  if (!answer || !(await app.op('removeWorktree', { path: w.path }))) return false;
-  toast(`Removed ${w.name}`);
+  if (!(await app.op('removeWorktree', { path: w.path }))) return false;
+  toast(w.missing ? `Forgot ${w.name}` : `Removed ${w.name}`);
   return true;
+}
+
+/** What removing `w` does, for its button's tooltip. */
+export function removeWorktreeTip(w: WorktreeInfo): string {
+  if (w.missing) return `Forget it: ${w.short} is already gone`;
+  const keeps = w.branch ? `${w.branch} stays` : 'commits only it has go under Recently deleted';
+  return `Remove it: deletes ${w.short}, ignored files included; ${keeps}. Refused if it has uncommitted changes or untracked files.`;
 }
