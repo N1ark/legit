@@ -1,7 +1,7 @@
 <script lang="ts">
   // A pull request's timeline: comments (the viewer's own editable), reviews with their state
   // and words, pushes, and everything else as one-line events.
-  import { Avatar, Button, ConfirmButton, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches } from 'purr';
+  import { Avatar, Button, ConfirmButton, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
   import {
     ArrowsClockwise, ChatCircle, CheckCircle, Eye, GitBranch, GitCommit, GitMerge, GitPullRequest, GitPullRequestClosed, PencilSimple,
     Tag as TagIcon, TextT, Trash, UserPlus, XCircle,
@@ -10,6 +10,7 @@
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { eventText, ghAvatar, pushedText } from '../lib/gh-prview.ts';
+  import { tip } from '../lib/tip.ts';
 
   interface Props {
     pr: PrOverview;
@@ -70,12 +71,12 @@
 </script>
 
 {#snippet time(at: string)}
-  <time class="muted" datetime={at} title={formatFull(at)}>{when(at)}</time>
+  <time class="muted" datetime={at} use:tooltip={formatFull(at)}>{when(at)}</time>
 {/snippet}
 
 {#snippet sha(s: string, short: string)}
   {#if app.bySha.has(s)}
-    <button class="mono sha here" title="Show this commit" onclick={() => app.select(s)}>{short}</button>
+    <button class="mono sha here" use:tooltip={'Show this commit'} onclick={() => app.select(s)}>{short}</button>
   {:else}
     <span class="mono sha">{short}</span>
   {/if}
@@ -102,7 +103,7 @@
               confirmLabel="Delete?"
               disabled={working}
               aria-label="Delete comment"
-              title="Delete comment"
+              {@attach tip('Delete comment')}
               onconfirm={() => act('prviewDeleteComment', { dbId: item.dbId }, 'Deleted the comment')}><Trash /></ConfirmButton
             >
           {/if}

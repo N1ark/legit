@@ -3,7 +3,7 @@
   // (a second step to confirm, with the squash commit's message), auto-merge, and draft or ready.
   // Once merged or closed, it offers (never does by itself) to switch to the base branch and to
   // delete the local branch.
-  import { Button, ConfirmButton, Kbd, Segmented, TextArea, formatFull, formatRelative, matches } from 'purr';
+  import { Button, ConfirmButton, Kbd, Segmented, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
   import { CheckCircle, Circle, GitMerge, GitPullRequestClosed, Lightning, UserCircle, XCircle } from 'purr/icons';
   import { untrack } from 'svelte';
   import type { BranchInfo } from '../../shared/types.ts';
@@ -12,6 +12,7 @@
   import { deleteBranch, switchOp } from '../lib/branches.svelte.ts';
   import { METHOD_LABEL, METHOD_NOTE, METHOD_SHORT, checksLabel, mergeStatus } from '../lib/gh-prview.ts';
   import { gh } from '../lib/github.svelte.ts';
+  import { tip } from '../lib/tip.ts';
 
   interface Props {
     pr: PrOverview;
@@ -117,16 +118,18 @@
   {#if branches && (local || !onBase)}
     <div class="offers">
       {#if !onBase}
-        <Button onclick={switchToBase} disabled={app.busy} title="Switch to {pr.base}, asking about uncommitted changes first">Switch to {pr.base}</Button>
+        <Button onclick={switchToBase} disabled={app.busy} {@attach tip(`Switch to ${pr.base}, asking about uncommitted changes first`)}>Switch to {pr.base}</Button>
       {/if}
       {#if local}
         <ConfirmButton
           variant="default"
           confirmLabel="Delete {pr.head}?"
           disabled={app.busy || local.current || !!local.worktree}
-          title={local.current ? `You're on ${pr.head}: switch to another branch first`
+          {@attach tip(
+            local.current ? `You're on ${pr.head}: switch to another branch first`
             : local.worktree ? `It's checked out in ${local.worktree}`
-            : `Delete the local ${pr.head}; it's kept under Recently deleted for two weeks`}
+            : `Kept under Recently deleted for two weeks`,
+          )}
           onconfirm={removeHead}>Delete local {pr.head}</ConfirmButton
         >
       {/if}
@@ -141,7 +144,7 @@
       <div>
         <b>Merged into {pr.base}</b>
         {#if pr.mergedAt}
-          <p class="muted">By {pr.mergedBy?.login ?? 'someone'}, <span title={formatFull(pr.mergedAt)}>{formatRelative(pr.mergedAt)}</span>.</p>
+          <p class="muted">By {pr.mergedBy?.login ?? 'someone'}, <span use:tooltip={formatFull(pr.mergedAt)}>{formatRelative(pr.mergedAt)}</span>.</p>
         {/if}
       </div>
     </div>
@@ -153,7 +156,6 @@
       <span class="badge" aria-hidden="true"><GitPullRequestClosed weight="bold" /></span>
       <div>
         <b>Closed with unmerged commits</b>
-        <p class="muted">Reopen it to merge it.</p>
       </div>
     </div>
     {@render afterwards()}
@@ -183,12 +185,11 @@
       {#if pr.autoMerge}
         <div class="line">
           <span class="mark" style:color="var(--success)" aria-hidden="true"><Lightning weight="fill" /></span>
-          <span>
-            Auto-merge is on{pr.autoMerge.by ? ` (${pr.autoMerge.by})` : ''}: it will {METHOD_LABEL[pr.autoMerge.method].toLowerCase()} once
-            everything required passes.
+          <span use:tooltip={`It will ${METHOD_LABEL[pr.autoMerge.method].toLowerCase()} once everything required passes`}>
+            Auto-merge is on{pr.autoMerge.by ? ` (${pr.autoMerge.by})` : ''}
           </span>
           <span class="spacer"></span>
-          <Button size="sm" disabled={working || !pr.canAutoMerge} onclick={() => autoMerge(false)}>Disable auto-merge</Button>
+          <Button size="sm" disabled={working || !pr.canAutoMerge} onclick={() => autoMerge(false)}>Disable</Button>
         </div>
       {/if}
     </div>
@@ -196,7 +197,7 @@
     {#if pr.state === 'draft'}
       <div class="actions">
         {#if pr.canUpdate}
-          <Button variant="primary" disabled={working} onclick={() => setDraft(false)} title="Let reviewers know it's ready, and allow merging">
+          <Button variant="primary" disabled={working} onclick={() => setDraft(false)} {@attach tip("Let reviewers know it's ready, and allow merging")}>
             Ready for review
           </Button>
         {/if}
@@ -226,7 +227,7 @@
         <Button
           variant="primary"
           disabled={working || !status.canMerge}
-          title={status.canMerge ? METHOD_NOTE[method] : status.title}
+          {@attach tip(status.canMerge ? METHOD_NOTE[method] : status.title)}
           onclick={() => (confirming = true)}
         >
           <GitMerge /> {METHOD_LABEL[method]}
@@ -235,14 +236,14 @@
           <Button
             disabled={working}
             onclick={() => autoMerge(true)}
-            title="GitHub merges it ({METHOD_LABEL[method].toLowerCase()}) as soon as what it waits for is done"
+            {@attach tip(`GitHub merges it (${METHOD_LABEL[method].toLowerCase()}) as soon as what it waits for is done`)}
           >
             <Lightning /> Enable auto-merge
           </Button>
         {/if}
         <span class="spacer"></span>
         {#if pr.canUpdate}
-          <button class="btn btn--link" disabled={working} onclick={() => setDraft(true)} title="Mark it as still in progress; it can't be merged as a draft">
+          <button class="btn btn--link" disabled={working} onclick={() => setDraft(true)} use:tooltip={"Mark it in progress; drafts can't be merged"}>
             Convert to draft
           </button>
         {/if}

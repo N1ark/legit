@@ -1,7 +1,7 @@
 <script lang="ts">
   // Review a pull request: a few words and a verdict (comment, approve, request changes). When the
   // viewer has diff comments waiting in a review of theirs, that review is the one submitted.
-  import { Button, Kbd, Popover, TextArea, matches } from 'purr';
+  import { Button, Kbd, Popover, TextArea, matches, tooltip } from 'purr';
   import { CaretDown, ChatCircle } from 'purr/icons';
   import type { PrOverview, ReviewEvent } from '../../shared/gh-prview.ts';
   import { reviewNeeds, reviewRefusal } from '../lib/gh-prview.ts';
@@ -19,9 +19,9 @@
   let event = $state<ReviewEvent>('COMMENT');
 
   const CHOICES: { id: ReviewEvent; label: string; note: string }[] = [
-    { id: 'COMMENT', label: 'Comment', note: 'General feedback, without approving.' },
-    { id: 'APPROVE', label: 'Approve', note: 'It can be merged as it is.' },
-    { id: 'REQUEST_CHANGES', label: 'Request changes', note: 'It needs changes before it can be merged.' },
+    { id: 'COMMENT', label: 'Comment', note: 'Without approving' },
+    { id: 'APPROVE', label: 'Approve', note: 'Ready to merge' },
+    { id: 'REQUEST_CHANGES', label: 'Request changes', note: 'Needs changes first' },
   ];
   const DONE: Record<ReviewEvent, string> = { COMMENT: 'Reviewed', APPROVE: 'Approved', REQUEST_CHANGES: 'Requested changes on' };
 
@@ -51,7 +51,7 @@
   class:btn--primary={pending > 0}
   bind:this={button}
   aria-expanded={open}
-  title={pending ? `You have ${pending} comment${pending === 1 ? '' : 's'} waiting to be submitted with a review` : 'Approve, request changes or comment'}
+  use:tooltip={pending ? `${pending} pending comment${pending === 1 ? '' : 's'} to submit with a review` : 'Approve, request changes or comment'}
   onclick={() => (open = !open)}
 >
   <ChatCircle /> Review{#if pending}&nbsp;<span class="count">{pending}</span>{/if}
@@ -69,13 +69,13 @@
     autofocus
   >
     <div class="review">
-      <b>Finish your review</b>
-      <TextArea bind:value={body} rows={5} placeholder="Leave a comment (markdown)" aria-label="Review comment" data-autofocus />
+      <b>Finish review</b>
+      <TextArea bind:value={body} rows={5} placeholder="Comment…" aria-label="Review comment" data-autofocus />
       <fieldset>
         <legend class="sr-only">Verdict</legend>
         {#each CHOICES as c (c.id)}
           {@const no = reviewRefusal(pr, c.id)}
-          <label class:disabled={!!no} title={no ?? undefined}>
+          <label class:disabled={!!no}>
             <input type="radio" name="verdict" value={c.id} bind:group={event} disabled={!!no} />
             <span>
               <span class="label">{c.label}</span>
@@ -85,7 +85,7 @@
         {/each}
       </fieldset>
       {#if pending}
-        <p class="muted pending">{pending} pending comment{pending === 1 ? '' : 's'} on the diff will be submitted with it.</p>
+        <p class="muted pending">Includes {pending} pending comment{pending === 1 ? '' : 's'} on the diff</p>
       {/if}
       <div class="actions">
         <span class="muted why">{refused ?? needs ?? ''}</span>

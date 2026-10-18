@@ -5,7 +5,7 @@
   // bottom as `gt log` draws it. Choosing one switches to its branch; when the branch it's stacked
   // on has moved on or was merged, the card offers to restack it. The chip is lit while the
   // overview is shown. A branch without a pull request gets "Create pull request" instead.
-  import { Avatar, Button, Callout, ConfirmButton, Kbd, Popover } from 'purr';
+  import { Avatar, Button, Callout, ConfirmButton, Kbd, Popover, tooltip } from 'purr';
   import { ArrowSquareOut, Article, GitBranch, GitPullRequest, Stack, Warning } from 'purr/icons';
   import { untrack } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
@@ -13,6 +13,7 @@
   import { STATE_LABEL } from '../lib/gh-pr.ts';
   import { openCreatePr, prs, restack, retarget, switchToEntry } from '../lib/gh-prs.svelte.ts';
   import Markdown from '../Markdown.svelte';
+  import { tip } from '../lib/tip.ts';
   import CreatePr from './CreatePr.svelte';
   import PrBadge from './PrBadge.svelte';
   import type { RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
@@ -73,12 +74,12 @@
 </script>
 
 {#if pr}
-  <button bind:this={button} class="btn btn--ghost chip" class:shown onclick={show} aria-expanded={open} aria-label={chipLabel} title={chipLabel}>
+  <button bind:this={button} class="btn btn--ghost chip" class:shown onclick={show} aria-expanded={open} aria-label={chipLabel} use:tooltip={chipLabel}>
     <PrBadge {pr} word />
     {#if plan}<span class="needs" aria-hidden="true"><Warning weight="bold" /></span>{/if}
   </button>
 {:else if canCreate}
-  <Button variant="ghost" size="sm" onclick={openCreatePr} title="Open a pull request for {app.repo?.branch} on GitHub">
+  <Button variant="ghost" size="sm" onclick={openCreatePr} {@attach tip(`Open a pull request for ${app.repo?.branch} on GitHub`)}>
     <GitPullRequest /> Create PR
   </Button>
 {/if}
@@ -86,32 +87,31 @@
 {#if open && button && pr}
   <Popover anchor={button} label="Pull request #{pr.number}" onclose={() => (open = false)} width="min(520px, calc(100vw - 32px))" padding="var(--sp-4)">
     <div class="card">
-      <button class="head" title="Show its overview" onclick={overview}>
+      <button class="head" use:tooltip={'Show its overview'} onclick={overview}>
         <PrBadge {pr} word />
         <span class="title"><Markdown text={pr.title} inline links="off" /></span>
       </button>
       <div class="meta muted">
-        <span class="mono refs" title="{pr.head} merges into {pr.base}">{pr.base} ← {pr.head}</span>
+        <span class="mono refs" use:tooltip={`${pr.head} merges into ${pr.base}`}>{pr.base} ← {pr.head}</span>
         {#if pr.author}
           <span class="by"><Avatar name={pr.author.login} src={pr.author.avatar} size={16} round title="" /> {pr.author.login}</span>
         {/if}
       </div>
       <div class="actions">
         <Button size="sm" variant="primary" onclick={overview}><Article /> Overview <Kbd hint="p" /></Button>
-        <Button size="sm" onclick={() => app.openUrl(pr.url)}><ArrowSquareOut /> Open on GitHub</Button>
+        <Button size="sm" onclick={() => app.openUrl(pr.url)}><ArrowSquareOut /> GitHub</Button>
       </div>
 
       {#if plan}
         <Callout tone="warn" title={plan.why === 'merged' ? `#${plan.parent.number} was merged` : `${plan.parent.head} has moved on`}>
           <p>
             {#if plan.why === 'merged'}
-              {pr.head} is stacked on <span class="mono">{plan.parent.head}</span>, which was merged into
-              <span class="mono">{plan.parent.base}</span>.
-              {#if plan.onto}Rebase its {count(plan.shas.length)} onto <span class="mono">{plan.onto}</span>, without {plan.parent.head}'s.{/if}
-              {#if plan.retarget}#{pr.number} still merges into {plan.parent.head}: point it at {plan.retarget}.{/if}
+              {#if plan.onto}Rebasing replays this branch's {count(plan.shas.length)}, without {plan.parent.head}'s; ⌘Z undoes it.{/if}
+              {#if plan.retarget}#{pr.number} still merges into <span class="mono">{plan.parent.head}</span>.{/if}
             {:else}
-              <span class="mono">{plan.parent.head}</span> (#{plan.parent.number}) has {behind ? count(behind) : 'commits'} this branch doesn't.
-              Restacking replays this branch's {count(plan.shas.length)} on top of it; it asks first, and ⌘Z undoes it.
+              <span use:tooltip={`${plan.parent.head} (#${plan.parent.number}) has ${behind ? count(behind) : 'commits'} this branch doesn't`}
+                >Restacking replays this branch's {count(plan.shas.length)} on top; ⌘Z undoes it.</span
+              >
             {/if}
           </p>
           <div class="actions">
@@ -139,7 +139,7 @@
                 class:is-current={e.current}
                 aria-current={e.current ? 'true' : undefined}
                 disabled={!e.current && (disabled || (!e.branch && !e.remoteRef && !e.worktree))}
-                title={entryTitle(e)}
+                use:tooltip={entryTitle(e)}
                 onclick={() => choose(e)}
               >
                 <span class="rail" aria-hidden="true"><span class="dot"></span></span>
@@ -151,9 +151,9 @@
                   <span class="line muted">
                     <span class="mono branch">{e.pr.head}</span>
                     {#if e.restack}
-                      <span class="restack" title="{e.pr.base} has {count(e.behind ?? 0)} this branch doesn't">needs restack</span>
+                      <span class="restack" use:tooltip={`${e.pr.base} has ${count(e.behind ?? 0)} this branch doesn't`}>needs restack</span>
                     {:else if e.ahead !== null}
-                      <span class="counts" title="{count(e.ahead)} on top of {e.pr.base}{e.behind ? `, which has ${count(e.behind)} it doesn't` : ''}">
+                      <span class="counts" use:tooltip={`${count(e.ahead)} on top of ${e.pr.base}${e.behind ? `, which has ${count(e.behind)} it doesn't` : ''}`}>
                         ↑{e.ahead}{#if e.behind}&nbsp;↓{e.behind}{/if}
                       </span>
                     {:else if !e.branch && !e.remoteRef}

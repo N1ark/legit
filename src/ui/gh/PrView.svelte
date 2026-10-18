@@ -248,7 +248,6 @@
           class="field-input subject shown"
           class:readonly={!pr.canUpdate}
           tabindex={pr.canUpdate ? 0 : undefined}
-          title={pr.canUpdate ? 'Click to edit' : undefined}
           onfocus={() => edit('title')}
           onmousedown={keepLinks}
         >
@@ -287,7 +286,7 @@
           {#if editing === 'body'}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="card-body edit" onkeydown={onEditKey}>
-              <TextArea bind:value={draft} rows={8} aria-label="Description" placeholder="Describe the change" {@attach focusEnd} />
+              <TextArea bind:value={draft} rows={8} aria-label="Description" placeholder="Description" {@attach focusEnd} />
               <div class="actions">
                 <Button variant="primary" onclick={saveEdit} disabled={working}>Save <Kbd hint="⌘↩" /></Button>
                 <Button onclick={() => (editing = null)}>Cancel <Kbd hint="Esc" /></Button>
@@ -296,7 +295,7 @@
           {:else}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             <div class="card-body md-body" class:editable={pr.canUpdate} ondblclick={() => edit('body')}>
-              {#if pr.body.trim()}<Markdown text={pr.body} />{:else}<p class="muted">No description.</p>{/if}
+              {#if pr.body.trim()}<Markdown text={pr.body} />{:else}<p class="muted">No description</p>{/if}
             </div>
           {/if}
         </section>
@@ -311,13 +310,13 @@
               {@const here = app.bySha.has(c.sha)}
               {@const k = c.checks ? CHECK[c.checks] : null}
               <li>
-                <span class="check" style:color={k?.color ?? 'var(--faint)'} title={k?.label ?? 'No checks'} aria-label={k?.label ?? 'No checks'}>
+                <span class="check" style:color={k?.color ?? 'var(--faint)'} use:tooltip={k?.label ?? 'No checks'} aria-label={k?.label ?? 'No checks'}>
                   {#if k}<k.icon weight="fill" />{:else}<Circle />{/if}
                 </span>
                 {#if here}
-                  <button class="headline linked" title="Show this commit" onclick={() => app.select(c.sha)}>{c.headline}</button>
+                  <button class="headline linked" use:tooltip={'Show this commit'} onclick={() => app.select(c.sha)}>{c.headline}</button>
                 {:else}
-                  <span class="headline" title="Not in this branch's history here">{c.headline}</span>
+                  <span class="headline" use:tooltip={"Not in this branch's history here"}>{c.headline}</span>
                 {/if}
                 <span class="mono sha" class:here>{c.short}</span>
               </li>
@@ -336,13 +335,13 @@
         <section class="card compose" aria-label="Add a comment">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="card-body" onkeydown={onCommentKey}>
-            <TextArea bind:value={comment} rows={3} placeholder="Leave a comment (markdown)" aria-label="Comment" />
+            <TextArea bind:value={comment} rows={3} placeholder="Comment…" aria-label="Comment" />
             <div class="actions end">
               {#if pr.canUpdate && pr.state === 'closed'}
-                <Button onclick={() => setOpen(true)} disabled={working}>Reopen pull request</Button>
+                <Button onclick={() => setOpen(true)} disabled={working}>Reopen</Button>
               {:else if pr.canUpdate && pr.state !== 'merged'}
                 <Button onclick={() => setOpen(false)} disabled={working}>
-                  <GitPullRequestClosed /> {comment.trim() ? 'Close with comment' : 'Close pull request'}
+                  <GitPullRequestClosed /> {comment.trim() ? 'Close with comment' : 'Close'}
                 </Button>
               {/if}
               <Button variant="primary" onclick={send} disabled={!comment.trim() || working}>Comment <Kbd hint="⌘↩" /></Button>

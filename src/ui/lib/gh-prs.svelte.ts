@@ -61,7 +61,7 @@ export async function switchToEntry(e: StackEntry): Promise<boolean> {
   }
   if (e.branch) return switchOp('switch', { branch: e.branch }, e.branch);
   if (e.remoteRef) return switchOp('checkoutRemote', { ref: e.remoteRef }, e.pr.head);
-  toast.error(`${e.pr.head} isn't here; fetch, then try again.`);
+  toast.error(`${e.pr.head} isn't here: fetch first`);
   return false;
 }
 
@@ -96,11 +96,11 @@ export function openCreatePr() {
 export async function createPr(req: Omit<CreatePrRequest, 'head'>): Promise<PullRequest | null> {
   const push = app.repo?.push;
   if (!push) {
-    toast.error("This branch doesn't push anywhere: add a GitHub remote first.");
+    toast.error("This branch doesn't push anywhere: add a GitHub remote first");
     return null;
   }
   if (push.ahead && push.behind) {
-    toast.error(`${push.remote}/${push.branch} has commits this branch doesn't: pull or force push first, so the pull request has your commits.`);
+    toast.error(`${push.remote}/${push.branch} has commits this branch doesn't: pull or force push first`);
     return null;
   }
   if ((push.publish || push.ahead) && !(await app.op('push', { force: false }))) return null;

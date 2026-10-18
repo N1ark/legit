@@ -1,7 +1,7 @@
 <script lang="ts">
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
   // labels and size. Reviewers and labels change from a menu of the repository's choices.
-  import { Avatar, IconButton, Tag, entries, menu, type MaybeEntry } from 'purr';
+  import { Avatar, IconButton, Tag, entries, menu, tooltip, type MaybeEntry } from 'purr';
   import { ChatCircle, CheckCircle, Circle, Gear, MinusCircle, XCircle } from 'purr/icons';
   import type { PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
@@ -95,7 +95,7 @@
           <li>
             <Avatar name={r.login} src={ghAvatar(r.avatar)} size={18} round />
             <span class="name">{r.login}</span>
-            <span class="review" style:color={s.color} title={REVIEW_LABEL[r.state]} aria-label={REVIEW_LABEL[r.state]}>
+            <span class="review" style:color={s.color} use:tooltip={REVIEW_LABEL[r.state]} aria-label={REVIEW_LABEL[r.state]}>
               <s.icon weight={r.state === 'requested' ? 'regular' : 'fill'} />
             </span>
           </li>

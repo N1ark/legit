@@ -14,6 +14,7 @@
     createKeymap,
     isTyping,
     persisted,
+    tooltip,
     type Binding,
   } from 'purr';
   import { ArrowUUpLeft, ArrowUUpRight, Gear, PencilSimpleLine, Warning } from 'purr/icons';
@@ -208,15 +209,15 @@
     {@const edit = app.repo.conflict.edit}
     <div class="blocked editing">
       <PencilSimpleLine weight="bold" />
-      <span class="what">Editing "{edit.subject}": your files are as they were in it.</span>
-      <button class="btn btn--link" onclick={() => app.selectWork()}>Finish or cancel</button>
+      <span class="what" use:tooltip={`Editing "${edit.subject}": your files are as they were in it`}>Editing "{edit.subject}"</span>
+      <button class="btn btn--link" onclick={() => app.selectWork()} use:tooltip={'Finish or cancel the edit'}>Finish</button>
     </div>
   {:else if app.repo?.blocked}
     <div class="blocked">
       <Warning weight="bold" />
-      {app.repo.blocked} History is read-only.
+      <span use:tooltip={'History is read-only until it ends'}>{app.repo.blocked}</span>
       {#if app.repo.conflict}
-        <button class="btn btn--link" onclick={() => app.selectWork()}>Resolve, continue or abort it</button>
+        <button class="btn btn--link" onclick={() => app.selectWork()} use:tooltip={'Resolve, continue or abort it'}>Resolve</button>
       {/if}
     </div>
   {/if}
@@ -238,8 +239,8 @@
       <footer class="muted">
         <span><Kbd hint="j" /><Kbd hint="k" /> move</span>
         <span><Kbd hint="⌥↑" /><Kbd hint="⌥↓" /> reorder</span>
-        <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select many</span>
-        <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> all shortcuts</button>
+        <span><Kbd hint={MOD} />/<Kbd hint="⇧" />+click select</span>
+        <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> shortcuts</button>
       </footer>
     </aside>
     <section data-scroller>
