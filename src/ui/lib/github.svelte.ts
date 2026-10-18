@@ -31,9 +31,15 @@ class Github {
 
   private branch: string | null = null;
   private lastAt = 0;
+  private statusAt = 0;
+  private statusLoad: Promise<void> | null = null;
   private gen = 0;
 
-  /** Look again: who's signed in (once, or with `retry`), and the current branch's pull request. */
+  /**
+   * Look again: who's signed in (once it's known, else every so often, or now with `retry`), and
+   * the current branch's pull request. A failure keeps what's shown, and the next refresh (focus,
+   * the poll, any change to the repo) tries again.
+   */
   async refresh(opts: { fresh?: boolean; retry?: boolean } = {}) {
     const gen = ++this.gen;
     const branch = app.repo?.branch ?? null;
@@ -41,7 +47,11 @@ class Github {
     this.branch = branch;
     this.lastAt = Date.now();
     try {
-      if (!this.status || opts.retry) this.status = await ghRequest<GithubStatus>('status', { retry: opts.retry ? 1 : null });
+      // Not signed in may only mean GitHub was out of reach when this window loaded (just woken up,
+      // say): ask again, or the pull request would stay gone until a reload.
+      if (this.statusLoad || !this.status || opts.retry || (!this.ready && Date.now() - this.statusAt > 15_000)) {
+        await this.loadStatus(opts.retry);
+      }
       if (!this.ready || !branch) {
         if (gen === this.gen) this.pr = null;
         return;
@@ -54,6 +64,21 @@ class Github {
     } catch (e) {
       if (gen === this.gen && opts.fresh) toast.error(e);
     }
+  }
+
+  /** Ask who's signed in; refreshes meanwhile wait for the same answer, and only the last one asked is kept. */
+  private loadStatus(retry = false): Promise<void> {
+    if (this.statusLoad && !retry) return this.statusLoad;
+    this.statusAt = Date.now();
+    const load: Promise<void> = ghRequest<GithubStatus>('status', { retry: retry ? 1 : null })
+      .then((s) => {
+        if (this.statusLoad === load) this.status = s;
+      })
+      .finally(() => {
+        if (this.statusLoad === load) this.statusLoad = null;
+      });
+    this.statusLoad = load;
+    return load;
   }
 
   /** Refresh unless that happened in the last `ms`. */
