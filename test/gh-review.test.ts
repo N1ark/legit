@@ -130,6 +130,11 @@ test('multi-line threads span their rows; file threads are elsewhere', () => {
   assert.equal(linesLabel(thread({ line: 3, originalLine: 9 })), 'line 3');
 });
 
+test("a range starting in folded lines marks what's shown of it", () => {
+  const t = thread({ originalStartLine: 5, originalLine: 12, hunk: HUNK + '\n+  // two' });
+  assert.deepEqual(at([t]).placed.map((p) => [p.row, p.start]), [[4, 1]]);
+});
+
 test('where a new comment goes', () => {
   assert.deepEqual(commentTarget(DIFF, 3, 3, { base: false }), { side: 'RIGHT', line: 11 });
   assert.deepEqual(commentTarget(DIFF, 4, 1, { base: false }), { side: 'RIGHT', line: 12, startLine: 10, startSide: 'RIGHT' });

@@ -121,6 +121,16 @@ export interface Placed {
 /** Lines a thread spans, as GitHub counts them. */
 const span = (start: number | null, end: number | null) => (start !== null && end !== null && end >= start ? end - start + 1 : 1);
 
+/** The row of a range's first line, ending at row `end`; when that line isn't shown (folded
+ *  away above the hunk), the hunk's first row after it, so what's shown of the range is marked. */
+function startRow(rows: RowsLike, side: DiffSide, line: number, end: number): number {
+  const s = rowOfLine(rows, side, line);
+  if (s >= 0) return s <= end ? s : end;
+  let r = end;
+  while (r > 0 && !isHead(rows.kind[r - 1]) && (lineOn(rows, r - 1, side) || line) >= line) r--;
+  return r;
+}
+
 /** Where a line thread goes in these rows, or null. */
 export function placeThread(t: ReviewThread, rows: RowsLike, ctx: DiffContext): Placed | null {
   if (t.subject === 'FILE') return null;
@@ -130,8 +140,7 @@ export function placeThread(t: ReviewThread, rows: RowsLike, ctx: DiffContext): 
   const exact = (side: DiffSide, line: number, startSide: DiffSide | null, startLine: number | null, kind?: ' ' | '+' | '-') => {
     const row = rowOfLine(rows, side, line);
     if (row < 0 || (kind && !fits(rows, row, kind))) return null;
-    const s = startLine !== null ? rowOfLine(rows, startSide ?? side, startLine) : -1;
-    return { thread: t, row, start: s >= 0 && s <= row ? s : row, moved: false };
+    return { thread: t, row, start: startLine !== null ? startRow(rows, startSide ?? side, startLine, row) : row, moved: false };
   };
   if (ctx.head && t.line !== null && (t.side === 'RIGHT' || ctx.base)) {
     const p = exact(t.side, t.line, t.startSide, t.startLine);

@@ -1752,9 +1752,9 @@
     overflow: hidden;
   }
 
-  .line.gh-range .gutter {
-    color: var(--theme2);
-    font-weight: 600;
+  /* The lines a review thread is about: a bar just inside the code, joined across them. */
+  .line.gh-range .code {
+    background: linear-gradient(to right, transparent 2px, var(--theme2) 2px 5px, transparent 5px) no-repeat;
   }
 
   .away {
