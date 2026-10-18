@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-18
 
 - The header shows the branch's pull request and its stack of pull requests; click one in the stack to switch to its branch, and restack a branch when the one under it moved or was merged.
 - **Create pull request** from the header, pushing the branch first and offering to stack it on the branch below.
