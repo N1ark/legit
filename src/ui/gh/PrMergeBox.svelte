@@ -168,7 +168,7 @@
       </span>
       <div>
         <b>{status.title}</b>
-        <p class="muted">{status.detail}</p>
+        {#if status.detail}<p class="muted">{status.detail}</p>{/if}
       </div>
     </div>
 

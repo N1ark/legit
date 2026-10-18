@@ -113,11 +113,11 @@ test('squash defaults follow the repository settings', () => {
 test('merge status says why it cannot be merged', () => {
   const o = (pr: Record<string, unknown> = {}) => toOverview(payload(pr));
   assert.deepEqual([mergeStatus(o()).title, mergeStatus(o()).canMerge, mergeStatus(o()).waits], ['Review required', false, true]);
-  assert.match(mergeStatus(o()).detail, /checks haven't completed/);
+  assert.match(mergeStatus(o()).detail, /Checks running/);
   assert.equal(mergeStatus(o({ reviewDecision: 'CHANGES_REQUESTED' })).tone, 'danger');
   assert.equal(mergeStatus(o({ reviewDecision: 'APPROVED' })).title, 'Waiting for checks');
-  assert.equal(mergeStatus(o({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })).title, 'This branch has conflicts that must be resolved');
-  assert.equal(mergeStatus(o({ mergeStateStatus: 'BEHIND' })).title, 'This branch is out of date with main');
+  assert.equal(mergeStatus(o({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })).title, 'Conflicts');
+  assert.equal(mergeStatus(o({ mergeStateStatus: 'BEHIND' })).title, 'Behind main');
   assert.equal(mergeStatus(o({ isDraft: true, mergeStateStatus: 'DRAFT' })).canMerge, false);
   assert.equal(mergeStatus(o({ mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' })).canMerge, false);
   const clean = mergeStatus(o({ mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' }));

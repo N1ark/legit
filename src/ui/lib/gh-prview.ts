@@ -7,9 +7,9 @@ export const METHOD_LABEL: Record<MergeMethod, string> = { merge: 'Merge commit'
 /** In the picker, next to the button that says it in full. */
 export const METHOD_SHORT: Record<MergeMethod, string> = { merge: 'Merge', squash: 'Squash', rebase: 'Rebase' };
 export const METHOD_NOTE: Record<MergeMethod, string> = {
-  merge: 'All commits are added to the base branch with a merge commit.',
-  squash: 'The commits are combined into one commit on the base branch.',
-  rebase: 'The commits are replayed one by one onto the base branch.',
+  merge: 'Adds all commits to the base with a merge commit',
+  squash: 'Combines the commits into one on the base',
+  rebase: 'Replays the commits one by one onto the base',
 };
 
 export const REVIEW_LABEL: Record<ReviewState | 'requested', string> = {
@@ -22,9 +22,9 @@ export const REVIEW_LABEL: Record<ReviewState | 'requested', string> = {
 };
 
 export function checksLabel(c: CheckState): string {
-  return c === 'success' ? 'All checks have passed'
-    : c === 'failure' || c === 'error' ? 'Some checks were not successful'
-    : c === 'pending' || c === 'expected' ? "Some checks haven't completed yet"
+  return c === 'success' ? 'Checks passed'
+    : c === 'failure' || c === 'error' ? 'Some checks failed'
+    : c === 'pending' || c === 'expected' ? 'Checks running'
     : 'No checks';
 }
 
@@ -67,31 +67,30 @@ export interface MergeStatus {
 export function mergeStatus(pr: PrOverview): MergeStatus {
   const checks = checksLabel(pr.checks);
   const no = (tone: Tone, title: string, detail: string, waits = false): MergeStatus => ({ tone, title, detail, canMerge: false, waits });
-  if (pr.state === 'draft' || pr.mergeState === 'draft') return no('neutral', 'This pull request is still a draft', 'Mark it ready for review to merge it.');
+  if (pr.state === 'draft' || pr.mergeState === 'draft') return no('neutral', 'Draft', 'Mark it ready to merge it.');
   if (pr.mergeable === 'conflicting' || pr.mergeState === 'dirty') {
-    const how = `Rebase ${pr.head} on ${pr.base} (or merge ${pr.base} into it) and push, or resolve them on GitHub.`;
-    return no('danger', 'This branch has conflicts that must be resolved', how);
+    return no('danger', 'Conflicts', `Rebase on ${pr.base} and push, or resolve them on GitHub.`);
   }
   if (pr.mergeState === 'behind') {
-    return no('warn', `This branch is out of date with ${pr.base}`, `${pr.base} must be in it before merging: rebase on it, or merge it in, and push.`);
+    return no('warn', `Behind ${pr.base}`, 'Rebase on it, or merge it in, and push.');
   }
   if (pr.mergeState === 'blocked') {
     if (pr.reviewDecision === 'changes') {
-      return no('danger', 'Changes were requested', 'A reviewer asked for changes; their approval (or a dismissal) is needed to merge.', true);
+      return no('danger', 'Changes requested', 'Needs their approval, or a dismissal.', true);
     }
-    if (pr.checks === 'failure' || pr.checks === 'error') return no('danger', 'Required checks failed', `${checks}. Fix them and push again.`);
+    if (pr.checks === 'failure' || pr.checks === 'error') return no('danger', 'Required checks failed', `${checks}.`);
     if (pr.reviewDecision === 'required') {
       const also = pr.checks === 'pending' || pr.checks === 'expected' ? ` ${checks}.` : '';
-      return no('warn', 'Review required', `An approving review from someone with write access is needed to merge.${also}`, true);
+      return no('warn', 'Review required', `Needs an approval from someone with write access.${also}`, true);
     }
-    if (pr.checks === 'pending' || pr.checks === 'expected') return no('warn', 'Waiting for checks', `${checks}; required ones must pass before merging.`, true);
-    return no('warn', 'Merging is blocked', "A branch protection rule isn't satisfied yet.", true);
+    if (pr.checks === 'pending' || pr.checks === 'expected') return no('warn', 'Waiting for checks', `${checks}.`, true);
+    return no('warn', 'Blocked', "A branch protection rule isn't met yet.", true);
   }
-  if (pr.mergeState === 'unknown' || pr.mergeable === 'unknown') return no('neutral', 'Checking whether it can be merged…', 'GitHub is still working it out.');
+  if (pr.mergeState === 'unknown' || pr.mergeable === 'unknown') return no('neutral', 'Checking…', '');
   const ok = (tone: Tone, title: string, detail: string): MergeStatus => ({ tone, title, detail, canMerge: true, waits: false });
-  if (pr.mergeState === 'unstable') return ok('warn', 'Some checks were not successful', "They aren't required, so it can still be merged.");
-  if (pr.mergeState === 'has_hooks') return ok('success', 'Ready to merge', `${checks}. The repository's hooks run when it's merged.`);
-  return ok('success', 'Ready to merge', `${checks}. This branch has no conflicts with ${pr.base}.`);
+  if (pr.mergeState === 'unstable') return ok('warn', 'Some checks failed', "They aren't required.");
+  if (pr.mergeState === 'has_hooks') return ok('success', 'Ready to merge', `${checks}. Hooks run on merge.`);
+  return ok('success', 'Ready to merge', `${checks}.`);
 }
 
 /** Why the viewer can't send this review, if they can't. */
