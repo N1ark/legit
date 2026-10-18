@@ -30,7 +30,7 @@
     </PersonField>
   {/each}
   {#if !readonly}
-    <span class="add"><Button variant="ghost" onclick={add}><Plus /> Add co-author</Button></span>
+    <span class="add"><Button variant="ghost" onclick={add}><Plus /> Add</Button></span>
   {/if}
 </div>
 

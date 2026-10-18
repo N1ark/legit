@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu } from 'purr';
+  import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu, tooltip } from 'purr';
   import { tick } from 'svelte';
   import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, CopySimple, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Stack, Trash, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
@@ -65,7 +65,7 @@
           icon: ArrowsMerge,
           disabled: !canSquash || app.busy,
           note: canSquash
-            ? `Into ${shortSha(app.selection.at(-1)!)}, with the message shown on the right.`
+            ? `Into ${shortSha(app.selection.at(-1)!)}, with the message on the right`
             : "Some of these commits can't be rewritten.",
           run: () => app.squash(app.selection),
         },
@@ -185,18 +185,20 @@
       {:else if app.repo.conflict}
         {@const c = app.repo.conflict}
         <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
-        {#if c.files.length}<Tag color="var(--warn)" label="{c.files.length} conflicted" title="Files with conflicts" />{/if}
+        {#if c.files.length}<span use:tooltip={'Files with conflicts'}><Tag color="var(--warn)" label="{c.files.length} conflicted" /></span>{/if}
       {:else}
         <span class="subject">Uncommitted changes</span>
       {/if}
-      {#if w.staged}<Tag color="var(--add)" label="{w.staged} staged" title="Files with staged changes" />{/if}
-      {#if w.unstaged}<Tag label="{w.unstaged} changed" title="Files with unstaged changes" />{/if}
-      {#if w.untracked}<Tag label="{w.untracked} new" title="Untracked files" />{/if}
+      {#if w.staged}<span use:tooltip={'Files with staged changes'}><Tag color="var(--add)" label="{w.staged} staged" /></span>{/if}
+      {#if w.unstaged}<span use:tooltip={'Files with unstaged changes'}><Tag label="{w.unstaged} changed" /></span>{/if}
+      {#if w.untracked}<span use:tooltip={'Untracked files'}><Tag label="{w.untracked} new" /></span>{/if}
     </li>
   {/if}
   {#each app.commits as c, i (c.sha)}
     {#if !c.editable && (i === 0 || app.commits[i - 1].editable)}
-      <li class="boundary muted">{c.merge ? "history below a merge can't be rewritten" : "older history can't be rewritten here"}</li>
+      <li class="boundary muted">
+        <span use:tooltip={c.merge ? "History below a merge can't be rewritten" : "Older history can't be rewritten here"}>read-only</span>
+      </li>
     {/if}
     <li
       data-sha={c.sha}
@@ -219,13 +221,12 @@
       ondragleave={() => drop?.sha === c.sha && (drop = null)}
       {ondrop}
       {ondragend}
-      title="{c.author.name} <{c.author.email}>{c.pushed ? '\nPushed: rewriting it needs a force-push' : ''}"
     >
       {#if c.merge && !c.side}
         {@const open = c.sha in app.expanded}
         <button
           class="grip twisty"
-          title={open ? 'Hide the merged commits' : 'Show the merged commits'}
+          use:tooltip={open ? 'Hide the merged commits' : 'Show the merged commits'}
           aria-label={open ? 'Hide the merged commits' : 'Show the merged commits'}
           aria-expanded={open}
           onclick={(e) => {
@@ -241,38 +242,40 @@
         </span>
       {/if}
       <span class="sha mono">{shortSha(c)}</span>
-      <Avatar
-        name={c.author.name}
-        src={avatarUrl(c.author.email, 16)}
-        seed={c.author.email.toLowerCase()}
-        size={16}
-        round
-        title=""
-      />
+      <span class="who" use:tooltip={`${c.author.name} <${c.author.email}>`}>
+        <Avatar
+          name={c.author.name}
+          src={avatarUrl(c.author.email, 16)}
+          seed={c.author.email.toLowerCase()}
+          size={16}
+          round
+          title=""
+        />
+      </span>
       <span class="subject" class:muted={!c.subject}
         >{#if c.subject}<Markdown text={c.subject} inline links="mod" />{:else}(no message){/if}</span
       >
       {#if c.coauthors.length}
-        <span class="meta" title={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
+        <span class="meta" use:tooltip={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
       {/if}
       <span class="meta">{formatRelative(c.author.time * 1000)}</span>
       {#if c.pushed}<CommitChecks sha={c.sha} />{/if}
-      <span class="meta pushed">{#if c.pushed}<CloudCheck />{/if}</span>
+      <span class="meta pushed" use:tooltip={c.pushed ? 'Pushed: rewriting it needs a force-push' : null}>{#if c.pushed}<CloudCheck />{/if}</span>
     </li>
     {#if c.merge && app.expanded[c.sha] === null}
-      <li class="note side muted"><Spinner size={12} /> Loading merged commits…</li>
+      <li class="note side muted"><Spinner size={12} /> Loading…</li>
     {:else if c.merge && app.expanded[c.sha]?.commits.length === 0}
-      <li class="note side muted">It didn't bring in any commits.</li>
+      <li class="note side muted">No commits brought in</li>
     {/if}
     {#if c.side && app.commits[i + 1]?.side !== c.side}
       {@const m = app.expanded[c.side]}
       {#if m && m.total > m.commits.length}
-        <li class="note side muted">…and {m.total - m.commits.length} older merged commits</li>
+        <li class="note side muted">…and {m.total - m.commits.length} more</li>
       {/if}
     {/if}
   {/each}
   {#if app.loadingOlder}
-    <li class="note muted"><Spinner size={12} /> Loading older commits…</li>
+    <li class="note muted"><Spinner size={12} /> Loading…</li>
   {/if}
 </ol>
 
@@ -368,6 +371,11 @@
     display: flex;
     color: var(--muted);
     font-size: var(--fs-xs);
+    flex-shrink: 0;
+  }
+
+  .who {
+    display: flex;
     flex-shrink: 0;
   }
 

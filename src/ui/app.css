@@ -3,3 +3,8 @@
 :root {
   --font-size: 13px;
 }
+
+/* Tooltips that list things (files, a path and its status) put each on its own line. */
+.tooltip {
+  white-space: pre-line;
+}

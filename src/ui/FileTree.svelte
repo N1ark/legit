@@ -2,7 +2,7 @@
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
   // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
   // right-clicking one opens its menu.
-  import { Twisty } from 'purr';
+  import { Twisty, tooltip } from 'purr';
   import type { FileSummary } from '../shared/types.ts';
   import { fileTree, treeRows } from './lib/tree.ts';
 
@@ -58,7 +58,7 @@
         role="treeitem"
         aria-selected="false"
         aria-expanded={!collapsed[r.path]}
-        title={r.path}
+        use:tooltip={r.path}
         onclick={() => (collapsed[r.path] = !collapsed[r.path])}
       >
         <Twisty open={!collapsed[r.path]} size={10} />
@@ -72,7 +72,7 @@
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
-        title="{f.path}{'\n'}{f.untracked ? 'untracked' : statusTitle[f.status]}{f.oldPath ? ` from ${f.oldPath}` : ''}, +{f.added} −{f.removed}{onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}"
+        use:tooltip={`${f.path}\n${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
         onclick={() => onpick(r.index)}
         ondblclick={onopen && (() => onopen(r.index))}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}

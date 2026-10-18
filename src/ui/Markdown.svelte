@@ -45,8 +45,7 @@
   {#if href && links !== 'off'}
     <a
       {href}
-      title={ref ? undefined : title || tip(href)}
-      use:tooltip={ref ? { html: refCard(ref, links === 'mod' ? `${MOD}-click to open` : undefined) } : null}
+      use:tooltip={ref ? { html: refCard(ref, links === 'mod' ? `${MOD}-click to open` : undefined) } : title || tip(href)}
       tabindex={links === 'mod' ? -1 : undefined}
       target="_blank"
       rel="noopener noreferrer"

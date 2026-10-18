@@ -4,12 +4,13 @@
   // editor; "Mark resolved" stages one ("Mark all resolved" every one), and asks again while it still has conflict markers.
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
-  import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches } from 'purr';
+  import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, tooltip } from 'purr';
   import { ArrowCounterClockwise, Check, Checks, FileArrowUp } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
   import { app } from './lib/app.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   const c = $derived(app.repo?.conflict ?? null);
   const NAME = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-pick', revert: 'Revert', am: 'git am' };
@@ -82,20 +83,18 @@
 {#if c}
   <div class="view">
     <div class="top">
-      <h2>{NAME[c.kind]} in progress</h2>
-      <span class="muted title" title={c.title}>{c.title}</span>
+      <h2 use:tooltip={"History can't be rewritten until it's finished or aborted"}>{NAME[c.kind]} in progress</h2>
+      <span class="muted title" use:tooltip={c.title}>{c.title}</span>
     </div>
 
     <div class="meta">
       <p class="muted hint">
         {#if c.files.length}
-          Resolve each file in your editor, then mark it resolved. History can't be rewritten until this is finished or
-          aborted.
+          Resolve each file in your editor, then mark it resolved.
         {:else if c.unstaged.length}
-          Some files changed after they were staged. Stage them to keep the changes in the commit, or undo them in your
-          editor: a rebase won't continue otherwise.
+          Stage these again or undo their changes to continue.
         {:else}
-          Nothing is conflicted any more. {c.kind === 'merge' ? 'Commit the merge' : 'Continue'} to finish, or abort.
+          All resolved.
         {/if}
       </p>
 
@@ -103,9 +102,9 @@
         <ul class="files">
           {#each c.files as f (f.path)}
             <li>
-              <span class="path mono" title={f.path}>{f.path}</span>
+              <span class="path mono" use:tooltip={f.path}>{f.path}</span>
               <Tag label={f.status} />
-              {#if f.markers}<Tag color="var(--warn)" label="conflict markers" title="<<<<<<<, ======= or >>>>>>> at a line start" />{/if}
+              {#if f.markers}<span use:tooltip={'<<<<<<<, ======= or >>>>>>> at a line start'}><Tag color="var(--warn)" label="conflict markers" /></span>{/if}
               <span class="spacer"></span>
               <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
                 <FileArrowUp /> Open in Zed
@@ -123,7 +122,7 @@
                   size="sm"
                   onclick={() => resolve(f.path)}
                   disabled={app.busy}
-                  title={f.exists ? 'Stage the file as it is now (git add)' : 'Resolve by deleting the file (git add)'}
+                  {@attach tip(f.exists ? 'Stage the file as it is now (git add)' : 'Resolve by deleting the file (git add)')}
                 >
                   <Check /> Mark resolved{f.exists ? '' : ' (deleted)'}
                 </Button>
@@ -137,11 +136,11 @@
         <ul class="files">
           {#each c.unstaged as path (path)}
             <li>
-              <span class="path mono" title={path}>{path}</span>
-              <Tag color="var(--warn)" label="changed since staged" title="Changed in your files after it was staged (git add)" />
+              <span class="path mono" use:tooltip={path}>{path}</span>
+              <Tag color="var(--warn)" label="changed since staged" />
               <span class="spacer"></span>
               <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUp /> Open in Zed</Button>
-              <Button size="sm" onclick={() => resolve(path)} disabled={app.busy} title="Stage the file as it is now (git add)">
+              <Button size="sm" onclick={() => resolve(path)} disabled={app.busy} {@attach tip('Stage the file as it is now (git add)')}>
                 <Check /> Stage
               </Button>
             </li>
@@ -155,7 +154,7 @@
           <ul class="mono">
             {#each allMerged ? c.resolved : c.resolved.slice(0, MERGED_SHOWN) as path (path)}
               {@const p = split(path)}
-              <li title={path}><span class="dir">{p.dir}</span><span class="name">{p.name}</span></li>
+              <li use:tooltip={path}><span class="dir">{p.dir}</span><span class="name">{p.name}</span></li>
             {/each}
           </ul>
           {#if c.resolved.length > MERGED_SHOWN}
@@ -176,7 +175,7 @@
               disabled={app.busy}><Checks /> Mark all resolved</ConfirmButton
             >
           {:else}
-            <Button onclick={() => resolveAll()} disabled={app.busy} title="Stage every file as it is now (git add)">
+            <Button onclick={() => resolveAll()} disabled={app.busy} {@attach tip('Stage every file as it is now (git add)')}>
               <Checks /> Mark all resolved
             </Button>
           {/if}
@@ -185,11 +184,11 @@
           variant="primary"
           onclick={() => app.sync('continue')}
           disabled={blocked || app.busy}
-          title={c.files.length
-            ? 'Mark every file resolved first'
-            : c.unstaged.length
-              ? 'Stage the files changed since they were staged first'
-              : 'Commits with the prepared message; hooks run as usual'}
+          {@attach tip(
+            c.files.length ? 'Mark every file resolved first'
+            : c.unstaged.length ? 'Stage the files changed since they were staged first'
+            : 'Commits with the prepared message; hooks run as usual',
+          )}
         >
           <Check weight="bold" /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
         </Button>
@@ -197,7 +196,7 @@
           confirmLabel="Click to abort. What you resolved is saved first"
           onconfirm={() => app.sync('abort')}
           disabled={app.busy}
-          title="Go back to before the {NAME[c.kind].toLowerCase()}. Your work in progress is saved under refs/legit/aborted first."
+          {@attach tip(`Go back to before the ${NAME[c.kind].toLowerCase()}; your work in progress is saved under refs/legit/aborted first`)}
         >
           <ArrowCounterClockwise /> Abort {NAME[c.kind].toLowerCase()}
         </ConfirmButton>

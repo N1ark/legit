@@ -330,7 +330,7 @@ class App {
     const ok = await this.rewriteInPlace(name, body, at);
     // A later commit conflicted with the change, and the rebase replaying them stopped there.
     if (ok && this.repo?.conflict) {
-      toast('A later commit conflicts with that change. Resolve the conflicts and continue, or abort to put everything back.', {
+      toast('A later commit conflicts with that change: resolve and continue, or abort to put everything back.', {
         timeout: 15_000,
       });
     }

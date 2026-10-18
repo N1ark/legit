@@ -2,12 +2,13 @@
   // A commit checked out to edit its files (a rebase stopped at it). The files are changed in an
   // editor; this shows what changed so far, and Finish amends it into the commit and replays the
   // commits after it (conflicts go to the conflict view), or Cancel puts everything back.
-  import { Button, ConfirmButton, Kbd, Segmented, hasOverlay, matches } from 'purr';
+  import { Button, ConfirmButton, Kbd, Segmented, hasOverlay, matches, tooltip } from 'purr';
   import { ArrowCounterClockwise, Check } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
   import { type DiffPosition, EDITING, app, shortSha } from './lib/app.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   const edit = $derived(app.repo?.conflict?.edit ?? null);
 
@@ -61,7 +62,6 @@
   });
 
   const sel = $derived(diff ? Object.fromEntries(diff.files.map((f) => [f.path, new SvelteSet<number>()])) : {});
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
   const SHOWN = 8;
 
   const finish = () => app.endEdit('editFinish', diffView?.position() ?? at);
@@ -82,18 +82,14 @@
     <div class="top">
       <h2>Editing</h2>
       <span class="mono sha">{shortSha(edit.sha)}</span>
-      <span class="subject" title={edit.subject}>{edit.subject}</span>
+      <span class="subject" use:tooltip={edit.subject}>{edit.subject}</span>
     </div>
 
     <div class="meta">
       <p class="muted hint">
-        Your files are as they were in this commit. Change anything in your editor{edit.legit ? ', new files included' : ''}.
-        Finishing amends your changes into the commit{edit.pending.length
-          ? ` and replays the ${plural(edit.pending.length, 'commit')} after it on top; if one conflicts, you resolve it as usual`
-          : ''}.
+        Change files in your editor{edit.legit ? ', new ones included' : ''}; finishing amends them into this commit.
         {#if !edit.legit}
-          This edit was started outside legit, so new untracked files are left out: <span class="mono">git add</span> the ones
-          to include.
+          Started outside legit: <span class="mono">git add</span> new files to include them.
         {/if}
       </p>
 
@@ -116,7 +112,7 @@
           variant="primary"
           onclick={finish}
           disabled={app.busy}
-          title="Amend your changes into the commit (hooks run as usual), then replay the commits after it"
+          {@attach tip('Amend your changes into the commit (hooks run as usual), then replay the commits after it; a conflict stops for you to resolve')}
         >
           <Check weight="bold" /> Finish editing <Kbd hint="⌘↩" />
         </Button>
@@ -125,12 +121,12 @@
             confirmLabel="Click to cancel. Your edits are saved first"
             onconfirm={cancel}
             disabled={app.busy}
-            title="Put everything back as it was. Your edits are saved under refs/legit/aborted first."
+            {@attach tip('Put everything back as it was; your edits are saved under refs/legit/aborted first')}
           >
             <ArrowCounterClockwise /> Cancel
           </ConfirmButton>
         {:else}
-          <Button onclick={cancel} disabled={app.busy} title="Put everything back as it was">
+          <Button onclick={cancel} disabled={app.busy} {@attach tip('Put everything back as it was')}>
             <ArrowCounterClockwise /> Cancel
           </Button>
         {/if}
@@ -152,7 +148,7 @@
     {:else if !diff}
       <p class="muted empty">Loading changes…</p>
     {:else if !diff.files.length}
-      <p class="muted empty">{show === 'edits' ? 'No changes yet.' : 'The commit changes nothing (yet).'}</p>
+      <p class="muted empty">{show === 'edits' ? 'No edits yet.' : 'Empty commit.'}</p>
     {:else}
       {#key diff.sha}
         <DiffView bind:this={diffView} summary={diff} {sel} readonly={true} initial={at} />

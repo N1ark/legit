@@ -4,20 +4,21 @@
   import { Button } from 'purr';
   import { ArrowsClockwise, GitPullRequest } from 'purr/icons';
   import { app } from './lib/app.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   const base = $derived(app.repo?.branch ? app.repo.base : null);
   const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
   const title = $derived(
     !base ? ''
     : app.repo?.blocked ? `${app.repo.blocked} Finish or abort it first.`
-    : `${base.name} has ${commits(base.behind)} that ${app.repo?.branch} doesn't: fetch, then replay the commits only on ${app.repo?.branch} ` +
-      `on top of it, in memory; uncommitted changes come along unless they'd be overwritten. If a commit conflicts, it stops there ` +
-      `for you to resolve (that needs no uncommitted changes). ⌘Z undoes it.`,
+    : `${base.name} has ${commits(base.behind)} ${app.repo?.branch} doesn't. Fetches, then replays ${app.repo?.branch}'s own commits ` +
+      `on top; uncommitted changes come along unless they'd be overwritten. Stops at a conflict for you to resolve (only with no ` +
+      `uncommitted changes). ⌘Z undoes it.`,
   );
 </script>
 
 {#if base?.behind || app.fetchingBase}
-  <Button variant="ghost" size="sm" onclick={() => app.rebaseOnBase()} disabled={app.busy || app.fetchingBase || !!app.repo?.blocked} {title}>
+  <Button variant="ghost" size="sm" onclick={() => app.rebaseOnBase()} disabled={app.busy || app.fetchingBase || !!app.repo?.blocked} {@attach tip(title)}>
     {#if app.fetchingBase}
       <span class="spin"><ArrowsClockwise /></span> Fetching…
     {:else if base}

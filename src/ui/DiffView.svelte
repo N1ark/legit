@@ -25,6 +25,7 @@
     rowAt,
     Switch,
     toast,
+    tooltip,
     variableRange,
   } from 'purr';
   import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, ChatCircleText, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
@@ -68,7 +69,8 @@
     summary,
     sel,
     readonly,
-    hint = 'Pick lines to split out: click, shift-click, or drag the line numbers; the left edge picks whole blocks.',
+    hint = 'Click line numbers to pick',
+    help = 'Pick lines to split out or remove: click, shift-click or drag the line numbers; the left edge picks whole blocks. Double-click a line to edit it.',
     fileActions,
     tree = true,
     initial = null,
@@ -81,7 +83,9 @@
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
     readonly: boolean;
+    /** How to pick lines, shown above the diff when it isn't read-only: a few words, with `help` as its tooltip. */
     hint?: string;
+    help?: string;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
     /** Show the files as a folder tree beside the diff, to jump between them. */
@@ -1025,21 +1029,21 @@
         <span class="add">+{totals.a}</span>
         <span class="del">−{totals.r}</span>
         {#if generatedCount}
-          <span>· {generatedCount} generated {generatedCount === 1 ? 'file' : 'files'} collapsed</span>
+          <span use:tooltip={'Generated files start collapsed'}>· {generatedCount} generated</span>
         {/if}
       </div>
       <div class="line">
-        <label class="ws" title="Show lines whose only change is whitespace as unchanged (~); picking one still picks both of its changes">
+        <label class="ws" use:tooltip={'Show lines whose only change is whitespace as unchanged (~); picking one still picks both its changes'}>
           <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
           Hide whitespace
         </label>
         {#if hideWhitespace.value && totals.ws}
-          <span>· {totals.ws} {totals.ws === 1 ? 'line' : 'lines'} changed only in whitespace</span>
+          <span>· {totals.ws} whitespace-only</span>
         {/if}
       </div>
     </div>
     {#if !readonly && files.length}
-      <span class="hint">{hint}</span>
+      <span class="hint" use:tooltip={help}>{hint}</span>
     {/if}
   </div>
 
@@ -1075,7 +1079,7 @@
                 checked={state === 'all'}
                 indeterminate={state === 'some'}
                 onchange={() => toggleFile(f)}
-                title={onstage ? (state === 'all' ? 'Unstage the whole file' : 'Stage the whole file') : 'Select whole file'}
+                use:tooltip={onstage ? (state === 'all' ? 'Unstage the whole file' : 'Stage the whole file') : 'Pick the whole file'}
               />
             {/if}
             <button
@@ -1089,33 +1093,35 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="path mono"
-              title={(f.oldPath ? `${f.oldPath} → ${f.path}` : f.path) + (f.status === 'D' ? '' : '\nDouble-click to open in Zed')}
+              use:tooltip={(f.oldPath ? `${f.oldPath} → ${f.path}` : f.path) + (f.status === 'D' ? '' : '\nDouble-click to open in Zed')}
               ondblclick={() => openFile(i)}
               >{#if f.oldPath}<span class="old">{f.oldPath}</span> <span class="muted">→</span>{' '}{/if}{f.path}</span
             >
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if onstage && (f.unshown || mixed.has(f.path))}
-              <Tag
-                color="var(--warn)"
-                label="staged differently"
-                title={f.unshown ??
-                  'Some lines were changed again after they were staged, so what is staged is neither the old nor the new version. Pick one to stage the new version of its block, or unpick it.'}
-              />
+              <span
+                use:tooltip={f.unshown ??
+                  "Changed again after staging, so what's staged is neither version. Pick a line to stage the new version of its block, or unpick it."}
+                ><Tag color="var(--warn)" label="staged differently" /></span
+              >
             {/if}
             {#if f.generated}
-              <Tag label="generated" title="Generated file: collapsed by default (see README to change the list)" />
+              <span use:tooltip={'Collapsed by default; the README says how to change which files'}><Tag label="generated" /></span>
             {/if}
             {#if hideWhitespace.value && onlyWhitespace(f)}
-              <Tag label="whitespace only" title="Every change in this file only changes whitespace" />
+              <span use:tooltip={'Every change here is whitespace only'}><Tag label="whitespace only" /></span>
             {/if}
             {#if placedThreads[i]?.elsewhere.length}
               {@const n = placedThreads[i].elsewhere.length}
-              <span class="away" data-away={i}>
+              <span
+                class="away"
+                data-away={i}
+                use:tooltip={"Review threads on this file, made on this commit, that aren't on a line of its diff: on the whole file, or outdated"}
+              >
                 <Tag
                   color="var(--theme2)"
-                  label="{n} {n === 1 ? 'comment' : 'comments'} not on a line here"
-                  title="Review threads on this file made on this commit that aren't on a line of its diff: on the whole file, or outdated"
+                  label="{n} {n === 1 ? 'comment' : 'comments'} off the diff"
                   onclick={(e) => (away = { i, el: e.currentTarget as HTMLElement })}
                 />
               </span>
@@ -1176,22 +1182,22 @@
                         <div class="hunk" class:tail data-r={r}>
                           <span class="gutter xp"
                             >{#if left === null || (left > STEP && tail)}<button
-                                title="Show {STEP} more lines"
+                                use:tooltip={`Show ${STEP} more lines`}
                                 aria-label="Show {STEP} more lines"
                                 disabled={opening[i]}
                                 onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
                               >{:else if left > STEP}{#if k > 0}<button
-                                  title="Show {STEP} more lines below the hunk above"
+                                  use:tooltip={`Show ${STEP} more lines below the hunk above`}
                                   aria-label="Show {STEP} more lines below the hunk above"
                                   disabled={opening[i]}
                                   onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
                                 >{/if}<button
-                                title="Show {STEP} more lines above"
+                                use:tooltip={`Show ${STEP} more lines above`}
                                 aria-label="Show {STEP} more lines above"
                                 disabled={opening[i]}
                                 onclick={() => expand(i, k, 'bottom')}><ArrowLineUp size={12} /></button
                               >{:else if left > 0}<button
-                                title="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
+                                use:tooltip={`Show ${left} hidden ${left === 1 ? 'line' : 'lines'}`}
                                 aria-label="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
                                 disabled={opening[i]}
                                 onclick={() => expand(i, k, 'top')}><ArrowsOutLineVertical size={12} /></button
@@ -1212,14 +1218,14 @@
                           class:gh-range={blockLayout[i]?.on.has(r)}
                           style:height={edit || cols ? `${rowSpan(i, r) * ROW}px` : undefined}
                           data-r={r}
-                          title={kind === SPACED ? 'Only whitespace changed' : undefined}
                         >
                           <span class="gutter"
                             ><span
                               class="blk"
-                              title={ci >= 0 && !readonly ? (onstage ? 'Stage or unstage this block of changes' : 'Select this block of changes') : undefined}
-                            ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
-                              >{MARK[kind]}</span
+                              use:tooltip={ci >= 0 && !readonly ? (onstage ? 'Stage or unstage this block' : 'Pick this block') : null}
+                            ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span
+                              class="mark"
+                              use:tooltip={kind === SPACED ? 'Only whitespace changed' : null}>{MARK[kind]}</span
                             ></span
                           >{#if edit}<span class="code"
                               ><textarea
@@ -1238,7 +1244,7 @@
                                   >{:else if seg.c || seg.w}<span class={[seg.c, seg.w && 'wd']}>{seg.t}</span
                                   >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
                                 class="eof"
-                                title="No newline at end of file">⏎̸</span
+                                use:tooltip={'No newline at end of file'}>⏎̸</span
                               >{/if}</span
                           >{/if}
                         </div>
@@ -1336,6 +1342,7 @@
 
   .hint {
     margin-left: auto;
+    cursor: help;
     font-size: var(--fs-xs);
     white-space: normal;
   }

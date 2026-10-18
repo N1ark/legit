@@ -90,15 +90,11 @@
     {#if editable}
       <h2><ArrowsMerge /> Squash {commits.length} commits</h2>
       <p class="muted">
-        Changes are combined into <span class="mono sha">{shortSha(oldest)}</span>, the oldest selected commit, keeping its
-        author and date. Commits in between are replayed on top. Below is what the squashed commit changes.
+        Into <span class="mono sha">{shortSha(oldest)}</span>, keeping its author and date; commits in between are replayed on top.
       </p>
     {:else}
       <h2><Stack /> {commits.length} commits</h2>
-      <p class="muted">
-        {app.repo?.blocked ? "They can't be rewritten right now" : "Some of them can't be rewritten"}, but here is
-        everything they change together.
-      </p>
+      <p class="muted">{app.repo?.blocked ? "Can't be rewritten right now" : "Some can't be rewritten"}</p>
     {/if}
 
     <ReviewButton />

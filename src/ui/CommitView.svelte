@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast } from 'purr';
+  import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast, tooltip } from 'purr';
   import { ArrowCounterClockwise, ArrowUUpLeft, ChatCircleText, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -14,6 +14,7 @@
   import { splitTitle } from './lib/split.ts';
   import { type DiffPosition, app, shortSha } from './lib/app.svelte.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
@@ -215,19 +216,19 @@
 
 <div class="view">
   <div class="top">
-    <button class="btn btn--ghost sha mono" onclick={copySha} title="Copy full SHA">{shortSha(commit)}</button>
+    <button class="btn btn--ghost sha mono" onclick={copySha} use:tooltip={'Copy full SHA'}>{shortSha(commit)}</button>
     <span class="muted">{date}</span>
     {#if commit.pushed}
-      <Tag color="var(--warn)" title="This commit is on a remote branch; rewriting it means you'll need to force-push.">
-        <span class="tag-icon"><CloudCheck /> pushed</span>
-      </Tag>
+      <span use:tooltip={"On a remote branch: rewriting it means force-pushing"}>
+        <Tag color="var(--warn)"><span class="tag-icon"><CloudCheck /> pushed</span></Tag>
+      </span>
     {/if}
     <span class="spacer"></span>
     <ReviewButton />
     {#if commit.merge && !commit.side}
       {@const open = commit.sha in app.expanded}
-      <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} title="List the commits it brought in under it (→ / ←)">
-        <GitMerge /> {open ? 'Hide' : 'Show'} merged commits
+      <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} {@attach tip('List the commits it brought in under it (→ / ←)')}>
+        <GitMerge /> {open ? 'Hide' : 'Show'} merged
       </Button>
     {/if}
     {#if !readonly && !commit.merge}
@@ -235,7 +236,7 @@
         variant="ghost"
         onclick={() => app.editCommit(commit.sha)}
         disabled={app.busy}
-        title="Check out this commit to change its files in your editor; finishing amends the changes into it and replays the commits after it"
+        {@attach tip('Check it out to change its files in your editor; finishing amends them into it and replays the commits after it')}
       >
         <PencilSimpleLine /> Edit files
       </Button>
@@ -247,12 +248,12 @@
           confirmLabel="It was pushed. Click again"
           onconfirm={() => app.uncommit()}
           disabled={app.busy}
-          title="Undo this commit; its changes stay staged"
+          {@attach tip('Undo this commit; its changes stay staged')}
         >
           <ArrowUUpLeft /> Undo commit
         </ConfirmButton>
       {:else}
-        <Button variant="ghost" onclick={() => app.uncommit()} disabled={app.busy} title="Undo this commit; its changes stay staged">
+        <Button variant="ghost" onclick={() => app.uncommit()} disabled={app.busy} {@attach tip('Undo this commit; its changes stay staged')}>
           <ArrowUUpLeft /> Undo commit
         </Button>
       {/if}
@@ -265,8 +266,8 @@
         confirmLabel="Click again to drop"
         onconfirm={() => app.drop([commit])}
         disabled={app.busy}
-        title="Drop this commit"
         aria-label="Drop this commit"
+        {@attach tip('Drop this commit')}
       >
         <span class="glyph"><Trash /></span>
       </ConfirmButton>
@@ -291,7 +292,6 @@
         class="field-input subject shown"
         class:readonly
         tabindex={readonly ? undefined : 0}
-        title={readonly ? undefined : 'Click to edit'}
         onfocus={() => edit('subject')}
         onmousedown={keepLinks}
       >
@@ -315,7 +315,6 @@
         class="field-input body shown"
         class:readonly
         tabindex={readonly ? undefined : 0}
-        title={readonly ? undefined : 'Click to edit'}
         onfocus={() => edit('body')}
         onmousedown={keepLinks}
       >
@@ -349,7 +348,6 @@
       {readonly}
       initial={position}
       {review}
-      hint="Pick lines to split out or remove: click, shift-click, or drag the line numbers; the left edge picks whole blocks. Double-click a line to edit it."
       onremove={remove}
       oneditline={editLine}
       fileActions={(f) => [
@@ -409,12 +407,12 @@
       <Button
         onclick={() => remove(selection())}
         disabled={app.busy}
-        title="Take these changes out of the commit: added lines aren't added, removed lines stay. The commits after it, and your files, lose them too."
+        {@attach tip("Take these changes out of the commit (added lines go, removed lines stay); the commits after it and your files lose them too")}
       >
         <Eraser /> Remove <Kbd hint="⌫" />
       </Button>
       {#if comment}
-        <Button onclick={comment.run} disabled={!!comment.why} title={comment.why ?? 'Comment on these lines on GitHub'}>
+        <Button onclick={comment.run} disabled={!!comment.why} {@attach tip(comment.why ?? 'Comment on these lines on GitHub')}>
           <ChatCircleText /> Comment
         </Button>
       {/if}

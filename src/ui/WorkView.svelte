@@ -2,7 +2,7 @@
   // Uncommitted changes: a commit form, and each file's changes from HEAD to the working tree.
   // What's picked in them is what's staged: picking a line, block or file stages or unstages
   // it right away (only the index changes). Discarding is in the menus.
-  import { Button, Checkbox, ConfirmButton, Kbd, hasOverlay, matches, toast } from 'purr';
+  import { Button, Checkbox, ConfirmButton, Kbd, hasOverlay, matches, toast, tooltip } from 'purr';
   import { ArrowDown, ArrowUp, Check, Trash } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -13,6 +13,7 @@
   import { discardChanges } from './lib/discard.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
+  import { tip } from './lib/tip.ts';
 
   type Sel = Record<string, SvelteSet<number>>;
   let work = $state.raw<WorkState | null>(null);
@@ -191,11 +192,6 @@
 <div class="view">
   <div class="top">
     <h2>Uncommitted changes</h2>
-    {#if app.repo}
-      <span class="muted">
-        {app.repo.work.staged} staged · {app.repo.work.unstaged} unstaged · {app.repo.work.untracked} untracked
-      </span>
-    {/if}
   </div>
 
   <div class="meta">
@@ -215,13 +211,11 @@
         {/if}
         <Kbd hint="⌘↩" />
       </Button>
-      <span title="Fold what's staged into the last commit and replace its message">
+      <span use:tooltip={"Fold what's staged into the last commit and replace its message"}>
         <Checkbox label="Amend last commit" checked={amend} onchange={toggleAmend} disabled={!head?.editable} />
       </span>
       {#if amend && head?.pushed}
-        <span class="warn">Already pushed: amending it means force pushing.</span>
-      {:else if !amend && work && !stagedFiles}
-        <span class="muted">Check the changes to commit below.</span>
+        <span class="warn">Pushed: amending means force pushing</span>
       {/if}
     </div>
     {#if head?.editable && !head.merge && !amend}
@@ -233,10 +227,11 @@
             variant="link"
             confirmLabel="It was pushed. Click again to undo it"
             onconfirm={() => app.uncommit()}
-            disabled={app.busy}>Undo (keep changes)</ConfirmButton
+            disabled={app.busy}
+            {@attach tip('Undo it; its changes stay staged')}>Undo</ConfirmButton
           >
         {:else}
-          <Button variant="link" onclick={() => app.uncommit()} disabled={app.busy}>Undo (keep changes)</Button>
+          <Button variant="link" onclick={() => app.uncommit()} disabled={app.busy} {@attach tip('Undo it; its changes stay staged')}>Undo</Button>
         {/if}
       </div>
     {/if}
@@ -257,7 +252,7 @@
             confirmLabel="Discard all {plural(files.length, 'file')}? Click again"
             onconfirm={() => discard(all(files))}
             disabled={app.busy}
-            title="Throw away every uncommitted change, staged or not, untracked files included (saved first, so it can be undone)"
+            {@attach tip('Throw away every uncommitted change, untracked files included; saved first, so it can be restored')}
             ><Trash /> Discard all</ConfirmButton
           >
           <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDown /> Unstage all</Button>
@@ -270,7 +265,8 @@
             summary={work.changes}
             sel={staged}
             readonly={false}
-            hint="Checked lines are staged: click a line, the strip beside a block, or a file's box; drag down the line numbers for several. Right-click to discard."
+            hint="Checked lines are staged"
+            help="Click a line, the strip beside a block, or a file's box; drag down the line numbers for several. Right-click to discard."
             onstage={stage}
             changeActions={(f, line, block) => [
               {

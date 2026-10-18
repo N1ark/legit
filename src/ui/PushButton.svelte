@@ -99,13 +99,13 @@
         {
           label: `Rebase onto ${where}`,
           icon: GitPullRequest,
-          note: `Replays your ${commits(info.ahead)} on top, stopping at each one that conflicts for you to resolve.`,
+          note: `Replays your ${commits(info.ahead)} on top, stopping at conflicts for you to resolve`,
           run: () => app.sync('pull', { how: 'rebase' }),
         },
         {
           label: `Merge ${where}`,
           icon: GitMerge,
-          note: 'Adds a merge commit. Conflicts can be resolved here.',
+          note: 'Adds a merge commit; conflicts can be resolved here',
           run: () => app.sync('pull', { how: 'merge' }),
         },
       ],
@@ -117,23 +117,22 @@
     !info ? ''
     : mode === 'publish' ? `Push this branch to ${info.remote} as ${info.branch} and track it`
     : mode === 'rewritten'
-      ? `You changed commits that were already on ${where}, so it still has their old versions (${commits(info.behind)}). ` +
-        `This replaces them with your ${commits(info.ahead)}. If ${where} has commits your branch never had, nothing is pushed, ` +
-        'and you can choose to overwrite them.'
+      ? `${where} has the old versions of commits you rewrote (${commits(info.behind)}); this replaces them with your ` +
+        `${commits(info.ahead)}. If ${where} has commits your branch never had, nothing is pushed until you choose to overwrite them.`
     : `Push ${commits(info.ahead)} to ${where}`,
   );
   const pullTitle = $derived(
     !info ? ''
     : mode === 'diverged'
-      ? `${where} has ${commits(info.behind)} your branch doesn't, and your branch has ${commits(info.ahead)} it doesn't. ` +
-        'Pull brings theirs in: your commits rebased on top, or a merge.'
-    : `${where} has ${commits(info.behind)} your branch doesn't. Pull fetches, then moves your branch up to them; ` +
-      "uncommitted changes come along, unless they'd be overwritten.",
+      ? `${where} has ${commits(info.behind)} your branch doesn't, and yours has ${commits(info.ahead)} it doesn't. ` +
+        'Pull brings theirs in, by rebase or merge.'
+    : `${where} has ${commits(info.behind)} your branch doesn't. Pull fetches and moves your branch up to them; ` +
+      "uncommitted changes come along unless they'd be overwritten.",
   );
   const overwriteTitle = $derived(
     !info ? ''
-    : `Replace ${where} with your branch, removing the ${commits(info.behind)} it has that your branch doesn't. ` +
-      `Refused if ${where} changed since the last fetch. The removed commits stay in this repo (git reflog ${where}).`,
+    : `Replace ${where} with your branch, removing its ${commits(info.behind)} your branch doesn't have. ` +
+      `Refused if ${where} changed since the last fetch; the removed commits stay in this repo (git reflog ${where}).`,
   );
 </script>
 
@@ -150,7 +149,7 @@
     {/if}
 
     {#if mode === 'pull' || mode === 'diverged'}
-      <Button variant="primary" onclick={pull} {disabled} title={pullTitle}>
+      <Button variant="primary" onclick={pull} {disabled} {@attach tip(pullTitle)}>
         <CloudArrowDown /> Pull <span class="count">↓{info.behind}</span>
         {#if mode === 'diverged'}<CaretDown />{/if}
       </Button>
@@ -159,17 +158,17 @@
         confirmLabel={`Overwrite ${commits(info.behind)} on ${where}`}
         onconfirm={() => push('overwrite')}
         {disabled}
-        title={overwriteTitle}
+        {@attach tip(overwriteTitle)}
       >
         <Warning /> Force push
       </ConfirmButton>
     {/if}
     {#if mode === 'rewritten'}
-      <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} {disabled} title={pushTitle}>
+      <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} {disabled} {@attach tip(pushTitle)}>
         <Warning weight="bold" /> Force push <span class="count">↑{info.ahead}</span>
       </ConfirmButton>
     {:else if mode === 'push' || mode === 'publish'}
-      <Button variant="primary" onclick={() => push(false)} {disabled} title={pushTitle}>
+      <Button variant="primary" onclick={() => push(false)} {disabled} {@attach tip(pushTitle)}>
         <CloudArrowUp />
         {mode === 'publish' ? 'Publish' : 'Push'}
         {#if mode === 'push'}<span class="count">↑{info.ahead}</span>{/if}
