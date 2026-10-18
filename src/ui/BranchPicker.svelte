@@ -66,6 +66,8 @@
   const disabled = $derived(!!app.repo?.blocked || app.busy);
   const here = $derived(app.repo?.branch ?? null);
   const names = $derived(new Set((local ?? []).map((b) => b.name)));
+  /** The current branch, whose upstream the list shows (the other branches' are in their menus). */
+  const hereInfo = $derived(local?.find((b) => b.current) ?? null);
   const tracked = $derived(mode === 'upstream' ? (local?.find((b) => b.name === tracker) ?? null) : null);
   const isUpstream = (remote: string, name: string) => tracked?.tracking?.remote === remote && tracked.tracking.branch === name;
 
@@ -596,7 +598,6 @@
                   </span>
                 {/if}
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
-                {#if b.upstream}<span class="upstream mono muted" title="Tracks {b.upstream}">{b.upstream}</span>{/if}
                 {#if b.track === 'gone'}
                   <span class="track" title="{b.upstream} isn't on the remote (deleted there, or not pushed yet); the next push publishes it">not on remote</span>
                 {:else if b.track}<span class="track">{b.track}</span>{/if}
@@ -648,6 +649,18 @@
           <Button size="sm" variant="ghost" onclick={() => addWorktree()} title="Check a branch out in a folder of its own">
             <FolderPlus /> New worktree…
           </Button>
+          {#if hereInfo}
+            <span class="tracks">
+              <Button
+                size="sm"
+                variant="ghost"
+                onclick={() => pickUpstream(hereInfo.name)}
+                title={hereInfo.upstream ? `${hereInfo.name} pushes to and pulls from ${hereInfo.upstream}; click to change it` : `${hereInfo.name} tracks no remote branch; click to pick one`}
+              >
+                <CloudArrowUp /> <span class="mono">{hereInfo.upstream ?? 'No upstream'}</span>
+              </Button>
+            </span>
+          {/if}
         </div>
         <p class="foot muted">
           Right-click a branch to rename or delete it, change its upstream, or open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. <span class="mono">{isMac ? '⌘' : 'Ctrl'}</span>-click or <span class="mono">⇧</span>-click to select several, to delete them together. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
@@ -800,11 +813,13 @@
     white-space: nowrap;
   }
 
-  .upstream {
-    font-size: var(--fs-xs);
-    flex-shrink: 1;
-    min-width: 4ch;
-    max-width: 30%;
+  .tracks {
+    margin-left: auto;
+    min-width: 0;
+    display: flex;
+  }
+
+  .tracks .mono {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
