@@ -1,5 +1,5 @@
 <script lang="ts">
-  // CI in the header, for HEAD once it's pushed (else the branch's tip on the remote): how many
+  // CI in the header, for HEAD once it's pushed (and the branch is on the remote) (else the branch's tip on the remote): how many
   // checks are done and how it's going; a click lists them. It also holds the checks popover that
   // commit rows open, and the log viewer, and keeps them fresh: every 15s while something runs and
   // the window has focus, and otherwise when GitHub refreshes (gh.tick), on focus and after a push.
@@ -16,7 +16,9 @@
 
   const target = $derived.by(() => {
     const r = app.repo;
-    if (!r || !gh.ready) return null;
+    // A branch that isn't on the remote has no CI of its own, even when its tip is a pushed
+    // commit (a branch just made from main): that commit's checks are another branch's.
+    if (!r || !gh.ready || r.push?.publish) return null;
     if (r.head && r.commits.find((c) => c.sha === r.head)?.pushed) return r.head;
     return r.push?.tip ?? null;
   });
