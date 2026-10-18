@@ -114,7 +114,7 @@
   const PAD = 4;
   const GAP = 10;
   /** Block strip + old/new line numbers + marker; keep in sync with .gutter's CSS width. */
-  const GUTTER = 118;
+  const GUTTER = 90;
   /** How far beyond the viewport to render, so scrolling rarely shows unrendered rows. */
   const OVERSCAN = 1200;
   /** Files past the viewport whose contents are fetched ahead of time. */
@@ -1478,7 +1478,7 @@
     left: 0;
     display: flex;
     flex-shrink: 0;
-    width: 118px;
+    width: 90px;
     background: var(--code-bg);
     color: var(--muted);
     user-select: none;
@@ -1496,10 +1496,11 @@
     pointer-events: none;
   }
 
+  /* Four digits wide. */
   .gutter > span {
-    width: 38px;
+    width: 32px;
     text-align: right;
-    padding-right: 6px;
+    padding-right: 4px;
   }
 
   .gutter > .mark {
@@ -1508,9 +1509,9 @@
     padding: 0;
   }
 
-  /* Wide enough to hit easily; it only shows a thin bar until hovered. */
+  /* Wide enough to hit; it only shows a thin bar until hovered. */
   .gutter > .blk {
-    width: 30px;
+    width: 14px;
     padding: 0;
   }
 
