@@ -36,6 +36,7 @@
   import SquashView from './SquashView.svelte';
   import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
+  import Brand from './Brand.svelte';
   import Notifications from './gh/Notifications.svelte';
   import PrView from './gh/PrView.svelte';
   import PrChip from './gh/PrChip.svelte';
@@ -181,7 +182,7 @@
 
 <div class="shell">
   <header class:desktop={IS_TAURI} data-tauri-drag-region>
-    <span class="brand" data-tauri-drag-region>legit</span>
+    {#if !IS_TAURI}<Brand />{/if}
     {#if app.repo}
       <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
@@ -312,17 +313,6 @@
   header.desktop {
     height: 50px;
     padding-left: 88px;
-  }
-
-  header.desktop .brand {
-    display: none;
-  }
-
-  .brand {
-    font-weight: 700;
-    font-size: var(--fs-xl);
-    color: var(--theme2);
-    letter-spacing: -0.02em;
   }
 
   .spacer {
