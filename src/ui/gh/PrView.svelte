@@ -2,7 +2,7 @@
   // A pull request in place of a commit, as GitHub's Conversation tab: its description, commits,
   // timeline and merge box, with who reviews it and its labels beside them. One query loads it
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
-  import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast } from 'purr';
+  import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
   import { ArrowSquareOut, CheckCircle, Circle, GitMerge, GitPullRequest, GitPullRequestClosed, X, XCircle } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import type { CheckState, PrOptions, PrOverview } from '../../shared/gh-prview.ts';
@@ -211,15 +211,6 @@
         {@const s = STATE[pr.state]}
         <span class="state" style:--tone={s.color}><s.icon weight="bold" /> {s.label}</span>
         <span class="mono num">#{pr.number}</span>
-        <span class="refs mono" title="Merges {pr.head} into {pr.base}">
-          {#if pr.canUpdate && (pr.state === 'open' || pr.state === 'draft')}
-            <button class="btn btn--ghost btn--sm ref" title="Change the branch it merges into" onclick={pickBase}>{pr.base}</button>
-          {:else}
-            <span class="ref">{pr.base}</span>
-          {/if}
-          <span class="muted" aria-label="from">←</span>
-          <span class="ref">{pr.head}</span>
-        </span>
       {:else}
         <span class="mono num">#{number}</span>
       {/if}
@@ -267,10 +258,19 @@
       <div class="byline muted">
         {#if pr.author}<Avatar name={pr.author.login} src={ghAvatar(pr.author.avatar)} size={16} round />{/if}
         <b>{pr.author?.login ?? 'ghost'}</b> opened this
-        <span title={formatFull(pr.createdAt)}>{formatRelative(pr.createdAt)}</span>
+        <span use:tooltip={formatFull(pr.createdAt)}>{formatRelative(pr.createdAt)}</span>
         {#if pr.state === 'merged' && pr.mergedAt}
-          · merged by <b>{pr.mergedBy?.login ?? 'someone'}</b> <span title={formatFull(pr.mergedAt)}>{formatRelative(pr.mergedAt)}</span>
+          · merged by <b>{pr.mergedBy?.login ?? 'someone'}</b> <span use:tooltip={formatFull(pr.mergedAt)}>{formatRelative(pr.mergedAt)}</span>
         {/if}
+        <span class="refs mono" use:tooltip={`Merges ${pr.head} into ${pr.base}`}>
+          {#if pr.canUpdate && (pr.state === 'open' || pr.state === 'draft')}
+            <button class="btn btn--ghost btn--sm ref" use:tooltip={'Change the base'} onclick={pickBase}>{pr.base}</button>
+          {:else}
+            <span class="ref">{pr.base}</span>
+          {/if}
+          <span class="muted" aria-label="from">←</span>
+          <span class="ref">{pr.head}</span>
+        </span>
       </div>
     </div>
 
@@ -402,10 +402,16 @@
     align-items: center;
     gap: var(--gap-2);
     min-width: 0;
+    max-width: 100%;
     font-size: var(--fs-sm);
   }
 
+  /* Narrow, a long name is cut short (its full name is in the tooltip) rather than broken up. */
   .ref {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     padding: var(--gap-1) var(--sp-3);
     border-radius: var(--radius);
     background: var(--theme-soft);

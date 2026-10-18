@@ -4,6 +4,8 @@
 import type { CheckState, MergeMethod, PrEvent, PrOverview, ReviewEvent, ReviewState } from '../../shared/gh-prview.ts';
 
 export const METHOD_LABEL: Record<MergeMethod, string> = { merge: 'Merge commit', squash: 'Squash and merge', rebase: 'Rebase and merge' };
+/** In the picker, next to the button that says it in full. */
+export const METHOD_SHORT: Record<MergeMethod, string> = { merge: 'Merge', squash: 'Squash', rebase: 'Rebase' };
 export const METHOD_NOTE: Record<MergeMethod, string> = {
   merge: 'All commits are added to the base branch with a merge commit.',
   squash: 'The commits are combined into one commit on the base branch.',

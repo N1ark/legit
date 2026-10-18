@@ -10,7 +10,7 @@
   import type { MergeMethod, PrOverview } from '../../shared/gh-prview.ts';
   import { app, request } from '../lib/app.svelte.ts';
   import { deleteBranch, switchOp } from '../lib/branches.svelte.ts';
-  import { METHOD_LABEL, METHOD_NOTE, checksLabel, mergeStatus } from '../lib/gh-prview.ts';
+  import { METHOD_LABEL, METHOD_NOTE, METHOD_SHORT, checksLabel, mergeStatus } from '../lib/gh-prview.ts';
   import { gh } from '../lib/github.svelte.ts';
 
   interface Props {
@@ -221,7 +221,7 @@
     {:else}
       <div class="actions">
         {#if pr.methods.length > 1}
-          <Segmented label="How to merge" size="sm" options={pr.methods.map((m) => ({ id: m, label: METHOD_LABEL[m] }))} bind:value={method} />
+          <Segmented label="How to merge" size="sm" options={pr.methods.map((m) => ({ id: m, label: METHOD_SHORT[m] }))} bind:value={method} />
         {/if}
         <Button
           variant="primary"
