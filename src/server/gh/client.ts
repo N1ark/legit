@@ -69,30 +69,48 @@ async function failure(res: Response): Promise<GithubError> {
   return new GithubError(`GitHub: ${message}`, res.status);
 }
 
+/** Why a fetch failed: undici says only "fetch failed" and puts the reason in `cause`. */
+function networkReason(e: unknown): string {
+  const cause = (e as { cause?: { code?: string; message?: string } })?.cause;
+  const why = cause?.code ?? cause?.message;
+  const msg = e instanceof Error ? e.message : String(e);
+  return why ? `${msg}: ${why}` : msg;
+}
+
+/** fetch() against the API. A request that never got an answer (a pooled connection GitHub had
+ *  closed, a blip after the Mac wakes) is sent once more when that can't do anything twice. */
+async function send(path: string, init: RequestInit, safe: boolean): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(`https://api.github.com${path}`, { ...init, signal: AbortSignal.timeout(30_000) });
+    } catch (e) {
+      const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+      const again = attempt === 0 && !timedOut && safe;
+      if (!again) throw new GithubError(`Couldn't reach GitHub (${networkReason(e)}).`);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+}
+
 export interface RestOpts {
   /** Return the body as text (logs, diffs) rather than JSON. */
   text?: boolean;
   accept?: string;
+  /** Doing it twice is harmless (a GraphQL query), so a dropped request may be resent. */
+  safe?: boolean;
 }
 
 /** A REST call, e.g. `rest('GET', '/repos/o/r/pulls?head=o:b')`; 204s return null. */
 export async function rest<T = any>(method: string, path: string, body?: unknown, opts: RestOpts = {}): Promise<T> {
   if (MOCK) return mockRest(method, path, body) as T;
-  let res: Response;
-  try {
-    res = await fetch(`https://api.github.com${path}`, {
-      method,
-      headers: await headers({
-        ...(opts.accept ? { accept: opts.accept } : {}),
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      }),
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (e) {
-    if (e instanceof GithubError) throw e;
-    throw new GithubError(`Couldn't reach GitHub (${e instanceof Error ? e.message : e}).`);
-  }
+  const res = await send(path, {
+    method,
+    headers: await headers({
+      ...(opts.accept ? { accept: opts.accept } : {}),
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    }),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }, method === 'GET' || !!opts.safe);
   if (!res.ok) throw await failure(res);
   if (res.status === 204) return null as T;
   return (opts.text ? await res.text() : await res.json()) as T;
@@ -101,16 +119,7 @@ export async function rest<T = any>(method: string, path: string, body?: unknown
 /** A GET sent with `If-Modified-Since`: null when nothing changed (a 304, which costs no rate limit). */
 export async function restSince<T = any>(path: string, since: string | null): Promise<{ data: T; modified: string | null; poll: number } | null> {
   if (MOCK) return { data: (await mockRest('GET', path, undefined)) as T, modified: null, poll: 60 };
-  let res: Response;
-  try {
-    res = await fetch(`https://api.github.com${path}`, {
-      headers: await headers(since ? { 'if-modified-since': since } : {}),
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (e) {
-    if (e instanceof GithubError) throw e;
-    throw new GithubError(`Couldn't reach GitHub (${e instanceof Error ? e.message : e}).`);
-  }
+  const res = await send(path, { headers: await headers(since ? { 'if-modified-since': since } : {}) }, true);
   if (res.status === 304) return null;
   if (!res.ok) throw await failure(res);
   return { data: (await res.json()) as T, modified: res.headers.get('last-modified'), poll: Number(res.headers.get('x-poll-interval')) || 60 };
@@ -119,7 +128,7 @@ export async function restSince<T = any>(path: string, since: string | null): Pr
 /** A GraphQL query or mutation; it must be named (`query Name(…)`), which is how the mock finds it. */
 export async function graphql<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
   if (MOCK) return mockGraphql(query, variables) as T;
-  const res = await rest<{ data?: T; errors?: { message: string; type?: string }[] }>('POST', '/graphql', { query, variables });
+  const res = await rest<{ data?: T; errors?: { message: string; type?: string }[] }>('POST', '/graphql', { query, variables }, { safe: /^\s*query\b/.test(query) });
   if (res.errors?.length) {
     const msg = res.errors.map((e) => e.message).join('; ');
     throw new GithubError(`GitHub: ${msg}`, 200, res.errors.some((e) => e.type === 'RATE_LIMITED') ? 'github-limit' : undefined);
