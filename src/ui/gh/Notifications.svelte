@@ -3,7 +3,7 @@
   // repo opens in legit's own view; anything else opens on GitHub. Opening one marks it read.
   import { Badge, Button, EmptyState, IconButton, Popover, Segmented, formatFull, formatRelative, persisted } from 'purr';
   import {
-    ArrowSquareOut, Bell, BellSlash, ChatsCircle, Check, CheckCircle, EnvelopeOpen, GitCommit, GitPullRequest, PlayCircle, Record as IssueIcon, Tag,
+    ArrowSquareOut, Bell, BellSlash, ChatsCircle, Check, CheckCircle, EnvelopeOpen, GitCommit, GitPullRequest, IssueOpened as IssueIcon, PlayCircle, Tag,
   } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import type { Component } from 'svelte';
