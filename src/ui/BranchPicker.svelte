@@ -159,8 +159,10 @@
     if (m === 'upstream') tracker = branch ?? here;
     open = true;
     filter = '';
+    const loaded = setMode(m);
+    // Asked after the branches, which show without waiting for it; the badges follow.
     prs.loadBranches();
-    await setMode(m);
+    await loaded;
   }
 
   async function setMode(m: Mode) {

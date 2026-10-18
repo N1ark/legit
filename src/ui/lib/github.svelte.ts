@@ -5,12 +5,35 @@ import { toast } from 'purr';
 import { app, request } from './app.svelte.ts';
 import type { GithubStatus, PullRequest } from '../../shared/github.ts';
 
+/**
+ * GitHub reads sent at once; the others wait their turn. The page gets six connections to the
+ * server, one of them the event stream: slow GitHub calls holding all the others made local ones
+ * (the branch list) wait for GitHub.
+ */
+const MAX_READS = 3;
+let reading = 0;
+const waiting: (() => void)[] = [];
+
+async function readSlot<T>(read: () => Promise<T>): Promise<T> {
+  if (reading < MAX_READS) reading++;
+  // The slot is handed over by the read that ends, so `reading` stays counted.
+  else await new Promise<void>((go) => waiting.push(go));
+  try {
+    return await read();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else reading--;
+  }
+}
+
 /** GET `/api/gh/<name>?query`, or POST `body` to it. */
 export function ghRequest<T>(name: string, query?: Record<string, string | number | boolean | null | undefined>, body?: unknown): Promise<T> {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) if (v !== null && v !== undefined) q.set(k, String(v));
   const qs = q.size ? `?${q}` : '';
-  return request<T>(`/api/gh/${name}${qs}`, body);
+  if (body !== undefined) return request<T>(`/api/gh/${name}${qs}`, body);
+  return readSlot(() => request<T>(`/api/gh/${name}${qs}`));
 }
 
 /** POST `body` to `/api/gh/<name>`. */
