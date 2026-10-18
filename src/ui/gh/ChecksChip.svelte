@@ -17,8 +17,9 @@
   const target = $derived.by(() => {
     const r = app.repo;
     // A branch that isn't on the remote has no CI of its own, even when its tip is a pushed
-    // commit (a branch just made from main): that commit's checks are another branch's.
-    if (!r || !gh.ready || r.push?.publish) return null;
+    // commit (a branch just made from main), or it tracks another branch (made from origin/main):
+    // those checks are the other branch's.
+    if (!r || !gh.ready || r.push?.publish || (r.push && r.branch && r.push.branch !== r.branch)) return null;
     if (r.head && r.commits.find((c) => c.sha === r.head)?.pushed) return r.head;
     return r.push?.tip ?? null;
   });
