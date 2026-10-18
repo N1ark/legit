@@ -151,11 +151,22 @@
     display: inline-flex;
   }
 
+  /* On the bell's shoulder, measured from the button's middle (where the bell is) rather than its
+     edge, and growing rightwards with more digits. Flex, so the header's line height doesn't push
+     the circle off its spot, and the digits centred on their cap height rather than the line's. */
   .count {
     position: absolute;
-    top: 2px;
-    right: 0;
+    left: calc(50% + 2px);
+    bottom: calc(50% + 1px);
+    display: flex;
     pointer-events: none;
+  }
+
+  .count :global(.badge) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-box: trim-both cap alphabetic;
   }
 
   .head {
