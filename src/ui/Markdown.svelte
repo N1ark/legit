@@ -181,6 +181,20 @@
     vertical-align: middle;
   }
 
+  /* By depth within the message: a browser counts every enclosing list, so a comment shown inside
+     a list (the timeline) would otherwise start at circles. */
+  .md ul {
+    list-style-type: disc;
+  }
+
+  .md :is(ul, ol) ul {
+    list-style-type: circle;
+  }
+
+  .md :is(ul, ol) :is(ul, ol) ul {
+    list-style-type: square;
+  }
+
   .task-item {
     list-style: none;
   }
