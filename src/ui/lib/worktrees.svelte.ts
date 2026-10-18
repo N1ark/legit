@@ -29,7 +29,7 @@ export async function newWorktree(start: { branch?: string; from?: string; what?
     title: 'New worktree',
     description: `Checks a branch out in a folder of its own, to work on it alongside this one. A new branch starts from ${from}.`,
     fields: [
-      { name: 'branch', label: 'Branch', required: true, value: start.branch ?? '', placeholder: 'my-feature', hint: 'A local branch, or a new one.' },
+      { name: 'branch', label: 'Branch', required: true, value: start.branch ?? '', placeholder: 'my-feature' },
       {
         name: 'path',
         label: 'Folder',

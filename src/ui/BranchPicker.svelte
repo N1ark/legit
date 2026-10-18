@@ -8,7 +8,7 @@
   // in another worktree switches to that worktree.
   // In upstream mode, it lists the remote branches a local one can track, and names not on a remote yet.
   import {
-    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, formatRelative, isMac, menu, rank, toast, type MaybeEntry,
+    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, formatRelative, isMac, menu, rank, toast, tooltip, type MaybeEntry,
   } from 'purr';
   import {
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
@@ -23,6 +23,7 @@
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
   import { pick } from './lib/picker.ts';
+  import { tip } from './lib/tip.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
   import PrBadge from './gh/PrBadge.svelte';
@@ -258,7 +259,7 @@
         icon: Trash,
         danger: true,
         disabled: !n,
-        note: kept.length ? `Skips ${kept.join(', ')}.` : 'Kept under Recently deleted for two weeks.',
+        note: kept.length ? `Skips ${kept.join(', ')}.` : 'Restorable for two weeks.',
         confirm: `Delete ${many(n)}`,
         run: () => act(deleteChosen, true),
       },
@@ -358,7 +359,7 @@
           ? "You're on it; switch to another branch first."
           : b.worktree
             ? `It's checked out in ${folder(b.worktree)}; remove that worktree first.`
-            : 'Kept under Recently deleted for two weeks.',
+            : 'Restorable for two weeks.',
         confirm: `Delete ${b.name}`,
         run: () => act(() => deleteBranch(b.name), true),
       },
@@ -464,7 +465,7 @@
   onclick={() => (open ? (open = false) : show())}
   {disabled}
   aria-expanded={open}
-  title="Switch branch (b)"
+  use:tooltip={'Switch branch (b)'}
 >
   <GitBranch />
   <span>{app.repo?.branch ?? `detached @ ${app.repo?.head ? shortSha(app.repo.head) : '?'}`}</span>
@@ -520,8 +521,8 @@
                 : mode === 'commits'
                   ? 'Filter commits…'
                   : mode === 'upstream'
-                    ? 'Remote branch to track, or a new name…'
-                  : 'Switch to or create a branch…'}
+                    ? 'Remote branch, or a new name…'
+                  : 'Branch…'}
         spellcheck="false"
         class="field-input mono"
       />
@@ -545,7 +546,7 @@
               >
                 <span class="check">{#if picked.has(c.sha)}<CheckSquare weight="fill" />{:else}<Square />{/if}</span>
                 <span class="sha mono">{shortSha(c.sha)}</span>
-                <span class="subject" title={c.subject}><Markdown text={c.subject} inline links="off" /></span>
+                <span class="subject" use:tooltip={c.subject}><Markdown text={c.subject} inline links="off" /></span>
                 <span class="when muted">{c.author.name} · {formatRelative(c.author.time * 1000)}</span>
               </li>
             {/each}
@@ -557,7 +558,7 @@
       {:else if local === null}
         <p class="muted">Loading…</p>
       {:else if !rows.length}
-        <p class="muted">No matching branch.</p>
+        <p class="muted">No match</p>
       {:else}
         <ol bind:this={listEl} role="listbox" aria-label="Branches" aria-multiselectable={mode === 'switch'}>
           {#each rows as r, k (key(r))}
@@ -585,21 +586,21 @@
               {:else if r.kind === 'publish'}
                 <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowUp />{/if}</span>
                 <span class="name mono">{r.remote}/{r.name}</span>
-                <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; the next push publishes it there</span>
+                <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; push publishes it</span>
               {:else if r.kind === 'local'}
                 {@const b = r.b}
                 <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
                 <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
                 {#if b.worktree}
-                  <span class="worktree muted" title="Checked out in {b.worktree}; choosing it switches to that worktree">
+                  <span class="worktree muted" use:tooltip={`Checked out in ${b.worktree}; picking it switches there`}>
                     <FolderSimple />{folder(b.worktree)}
                   </span>
                 {/if}
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                 {#if b.track === 'gone'}
-                  <span class="track" title="{b.upstream} isn't on the remote (deleted there, or not pushed yet); the next push publishes it">not on remote</span>
+                  <span class="track" use:tooltip={`${b.upstream} isn't on the remote; the next push publishes it`}>not on remote</span>
                 {:else if b.track}<span class="track">{b.track}</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
@@ -607,7 +608,7 @@
                 {@const b = r.b}
                 <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
                 <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                 {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                 <span class="when muted">{formatRelative(b.time * 1000)}</span>
                 {@render browseButton(r)}
@@ -615,7 +616,7 @@
                 {@const b = r.b}
                 <span class="check"><ArrowCounterClockwise /></span>
                 <span class="name mono gone"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" title={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
+                <span class="subject muted" use:tooltip={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
                 <span class="when muted">{formatRelative(b.time)}</span>
               {/if}
             </li>
@@ -625,7 +626,7 @@
       {#if mode === 'switch' && chosen.size > 1}
         <div class="pick bulk">
           <span class="foot muted">
-            {chosen.size} selected{#if kept.length}; skips {kept.join(', ')}{/if}. Deleted branches stay under Recently deleted for two weeks.
+            {chosen.size} selected{#if kept.length}; skips {kept.join(', ')}{/if} · restorable for two weeks
           </span>
           <Button size="sm" variant="ghost" onclick={() => chosen.clear()}><X /> Clear</Button>
           <ConfirmButton
@@ -640,13 +641,13 @@
       {/if}
       {#if mode === 'switch'}
         <div class="modes">
-          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('merge')} title="Pick a branch to merge into this one (m)">
+          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('merge')} {@attach tip('Merge a branch into this one (m)')}>
             <GitMerge /> Merge…
           </Button>
-          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('rebase')} title="Pick a branch to rebase this one onto (r)">
+          <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('rebase')} {@attach tip('Rebase onto a branch (r)')}>
             <GitPullRequest /> Rebase on…
           </Button>
-          <Button size="sm" variant="ghost" onclick={() => addWorktree()} title="Check a branch out in a folder of its own">
+          <Button size="sm" variant="ghost" onclick={() => addWorktree()} {@attach tip('Check a branch out in a folder of its own')}>
             <FolderPlus /> New worktree…
           </Button>
           {#if hereInfo}
@@ -655,7 +656,7 @@
                 size="sm"
                 variant="ghost"
                 onclick={() => pickUpstream(hereInfo.name)}
-                title={hereInfo.upstream ? `${hereInfo.name} pushes to and pulls from ${hereInfo.upstream}; click to change it` : `${hereInfo.name} tracks no remote branch; click to pick one`}
+                {@attach tip(hereInfo.upstream ? `${hereInfo.name} pushes to and pulls from it; click to change` : `${hereInfo.name} tracks nothing; click to pick`)}
               >
                 <CloudArrowUp /> <span class="mono">{hereInfo.upstream ?? 'No upstream'}</span>
               </Button>
@@ -663,8 +664,7 @@
           {/if}
         </div>
         <p class="foot muted">
-          Right-click a branch to rename or delete it, change its upstream, or open it in a new worktree; its arrow (or <span class="mono">→</span>) lists its commits to cherry-pick. <span class="mono">{isMac ? '⌘' : 'Ctrl'}</span>-click or <span class="mono">⇧</span>-click to select several, to delete them together. Switching with uncommitted changes asks whether to leave them on this branch (stashed) or
-          bring them along.
+          Right-click for more · <span class="mono">→</span> cherry-pick · <span class="mono">{isMac ? '⌘' : 'Ctrl'}</span>/<span class="mono">⇧</span>-click to select
         </p>
       {:else if mode === 'commits'}
         <div class="pick">
@@ -672,8 +672,7 @@
             <CopySimple /> Cherry-pick {picked.size ? `${picked.size} ` : ''}onto {here} <Kbd hint="⌘↩" />
           </Button>
           <span class="foot muted">
-            Oldest first. In memory when nothing conflicts; otherwise a real <span class="mono">git cherry-pick</span>, which stops at
-            each conflict for you to resolve (it needs no uncommitted changes). <span class="mono">⌘Z</span> undoes it.
+            Oldest first · <span class="mono">⌘Z</span> undoes
           </span>
         </div>
       {:else if mode === 'upstream'}
@@ -684,32 +683,24 @@
             </Button>
           {/if}
           <span class="foot muted">
-            Pushing, pulling and the ahead/behind counts use the branch picked, whatever its name. Type a name to track one that isn't on a
-            remote yet: the next push publishes it there.
+            Type a name to publish to a new one
           </span>
         </div>
       {:else if mode === 'copy'}
         <p class="foot muted">
-          Cherry-picks them onto the branch without switching to it, in memory: refused, changing nothing, if anything conflicts (switch to
-          it and cherry-pick there to resolve conflicts). <span class="mono">⌘Z</span> undoes it.
+          Refused if anything conflicts · <span class="mono">⌘Z</span> undoes
         </p>
       {:else if mode === 'rebuild'}
         <p class="foot muted">
-          {here} becomes the branch picked plus the selected commits, oldest first; its other commits are dropped (it asks first, with how
-          many). In memory, with uncommitted changes coming along unless they'd be overwritten; if a commit conflicts, a real
-          <span class="mono">git rebase</span> of only those commits stops at each conflict for you to resolve.
-          <span class="mono">⌘Z</span> undoes it.
+          Other commits on {here} are dropped · <span class="mono">⌘Z</span> undoes
         </p>
       {:else if mode === 'merge'}
         <p class="foot muted">
-          A real <span class="mono">git merge</span>, which needs no uncommitted changes. If it conflicts, resolve the conflicts here or abort.
-          <span class="mono">⌘Z</span> undoes it.
+          Needs no uncommitted changes · <span class="mono">⌘Z</span> undoes
         </p>
       {:else}
         <p class="foot muted">
-          Replays the commits only on {here} on top of the branch, in memory, with uncommitted changes coming along unless they'd be
-          overwritten. If a commit conflicts, it's a real <span class="mono">git rebase</span> instead, which stops at each conflict for you
-          to resolve (it needs no uncommitted changes). <span class="mono">⌘Z</span> undoes it.
+          Uncommitted changes come along · <span class="mono">⌘Z</span> undoes
         </p>
       {/if}
     </div>

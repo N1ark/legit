@@ -88,7 +88,7 @@ export async function switchOp(op: string, body: Record<string, unknown>, to: st
   }
   const from = app.repo?.branch;
   if (!(await app.op(op, { ...body, stash }))) return false;
-  toast(stash && from ? `Switched to ${to}; your changes are stashed on ${from}.` : `Switched to ${to}`);
+  toast(stash && from ? `Switched to ${to}; changes stashed on ${from}` : `Switched to ${to}`);
   return true;
 }
 
@@ -121,7 +121,7 @@ export async function renameBranch(from: string): Promise<boolean> {
 
 export async function deleteBranch(name: string): Promise<boolean> {
   if (!(await app.op('deleteBranch', { branch: name }))) return false;
-  toast(`Deleted ${name}. It's under Recently deleted in the branch list for two weeks.`);
+  toast(`Deleted ${name}; restorable for two weeks`);
   return true;
 }
 
@@ -132,14 +132,14 @@ async function bulk(op: string, body: unknown, done: (n: number) => string): Pro
   const got: { r?: DeleteBranchesResult } = {};
   if (!(await app.op(op, body, undefined, async (r) => (got.r = r as DeleteBranchesResult)))) return false;
   const skipped = got.r?.skipped ?? [];
-  const also = skipped.length ? ` Skipped ${skipped.map((s) => `${s.name} (${s.why})`).join(', ')}.` : '';
+  const also = skipped.length ? `; skipped ${skipped.map((s) => `${s.name} (${s.why})`).join(', ')}` : '';
   toast(done(got.r?.deleted.length ?? 0) + also, { timeout: skipped.length ? 12_000 : 5000 });
   return true;
 }
 
 /** Delete several local branches; the current one and those checked out in another worktree are skipped. */
 export function deleteBranches(names: string[]): Promise<boolean> {
-  return bulk('deleteBranches', { branches: names }, (n) => `Deleted ${plural(n, 'branch')}. They're under Recently deleted for two weeks.`);
+  return bulk('deleteBranches', { branches: names }, (n) => `Deleted ${plural(n, 'branch')}; restorable for two weeks`);
 }
 
 /** Delete several branches on their remotes, given their remote-tracking refs. */
@@ -147,7 +147,7 @@ export function deleteRemoteBranches(refs: string[]): Promise<boolean> {
   return bulk(
     'deleteRemoteBranches',
     { refs },
-    (n) => `Deleted ${plural(n, 'branch')} on the remote. Their tips are under Recently deleted for two weeks.`,
+    (n) => `Deleted ${plural(n, 'branch')} on the remote; restorable for two weeks`,
   );
 }
 
@@ -155,7 +155,7 @@ export function deleteRemoteBranches(refs: string[]): Promise<boolean> {
 export async function deleteRemoteBranch(ref: string): Promise<boolean> {
   const short = ref.replace(/^refs\/remotes\//, '');
   if (!(await app.op('deleteRemoteBranch', { ref }))) return false;
-  toast(`Deleted ${short} on the remote. Its tip is under Recently deleted for two weeks.`);
+  toast(`Deleted ${short} on the remote; restorable for two weeks`);
   return true;
 }
 
