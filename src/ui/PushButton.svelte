@@ -11,6 +11,7 @@
   import { onMount } from 'svelte';
   import { app } from './lib/app.svelte.ts';
   import { progressSummary } from './lib/progress.ts';
+  import { tip } from './lib/tip.ts';
 
   const info = $derived(app.repo?.push ?? null);
   const mode = $derived(
@@ -138,7 +139,7 @@
 
 {#if info && mode}
   <div class="sync">
-    <Button variant="ghost" size="sm" onclick={() => app.fetchRemote()} disabled={app.fetching} title={fetchTitle}>
+    <Button variant="ghost" size="sm" onclick={() => app.fetchRemote()} disabled={app.fetching} {@attach tip(fetchTitle)}>
       <span class="icon" class:spin={app.fetching || fetchProgress.length}>
         {#if app.fetchError && !app.fetching}<Warning weight="bold" />{:else}<ArrowsClockwise />{/if}
       </span>
