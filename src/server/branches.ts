@@ -227,6 +227,12 @@ export async function deleteRemoteBranches(repo: Repo, req: { refs: string[] }):
   return { ...done, ...result };
 }
 
+/** The remote answers, and has no branch `branch`: a lease on it fails as stale, though nothing moved. */
+async function goneOnRemote(repo: Repo, remote: string, branch: string): Promise<boolean> {
+  const r = await repo.git.run(['ls-remote', '--heads', remote, `refs/heads/${branch}`], { allowFail: true, timeout: 60_000 });
+  return r.code === 0 && !r.out.toString().trim();
+}
+
 /** Returns `<remote>/<branch>`. */
 async function deleteRemoteOne(repo: Repo, ref: string): Promise<string> {
   const parsed = await parseRemoteRef(repo, ref);
@@ -240,6 +246,11 @@ async function deleteRemoteOne(repo: Repo, ref: string): Promise<string> {
     ['push', `--force-with-lease=refs/heads/${branch}:${tip}`, remote, `:refs/heads/${branch}`],
     { allowFail: true, timeout: 120_000 },
   );
+  if (r.code !== 0 && /stale info/i.test(r.err) && (await goneOnRemote(repo, remote, branch))) {
+    // Deleted there already (and not pruned here): what's left is to forget it here too.
+    await repo.git.run(['update-ref', '-d', ref, tip], { allowFail: true });
+    return `${remote}/${branch}`;
+  }
   if (r.code !== 0) {
     await repo.git.run(['update-ref', '-d', saved, tip], { allowFail: true });
     throw /stale info/i.test(r.err)

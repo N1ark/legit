@@ -157,6 +157,22 @@ test('delete several branches on their remotes: one that moved since the fetch i
   assert.deepEqual((await deletedBranches(repo)).map((d) => [d.name, d.remote]).sort(), [['x', 'origin'], ['y', 'origin']]);
 });
 
+test('a remote branch already deleted there is forgotten here, and kept under Recently deleted', async () => {
+  commit('base', { f: '1\n' });
+  const remote = t.remote();
+  git('push', '-q', '-u', 'origin', 'main');
+  git('push', '-q', 'origin', 'main:old', 'main:x');
+  git('fetch', '-q');
+  t.gitIn(remote, 'branch', '-D', 'old');
+  const repo = await Repo.open(dir());
+
+  const r = await deleteRemoteBranches(repo, { refs: ['refs/remotes/origin/old', 'refs/remotes/origin/x'] });
+  assert.deepEqual(r.deleted, ['origin/old', 'origin/x']);
+  assert.deepEqual(r.skipped, []);
+  assert.equal(git('branch', '-r', '--list', 'origin/old'), '');
+  assert.deepEqual((await deletedBranches(repo)).map((d) => d.name).sort(), ['old', 'x']);
+});
+
 test('remote branches: list the untracked ones, check one out, delete one only as last seen', async () => {
   commit('base', { f: '1\n' });
   const remote = t.remote();
