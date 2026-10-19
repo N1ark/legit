@@ -84,7 +84,22 @@ function networkReason(e: unknown): string {
 // Over HTTP/1.1 rather than fetch(): Node's fetch speaks HTTP/2 to GitHub, and after hours idle
 // (the Mac asleep) it can hold on to a dead session and fail every request with
 // ERR_HTTP2_INVALID_SESSION. A dead keep-alive socket is just dropped, and the retry gets a new one.
-const agent = new https.Agent({ keepAlive: true, maxSockets: 8, timeout: 60_000 });
+// GitHub closes a connection after ~30s idle, so one is kept for less than that.
+const IDLE = 15_000;
+const agent = new https.Agent({ keepAlive: true, maxSockets: 8, timeout: IDLE });
+
+// Node's timers stand still while the Mac sleeps, so on waking the agent would still hand out
+// connections dead for hours (each failing with ECONNRESET, or hanging until the timeout): their
+// idle time is checked against the clock on the wall before each request instead.
+const idleSince = new WeakMap<object, number>();
+agent.on('free', (socket) => idleSince.set(socket, Date.now()));
+
+/** Close pooled connections idle since before `before` (all of them by default). */
+function dropIdle(before = Infinity) {
+  for (const list of Object.values(agent.freeSockets)) {
+    for (const s of list ?? []) if ((idleSince.get(s) ?? 0) < before) s.destroy();
+  }
+}
 
 type Init = { method?: string; headers: Record<string, string>; body?: string };
 
@@ -131,9 +146,13 @@ function request(url: URL, init: Init, redirects = 0): Promise<Response> {
  *  closed, a blip after the Mac wakes) is sent once more when that can't do anything twice. */
 async function send(path: string, init: Init, safe: boolean): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
+    dropIdle(Date.now() - IDLE);
     try {
       return await request(new URL(`https://api.github.com${path}`), init);
     } catch (e) {
+      // The other pooled connections most likely died the same way (the network changed): the
+      // retry, and the requests after it, get new ones rather than one of those.
+      dropIdle();
       const timedOut = (e as Error)?.name === 'AbortError' || (e as Error)?.name === 'TimeoutError';
       const again = attempt === 0 && !timedOut && safe;
       if (!again) throw new GithubError(`Couldn't reach GitHub (${networkReason(e)}).`);
