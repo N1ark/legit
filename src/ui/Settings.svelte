@@ -1,15 +1,19 @@
 <script lang="ts">
   // legit's settings: which files diffs collapse, which tree-sitter grammar highlights which
   // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
-  // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts.
+  // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts, and the logs.
   import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, tooltip, type HelpGroup } from 'purr';
-  import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Warning, X } from 'purr/icons';
+  import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Scroll, Warning, X } from 'purr/icons';
+  import LogsPane from './LogsPane.svelte';
   import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
 
-  let { onclose, shortcuts }: { onclose: () => void; shortcuts: readonly HelpGroup[] } = $props();
+  let {
+    onclose,
+    shortcuts,
+    section = $bindable('syntax'),
+  }: { onclose: () => void; shortcuts: readonly HelpGroup[]; section?: string } = $props();
 
-  let section = $state('syntax');
   let info = $state.raw<SettingsInfo | null>(null);
   /** What's being edited, empty rows included (they're left out when saving). */
   let draft = $state<Record<Scope, ScopeSettings> | null>(null);
@@ -101,7 +105,10 @@
       ],
     },
     {
-      sections: [{ id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard }],
+      sections: [
+        { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
+        { id: 'logs', label: 'Logs', icon: Scroll },
+      ],
     },
   ];
 </script>
@@ -203,6 +210,8 @@
       {:else if section === 'shortcuts'}
         <p class="note muted lead"><Kbd hint="?" /> shows these anywhere.</p>
         <ShortcutList groups={shortcuts} />
+      {:else if section === 'logs'}
+        <LogsPane />
       {:else}
         {#each SCOPES as { scope, title, description } (scope)}
           <SettingGroup {title} description={description()}>
@@ -239,7 +248,7 @@
           <code>linguist-generated</code> in <code>.gitattributes</code>. Patterns without a slash match file names at any depth.
         </p>
       {/if}
-      {#if section !== 'shortcuts'}
+      {#if section !== 'shortcuts' && section !== 'logs'}
         <p class="note muted files">
           Saved in <code>{info.files.repo}</code> (this repo) and <code>{info.files.global}</code> (all repos).
         </p>

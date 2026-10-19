@@ -96,6 +96,7 @@ fn main() {
             "upstream" => eval_focused(app, "window.__legit?.branch('upstream')"),
             "worktree" => eval_focused(app, "window.__legit?.newWorktree()"),
             "shortcuts" => eval_focused(app, "window.__legit?.help()"),
+            "logs" => eval_focused(app, "window.__legit?.logs()"),
             _ => {}
         })
         .on_window_event(|window, event| {
@@ -601,7 +602,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         "Help",
         true,
-        &[&MenuItem::with_id(app, "shortcuts", "Keyboard Shortcuts", true, None::<&str>)?],
+        &[
+            &MenuItem::with_id(app, "shortcuts", "Keyboard Shortcuts", true, None::<&str>)?,
+            &MenuItem::with_id(app, "logs", "Logs", true, None::<&str>)?,
+        ],
     )?;
     #[cfg(target_os = "macos")]
     help.set_as_help_menu_for_nsapp()?;

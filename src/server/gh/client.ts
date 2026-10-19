@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import https from 'node:https';
 import zlib from 'node:zlib';
 import { GitError } from '../git.ts';
+import { log } from '../log.ts';
 import { mockGraphql, mockRest } from './mock/registry.ts';
 
 export const MOCK = !!process.env.LEGIT_GITHUB_MOCK;
@@ -25,14 +26,22 @@ export function githubToken(): Promise<string | null> {
   token ??= (async () => {
     const env = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
     if (env) return env;
+    const start = Date.now();
+    const why: string[] = [];
     for (const gh of ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh']) {
       const t = await new Promise<string | null>((done) =>
-        execFile(gh, ['auth', 'token', '--hostname', 'github.com'], { timeout: 3000 }, (err, out) =>
-          done(err ? null : out.trim() || null),
-        ),
+        execFile(gh, ['auth', 'token', '--hostname', 'github.com'], { timeout: 3000 }, (err, out, stderr) => {
+          const code = (err as { code?: string | number } | null)?.code;
+          if (err) why.push(`${gh}: ${err.killed ? 'timed out' : typeof code === 'string' ? code : stderr.trim() || `exit ${code}`}`);
+          done(err ? null : out.trim() || null);
+        }),
       );
-      if (t) return t;
+      if (t) {
+        if (Date.now() - start > 1000) log(`GitHub token from gh took ${Date.now() - start}ms (${why.join('; ') || 'first try'})`);
+        return t;
+      }
     }
+    log(`No GitHub token after ${Date.now() - start}ms (${why.join('; ')})`);
     return null;
   })();
   // No token yet (gh timed out, or isn't signed in): look again next time rather than for good.
@@ -142,14 +151,27 @@ function request(url: URL, init: Init, redirects = 0): Promise<Response> {
   });
 }
 
+/** A request taking longer than this is noted in the log. */
+const SLOW = 5_000;
+
+/** A GraphQL body's operation name, for the log. */
+const queryName = (body?: string) => /\b(?:query|mutation)\s+(\w+)/.exec(body ?? '')?.[1] ?? 'anonymous';
+
 /** A call to the API. A request that never got an answer (a pooled connection GitHub had
  *  closed, a blip after the Mac wakes) is sent once more when that can't do anything twice. */
 async function send(path: string, init: Init, safe: boolean): Promise<Response> {
+  const what = `GitHub ${init.method ?? 'GET'} ${path}${path === '/graphql' ? ` ${queryName(init.body)}` : ''}`;
   for (let attempt = 0; ; attempt++) {
     dropIdle(Date.now() - IDLE);
+    const start = Date.now();
     try {
-      return await request(new URL(`https://api.github.com${path}`), init);
+      const res = await request(new URL(`https://api.github.com${path}`), init);
+      const ms = Date.now() - start;
+      if (res.status >= 400) log(`${what}: ${res.status} after ${ms}ms`);
+      else if (ms > SLOW) log(`${what}: took ${ms}ms`);
+      return res;
     } catch (e) {
+      log(`${what}: failed after ${Date.now() - start}ms (${networkReason(e)})`);
       // The other pooled connections most likely died the same way (the network changed): the
       // retry, and the requests after it, get new ones rather than one of those.
       dropIdle();
@@ -200,6 +222,7 @@ export async function graphql<T = any>(query: string, variables: Record<string, 
   const res = await rest<{ data?: T; errors?: { message: string; type?: string }[] }>('POST', '/graphql', { query, variables }, { safe: /^\s*query\b/.test(query) });
   if (res.errors?.length) {
     const msg = res.errors.map((e) => e.message).join('; ');
+    log(`GitHub GraphQL ${queryName(query)}: ${msg}`);
     throw new GithubError(`GitHub: ${msg}`, 200, res.errors.some((e) => e.type === 'RATE_LIMITED') ? 'github-limit' : undefined);
   }
   return res.data as T;

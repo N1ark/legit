@@ -22,6 +22,7 @@ import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.t
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
 import { GitError } from './git.ts';
+import { log, logText } from './log.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
 import {
@@ -208,6 +209,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/state') return send(res, 200, await repo.state());
+    if (path === '/api/logs') return send(res, 200, JSON.stringify(logText()));
     if (path === '/api/backups') return send(res, 200, await repo.backups());
     if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
@@ -361,7 +363,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       else await staticFile(res, path);
     } catch (e) {
       const known = e instanceof GitError;
-      if (!known) console.error(e);
+      log(`${req.method} ${path}${url.search}:`, known ? e.message : e);
       send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e), ...(known && e.code ? { code: e.code } : {}) });
     }
   });

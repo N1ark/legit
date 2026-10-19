@@ -53,7 +53,8 @@
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
-  let settings = $state(false);
+  /** The settings' section shown, while they're open. */
+  let settings = $state<string | null>(null);
 
   // The commit list's width: dragged live, remembered when the drag ends.
   const LIST_WIDTH = 440;
@@ -70,6 +71,7 @@
     rebuild: () => rebuildOn(app.selection.map((c) => c.sha)),
     newWorktree: () => newWorktree(),
     help: () => (help = true),
+    logs: () => (settings = 'logs'),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.
     leave: async (id: number) => {
       const why = app.switchBlocker;
@@ -161,7 +163,7 @@
     else if (action === 'repo') repoPicker?.show();
     else if (action === 'help') help = true;
     else if (action === 'pr') gh.togglePr();
-    else if (action === 'settings') settings = true;
+    else if (action === 'settings') settings = 'syntax';
     else if (action === 'find') finder.start();
     else if (action === 'findNext' || action === 'findPrev') {
       if (finder.open) finder.step(action === 'findNext' ? 1 : -1);
@@ -203,7 +205,7 @@
     <StashPanel />
     <Backups />
     <GithubMenu />
-    <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = true)}><Gear /></IconButton>
+    <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><Gear /></IconButton>
   </header>
 
   {#if app.repo?.conflict?.edit}
@@ -285,7 +287,7 @@
 <SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
-  <Settings {shortcuts} onclose={() => (settings = false)} />
+  <Settings {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
