@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-10-19
+
+- **Help ▸ Logs** (or Settings ▸ Logs) shows what went wrong lately — failed requests, and GitHub calls that failed or were slow — to copy into a bug report.
+- The branch list shows remote branches' pull requests too, and remote branches can be selected and deleted along with local ones. Deleting a remote branch that's already gone there removes it (kept under Recently deleted).
+- **P** shows the current branch's pull request from anywhere, and its title in the pull request card opens it.
+- Open a pull request's checks from its merge box and its commit list.
+- Review threads mark the lines they're about with a bar, and the pull request view fits a narrow pane.
+- ⇧-clicking a range of branches keeps the ⌘-clicked ones, as in Finder; a worktree is removed with two clicks on its bin, like other deletions.
+- Less text everywhere, with tooltips that show at once; the branch list shows only the current branch's upstream.
+- GitHub keeps working after the Mac sleeps or the network changes, without reloading: dropped connections are retried on fresh ones, the token is looked for again, and the branch's pull request comes back.
+- The branch list no longer waits for GitHub, and legit asks GitHub less on every local change.
+- A branch not pushed yet, or tracking another branch, no longer shows that branch's CI as its own.
+- Click the name in the header.
+
 ## 0.5.0 — 2026-10-18
 
 - The header shows the branch's pull request and its stack of pull requests; click one in the stack to switch to its branch, and restack a branch when the one under it moved or was merged.
