@@ -2,6 +2,8 @@
 // goes to the in-memory fake in mock/ instead, so the UI can be worked on without GitHub.
 
 import { execFile } from 'node:child_process';
+import https from 'node:https';
+import zlib from 'node:zlib';
 import { GitError } from '../git.ts';
 import { mockGraphql, mockRest } from './mock/registry.ts';
 
@@ -72,22 +74,61 @@ async function failure(res: Response): Promise<GithubError> {
   return new GithubError(`GitHub: ${message}`, res.status);
 }
 
-/** Why a fetch failed: undici says only "fetch failed" and puts the reason in `cause`. */
+/** Why a request failed, short: the error's code (ECONNRESET, ENOTFOUND…) where it has one. */
 function networkReason(e: unknown): string {
-  const cause = (e as { cause?: { code?: string; message?: string } })?.cause;
-  const why = cause?.code ?? cause?.message;
-  const msg = e instanceof Error ? e.message : String(e);
-  return why ? `${msg}: ${why}` : msg;
+  const err = e as { code?: string; name?: string; message?: string };
+  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return 'timed out';
+  return err?.code ?? err?.message ?? String(e);
 }
 
-/** fetch() against the API. A request that never got an answer (a pooled connection GitHub had
+// Over HTTP/1.1 rather than fetch(): Node's fetch speaks HTTP/2 to GitHub, and after hours idle
+// (the Mac asleep) it can hold on to a dead session and fail every request with
+// ERR_HTTP2_INVALID_SESSION. A dead keep-alive socket is just dropped, and the retry gets a new one.
+const agent = new https.Agent({ keepAlive: true, maxSockets: 8, timeout: 60_000 });
+
+type Init = { method?: string; headers: Record<string, string>; body?: string };
+
+function request(url: URL, init: Init, redirects = 0): Promise<Response> {
+  return new Promise((done, fail) => {
+    const req = https.request(url, {
+      agent,
+      method: init.method ?? 'GET',
+      headers: { ...init.headers, 'accept-encoding': 'gzip' },
+      signal: AbortSignal.timeout(30_000),
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('error', fail);
+      res.on('end', () => {
+        const status = res.statusCode ?? 0;
+        // Job logs answer with a redirect to storage elsewhere, which mustn't get the token.
+        if (status >= 300 && status < 400 && res.headers.location && redirects < 5) {
+          const next = new URL(res.headers.location, url);
+          const { authorization, ...rest } = init.headers;
+          const headers = next.host === url.host ? init.headers : rest;
+          done(request(next, { headers }, redirects + 1));
+          return;
+        }
+        let body = Buffer.concat(chunks);
+        if (res.headers['content-encoding'] === 'gzip') body = zlib.gunzipSync(body);
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : v);
+        done(new Response(status === 204 || status === 304 ? null : body, { status, statusText: res.statusMessage, headers: h }));
+      });
+    });
+    req.on('error', fail);
+    req.end(init.body);
+  });
+}
+
+/** A call to the API. A request that never got an answer (a pooled connection GitHub had
  *  closed, a blip after the Mac wakes) is sent once more when that can't do anything twice. */
-async function send(path: string, init: RequestInit, safe: boolean): Promise<Response> {
+async function send(path: string, init: Init, safe: boolean): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fetch(`https://api.github.com${path}`, { ...init, signal: AbortSignal.timeout(30_000) });
+      return await request(new URL(`https://api.github.com${path}`), init);
     } catch (e) {
-      const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+      const timedOut = (e as Error)?.name === 'AbortError' || (e as Error)?.name === 'TimeoutError';
       const again = attempt === 0 && !timedOut && safe;
       if (!again) throw new GithubError(`Couldn't reach GitHub (${networkReason(e)}).`);
       await new Promise((r) => setTimeout(r, 500));
