@@ -11,6 +11,7 @@
   import { app, request } from '../lib/app.svelte.ts';
   import { deleteBranch, switchOp } from '../lib/branches.svelte.ts';
   import { METHOD_LABEL, METHOD_NOTE, METHOD_SHORT, checksLabel, mergeStatus } from '../lib/gh-prview.ts';
+  import { checks } from '../lib/gh-checks.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
   import { tip } from '../lib/tip.ts';
 
@@ -174,7 +175,16 @@
 
     <div class="lines">
       {#if pr.checks}
-        {@render line(CHECK[pr.checks].icon, CHECK[pr.checks].color, checksLabel(pr.checks))}
+        {@const Icon = CHECK[pr.checks].icon}
+        <button
+          class="line checks"
+          aria-expanded={checks.open?.sha === pr.headSha}
+          use:tooltip={'Show them'}
+          onclick={(e) => checks.show(pr.headSha, e.currentTarget, pr.number)}
+        >
+          <span class="mark" style:color={CHECK[pr.checks].color} aria-hidden="true"><Icon weight="fill" /></span>
+          <span>{checksLabel(pr.checks)}</span>
+        </button>
       {:else}
         {@render line(Circle, 'var(--faint)', checksLabel(null), 'regular')}
       {/if}
@@ -309,6 +319,20 @@
   .mark {
     display: inline-flex;
     font-size: var(--icon-lg);
+  }
+
+  .checks {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .checks:hover span:last-child {
+    text-decoration: underline;
   }
 
   .actions,

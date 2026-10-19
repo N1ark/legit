@@ -116,13 +116,13 @@ class Checks {
     return !!c && c.running + c.pending > 0;
   }
 
-  show(sha: string, anchor: HTMLElement) {
+  show(sha: string, anchor: HTMLElement, pr?: number) {
     if (this.open?.sha === sha) {
       this.open = null;
       return;
     }
     this.open = { sha, anchor };
-    this.load(sha);
+    this.load(sha, { pr });
   }
 
   async loadJob(jobId: number, quiet = false) {

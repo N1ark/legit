@@ -8,6 +8,7 @@
   import type { CheckState, PrOptions, PrOverview } from '../../shared/gh-prview.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
+  import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
   import { gh, ghPost, ghRequest } from '../lib/github.svelte.ts';
   import PrMergeBox from './PrMergeBox.svelte';
@@ -310,9 +311,20 @@
               {@const here = app.bySha.has(c.sha)}
               {@const k = c.checks ? CHECK[c.checks] : null}
               <li>
-                <span class="check" style:color={k?.color ?? 'var(--faint)'} use:tooltip={k?.label ?? 'No checks'} aria-label={k?.label ?? 'No checks'}>
-                  {#if k}<k.icon weight="fill" />{:else}<Circle />{/if}
-                </span>
+                {#if k}
+                  <button
+                    class="check"
+                    style:color={k.color}
+                    use:tooltip={`${k.label}: show them`}
+                    aria-label={k.label}
+                    aria-expanded={checks.open?.sha === c.sha}
+                    onclick={(e) => checks.show(c.sha, e.currentTarget, c.sha === pr?.headSha ? pr.number : undefined)}
+                  >
+                    <k.icon weight="fill" />
+                  </button>
+                {:else}
+                  <span class="check" style:color="var(--faint)" use:tooltip={'No checks'} aria-label="No checks"><Circle /></span>
+                {/if}
                 {#if here}
                   <button class="headline linked" use:tooltip={'Show this commit'} onclick={() => app.select(c.sha)}>{c.headline}</button>
                 {:else}
@@ -580,6 +592,11 @@
   .check {
     display: inline-flex;
     font-size: var(--icon-md);
+  }
+
+  button.check {
+    border-radius: var(--radius-pill);
+    cursor: pointer;
   }
 
   .headline {
