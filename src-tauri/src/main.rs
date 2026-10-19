@@ -386,6 +386,21 @@ fn page_allows_leaving(app: &AppHandle, window: &WebviewWindow) -> bool {
     ok
 }
 
+/// ~/Library/Logs/com.n1ark.legit/server.log, started over once past 1 MB; stderr if it can't be opened.
+fn server_log(app: &AppHandle) -> Box<dyn std::io::Write + Send> {
+    let open = || -> std::io::Result<std::fs::File> {
+        let dir = app.path().app_log_dir().map_err(std::io::Error::other)?;
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("server.log");
+        let big = std::fs::metadata(&path).map(|m| m.len() > 1 << 20).unwrap_or(false);
+        std::fs::OpenOptions::new().create(true).append(!big).write(true).truncate(big).open(path)
+    };
+    match open() {
+        Ok(file) => Box::new(file),
+        Err(_) => Box::new(std::io::stderr()),
+    }
+}
+
 /// Start a server for `repo`; returns it and the URL it serves the UI on.
 fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -412,10 +427,12 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
         let _ = child.wait();
         return Err(if err.trim().is_empty() { "The legit server failed to start.".into() } else { err.trim().into() });
     }
-    // Keep draining the server's output so it never blocks on a full pipe.
+    // Keep draining the server's output so it never blocks on a full pipe. Its errors (and why it
+    // died, if it does) go to a log, since an app opened from Finder has nowhere to show them.
     let mut stderr = child.stderr.take().unwrap();
+    let mut log = server_log(app);
     thread::spawn(move || std::io::copy(&mut stdout, &mut std::io::sink()));
-    thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::stderr()));
+    thread::spawn(move || std::io::copy(&mut stderr, &mut log));
     match Url::parse(&url) {
         Ok(url) => Ok((child, url)),
         Err(e) => {

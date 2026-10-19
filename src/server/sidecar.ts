@@ -23,6 +23,8 @@ try {
 
 const { url } = await serve(repo, { port: 0, dist: values.dist! });
 console.log(url);
+// The app keeps stderr in a log: this says which run what follows is from.
+console.error(`${new Date().toISOString()} serving ${repo.git.root}`);
 
 process.stdin.on('end', async () => {
   await repo.idle();

@@ -99,21 +99,27 @@ function request(url: URL, init: Init, redirects = 0): Promise<Response> {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('error', fail);
+      // Anything thrown in here (a garbled gzip body, say) would escape the promise and take the
+      // whole server down, so it's turned into a failed request instead.
       res.on('end', () => {
-        const status = res.statusCode ?? 0;
-        // Job logs answer with a redirect to storage elsewhere, which mustn't get the token.
-        if (status >= 300 && status < 400 && res.headers.location && redirects < 5) {
-          const next = new URL(res.headers.location, url);
-          const { authorization, ...rest } = init.headers;
-          const headers = next.host === url.host ? init.headers : rest;
-          done(request(next, { headers }, redirects + 1));
-          return;
+        try {
+          const status = res.statusCode ?? 0;
+          // Job logs answer with a redirect to storage elsewhere, which mustn't get the token.
+          if (status >= 300 && status < 400 && res.headers.location && redirects < 5) {
+            const next = new URL(res.headers.location, url);
+            const { authorization, ...rest } = init.headers;
+            const headers = next.host === url.host ? init.headers : rest;
+            done(request(next, { headers }, redirects + 1));
+            return;
+          }
+          let body = Buffer.concat(chunks);
+          if (res.headers['content-encoding'] === 'gzip') body = zlib.gunzipSync(body);
+          const h = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : v);
+          done(new Response(status === 204 || status === 304 ? null : body, { status, statusText: res.statusMessage, headers: h }));
+        } catch (e) {
+          fail(e);
         }
-        let body = Buffer.concat(chunks);
-        if (res.headers['content-encoding'] === 'gzip') body = zlib.gunzipSync(body);
-        const h = new Headers();
-        for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : v);
-        done(new Response(status === 204 || status === 304 ? null : body, { status, statusText: res.statusMessage, headers: h }));
       });
     });
     req.on('error', fail);
