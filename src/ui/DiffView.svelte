@@ -1,10 +1,3 @@
-<script module lang="ts">
-  import { persisted } from 'purr';
-
-  // Shown as unchanged lines in every diff, kept across diffs.
-  const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false);
-</script>
-
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
@@ -22,6 +15,7 @@
     fixedRange,
     menu,
     offsets,
+    persisted,
     rowAt,
     Switch,
     toast,
@@ -40,7 +34,7 @@
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
-  import { type DiffPosition, app } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
@@ -429,7 +423,14 @@
     }
     if (!want.length) return;
     for (const i of want) requested.add(i);
-    app.fileContents(summary.sha, want).then(
+    // What's already loaded (prefetched, or unchanged in a new snapshot) shows without waiting for the rest.
+    const have = want.filter((i) => app.hasContents(summary, i));
+    if (have.length) load(have);
+    if (have.length < want.length) load(want.filter((i) => !have.includes(i)));
+  });
+
+  function load(want: number[]) {
+    app.fileContents(summary, want).then(
       (res) => {
         if (!alive) return;
         const next = { ...contents };
@@ -443,7 +444,7 @@
         toast.error(e);
       },
     );
-  });
+  }
 
   /** File i's rows from its hunks, with the lines shown between them and whitespace as the switch has it. */
   const build = (i: number, hunks: HunkData[]) =>
@@ -452,8 +453,7 @@
   function queueHighlight(i: number, rows: FileRows) {
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
-    const key =
-      `${summary.sha}:${i}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (rows.ws ? ':ws' : '');
+    const key = highlightKey(summary, i, files[i].syntax, x, rows.ws);
     const want = () => alive && contents[i] === rows;
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
@@ -468,6 +468,7 @@
 
   async function expand(i: number, k: number, side: 'top' | 'bottom') {
     const x = (expansions[i] ??= noExpansion());
+    const loaded = !!x.file;
     if (!x.file) {
       if (opening[i]) return;
       opening[i] = true;
@@ -483,7 +484,7 @@
     }
     const before = contents[i];
     // Its size is known once the file is (after the last hunk); a short gap shows all at once.
-    const left = build(i, before.hunks).hidden[k] ?? 0;
+    const left = (loaded ? before : build(i, before.hunks)).hidden[k] ?? 0;
     const n = left <= STEP ? left : STEP;
     // Nothing comes before the first hunk's gap but the file's start, so it only grows upwards.
     const s = k === 0 ? 'bottom' : side;
@@ -495,7 +496,7 @@
   function replaceRows(i: number, rows: FileRows) {
     const before = contents[i];
     const moved = rowMap(before, rows);
-    if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows) };
+    if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows, moved) };
     if (editing?.i === i) {
       const n = before.n[editing.r];
       const r = moved[editing.r] >= 0 ? moved[editing.r] : rows.n.findIndex((m, k) => m === n && !isHead(rows.kind[k]));
@@ -566,19 +567,61 @@
   // Words changed within a line, worked out as its rows are shown.
   const words = new WeakMap<FileRows, (r: number) => number[] | null>();
 
-  /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`); null when it's plain text. */
-  function lineSegments(i: number, r: number) {
-    const rows = contents[i];
+  /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`, at `at`); null when it's plain text. */
+  function lineSegments(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
     const text = rows.text[r];
-    const tok = tokens[i];
     let diff = words.get(rows);
     if (!diff) words.set(rows, (diff = wordDiff(rows)));
     const changed = diff(r);
-    const at = hits.get(i)?.get(r);
     if (!tok && !changed && !at) return null;
-    const segs = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
-    const cut = changed ? cutWords(segs, changed) : segs.map((seg) => ({ ...seg, w: false }));
-    return markSegments(cut, at ?? [], finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1);
+    const segs: { t: string; c: string; w?: boolean; m?: number }[] = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
+    const cut = changed ? cutWords(segs, changed) : segs;
+    return at ? markSegments(cut, at, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) : cut;
+  }
+
+  /**
+   * Row r's code, built directly rather than as a block per run (rows mount by the hundred while
+   * scrolling). Given its file's rows, highlighting and matches, so it's redone when those change.
+   */
+  function code(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
+    return (el: HTMLElement) => {
+      const segs = lineSegments(i, r, rows, tok, at);
+      el.textContent = '';
+      if (!segs) el.append(rows.text[r]);
+      for (const seg of segs ?? []) {
+        if (!seg.m && !seg.c && !seg.w) {
+          el.append(seg.t);
+          continue;
+        }
+        const run = document.createElement(seg.m ? 'mark' : 'span');
+        run.className = [seg.m && 'hit', seg.m === 2 && 'now', seg.c, seg.w && 'wd'].filter(Boolean).join(' ');
+        run.textContent = seg.t;
+        el.append(run);
+      }
+      if (rows.eof[r]) {
+        const eof = document.createElement('span');
+        eof.className = 'eof';
+        eof.textContent = '⏎̸';
+        el.append(eof);
+      }
+    };
+  }
+
+  // The tooltips of a line's gutter and end, registered as the pointer first reaches one (its
+  // pointerover comes before the pointerenter they show on) rather than for every row mounted.
+  const tipped = new WeakSet<Element>();
+  function lineTip(e: PointerEvent, i: number) {
+    const el = e.target as HTMLElement;
+    if (tipped.has(el) || !el.matches('.line .blk, .line .mark, .line .eof')) return;
+    tipped.add(el);
+    tooltip(el, () => {
+      if (el.classList.contains('eof')) return 'No newline at end of file';
+      const rows = contents[i];
+      const r = Number(el.closest<HTMLElement>('[data-r]')?.dataset.r ?? -1);
+      if (!rows || r < 0) return null;
+      if (el.classList.contains('mark')) return rows.kind[r] === SPACED ? 'Only whitespace changed' : null;
+      return rows.ci[r] >= 0 && !readonly ? (onstage ? 'Stage or unstage this block' : 'Pick this block') : null;
+    });
   }
 
   onMount(() => finder.register(source));
@@ -589,7 +632,7 @@
     const want = untrack(() => files.flatMap((f, i) => (f.rows && !contents[i] && !requested.has(i) ? [i] : [])));
     if (!want.length) return;
     for (const i of want) requested.add(i);
-    app.fileContents(summary.sha, want).then(
+    app.fileContents(summary, want).then(
       (res) => {
         if (!alive) return;
         const next = { ...contents };
@@ -1069,6 +1112,8 @@
         {@const f = files[i]}
         {@const state = fileState(f)}
         {@const rows = contents[i]}
+        {@const tok = tokens[i]}
+        {@const fileHits = hits.get(i)}
         <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
@@ -1166,6 +1211,7 @@
                     style:min-width="max(100%, calc({GUTTER + 20}px + {cols ? Math.min(cols, f.width) : f.width}ch))"
                     onmousedown={(e) => down(e, i)}
                     onmouseover={(e) => over(e, i)}
+                    onpointerover={(e) => lineTip(e, i)}
                     onmouseleave={() => (hoverBlock = null)}
                     ondblclick={(e) => startEdit(i, rowOf(e))}
                     oncontextmenu={(e) => openMenu(e, i)}
@@ -1220,12 +1266,8 @@
                           data-r={r}
                         >
                           <span class="gutter"
-                            ><span
-                              class="blk"
-                              use:tooltip={ci >= 0 && !readonly ? (onstage ? 'Stage or unstage this block' : 'Pick this block') : null}
-                            ></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span
-                              class="mark"
-                              use:tooltip={kind === SPACED ? 'Only whitespace changed' : null}>{MARK[kind]}</span
+                            ><span class="blk"></span><span>{rows.o[r] || ''}</span><span>{rows.n[r] || ''}</span><span class="mark"
+                              >{MARK[kind]}</span
                             ></span
                           >{#if edit}<span class="code"
                               ><textarea
@@ -1239,14 +1281,7 @@
                                 onblur={closeUnchanged}
                                 {@attach attachEditor}
                               ></textarea></span
-                            >{:else}{@const segs = lineSegments(i, r)}<span class="code"
-                            >{#if segs}{#each segs as seg}{#if seg.m}<mark class={['hit', seg.m === 2 && 'now', seg.c, seg.w && 'wd']}>{seg.t}</mark
-                                  >{:else if seg.c || seg.w}<span class={[seg.c, seg.w && 'wd']}>{seg.t}</span
-                                  >{:else}{seg.t}{/if}{/each}{:else}{rows.text[r]}{/if}{#if rows.eof[r]}<span
-                                class="eof"
-                                use:tooltip={'No newline at end of file'}>⏎̸</span
-                              >{/if}</span
-                          >{/if}
+                            >{:else}<span class="code" {@attach code(i, r, rows, tok, fileHits?.get(r))}></span>{/if}
                         </div>
                       {/if}
                       {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
@@ -1641,7 +1676,7 @@
 
   /* Text that isn't the file's stays out of a copy. */
   .hunk .code,
-  .eof {
+  .code :global(.eof) {
     user-select: none;
   }
 
@@ -1717,27 +1752,27 @@
     opacity: 0.6;
   }
 
-  /* Words changed within a line: a stronger tint of its own. */
-  .ta .wd:not(.hit) {
+  /* Words changed within a line: a stronger tint of its own. (A line's runs are built by `code`, outside Svelte.) */
+  .ta .code :global(.wd:not(.hit)) {
     background: var(--add-sel);
   }
 
-  .td .wd:not(.hit) {
+  .td .code :global(.wd:not(.hit)) {
     background: var(--del-sel);
   }
 
-  .hit {
+  .code :global(.hit) {
     border-radius: var(--radius-sm);
     background: var(--theme-mid);
     color: inherit;
   }
 
-  .hit.now {
+  .code :global(.hit.now) {
     background: var(--theme2);
     color: var(--on-accent2);
   }
 
-  .eof {
+  .code :global(.eof) {
     color: var(--del);
     opacity: 0.7;
     margin-left: var(--gap-2);

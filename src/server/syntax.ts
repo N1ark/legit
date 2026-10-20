@@ -6,8 +6,8 @@
 import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, matchesGlob, resolve } from 'node:path';
-import { normalize } from './generated.ts';
+import { isAbsolute, join, resolve } from 'node:path';
+import { globMatcher, normalize } from './generated.ts';
 import type { ScopeSettings, ZedGrammar } from '../shared/types.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
@@ -16,10 +16,10 @@ type Rules = ScopeSettings['syntax'];
 /** The grammar of each of `paths` (byte strings) that has one; the last matching rule wins. */
 export function syntaxes(rules: Rules, paths: string[]): Map<string, string> {
   const out = new Map<string, string>();
-  const globs = rules.map((r) => ({ glob: normalize(r.pattern), grammar: r.grammar }));
+  const globs = rules.map((r) => ({ match: globMatcher(normalize(r.pattern)), grammar: r.grammar }));
   for (const p of globs.length ? paths : []) {
     const name = toUtf8(p);
-    for (const r of globs) if (matchesGlob(name, r.glob)) out.set(p, r.grammar);
+    for (const r of globs) if (r.match(name)) out.set(p, r.grammar);
   }
   return out;
 }

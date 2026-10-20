@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { alignRun, applyLines, commitDiff } from '../src/server/diff.ts';
+import { alignRun, applyLines, commitDiff, fileContent, parseDiff } from '../src/server/diff.ts';
 import { Git } from '../src/server/git.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'legit-fuzz-'));
@@ -95,4 +95,14 @@ test('a kept old line stays in the place of the line it was edited into', () => 
   const adds = ['let a = 10;', '// new', 'let b = 20;', 'let c = 30;'];
   assert.deepEqual(alignRun(dels, adds), [{ del: 0, add: 0 }, { add: 1 }, { del: 1, add: 2 }, { del: 2, add: 3 }]);
   assert.deepEqual(alignRun(['x'], ['completely different']), [{ del: 0 }, { add: 0 }]);
+});
+
+test('file contents are utf8 for display, ASCII lines or not', () => {
+  const latin1 = (s: string) => Buffer.from(s, 'utf8').toString('latin1');
+  const z = '0'.repeat(40);
+  const patch = `:100644 100644 ${z.replace(/0$/, '1')} ${z.replace(/0$/, '2')} M\0f\0\0diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@ ${latin1('é')}\n-plain\n+${latin1('été ✓')}\n ${latin1('ünïcode')}\n`;
+  const [hunk] = fileContent(parseDiff(patch, 'x').files[0]);
+  assert.equal(hunk.header, '@@ -1,2 +1,2 @@ é');
+  assert.deepEqual(hunk.text, ['plain', 'été ✓', 'ünïcode']);
+  assert.equal(hunk.types, '-+ ');
 });

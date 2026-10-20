@@ -77,7 +77,7 @@ export function parseDiff(data: string, sha: string): CommitDiff {
       let o = 0;
       let n = 0;
       for (const l of lines) {
-        const m = HUNK.exec(l);
+        const m = l[0] === '@' ? HUNK.exec(l) : null;
         if (m) {
           hunk = { header: l, oldStart: +m[1], oldCount: m[2] === undefined ? 1 : +m[2], newStart: +m[3], lines: [] };
           o = +m[1];
@@ -187,6 +187,9 @@ export async function oldLines(git: Git, f: FileDiff): Promise<FileLines> {
   return { lines, noNewline };
 }
 
+/** `toUtf8`, without its two copies for ASCII (most lines), which reads the same either way. */
+const utf8 = (s: string) => (/^[\0-\x7f]*$/.test(s) ? s : toUtf8(s));
+
 /** A file's hunks in compact form, utf8 for display. */
 export function fileContent(f: FileDiff): HunkData[] {
   return f.hunks.map((h) => {
@@ -195,10 +198,10 @@ export function fileContent(f: FileDiff): HunkData[] {
     const eof: number[] = [];
     h.lines.forEach((l, k) => {
       types += l.t;
-      text.push(toUtf8(l.s));
+      text.push(utf8(l.s));
       if (l.eof) eof.push(k);
     });
-    return { header: toUtf8(h.header), oldStart: h.oldStart, newStart: h.newStart, types, text, eof };
+    return { header: utf8(h.header), oldStart: h.oldStart, newStart: h.newStart, types, text, eof };
   });
 }
 

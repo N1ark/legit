@@ -24,6 +24,22 @@ export const DEFAULT_HIDDEN = [
 /** A pattern as a glob over repo paths: without a slash it matches the file name at any depth. */
 export const normalize = (p: string) => (p.includes('/') ? p.replace(/^\//, '') : `**/${p}`);
 
+/**
+ * `matchesGlob` for one pattern over many paths, skipping the (slow, it compiles the pattern each
+ * time) call when a path lacks one of the pattern's literal parts, which any match must contain.
+ */
+export function globMatcher(glob: string): (path: string) => boolean {
+  // No shortcut where a literal needn't appear (classes, braces, extglobs, escapes) or folds case oddly (non-ASCII).
+  const parts = /[[{(\\]|[^\0-\x7f]/.test(glob) ? [] : glob.toLowerCase().split(/[*?/]+/).filter(Boolean);
+  return (path) => {
+    if (parts.length && !/[^\0-\x7f]/.test(path)) {
+      const lower = path.toLowerCase();
+      if (!parts.every((p) => lower.includes(p))) return false;
+    }
+    return matchesGlob(path, glob);
+  };
+}
+
 /** `sha`: the commit whose .gitattributes apply; null for the working tree. `extra`: the user's patterns. */
 export async function generatedPaths(git: Git, sha: string | null, paths: string[], extra: string[] = []): Promise<Set<string>> {
   const out = new Set<string>();
@@ -34,10 +50,10 @@ export async function generatedPaths(git: Git, sha: string | null, paths: string
       allowFail: true,
     }),
   ]);
-  const patterns = [...DEFAULT_HIDDEN, ...extra].map(normalize);
+  const patterns = [...DEFAULT_HIDDEN, ...extra].map((g) => globMatcher(normalize(g)));
   for (const p of paths) {
     const name = Buffer.from(p, 'latin1').toString('utf8');
-    if (patterns.some((g) => matchesGlob(name, g))) out.add(p);
+    if (patterns.some((match) => match(name))) out.add(p);
   }
   // check-attr -z output: path\0attribute\0value\0 ...
   if (attrs.code === 0) {
