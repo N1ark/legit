@@ -59,10 +59,14 @@ export async function commitChecks(repo: Repo, commit: string, pr?: number): Pro
 
 const warmKey = (commit: string, pr?: number) => `checks ${commit}:${pr ?? ''}`;
 
-/** The checks the header will ask for first: the pull request's head's, when it's HEAD or under it. */
+/** The checks the header will ask for first: the pull request's head's, when it's what was fetched of the branch and HEAD is on it. */
 export async function warmChecks(repo: Repo, pr: PullRequest | null) {
   if (!pr || !SHA.test(pr.headSha)) return;
-  if ((await repo.git.run(['merge-base', '--is-ancestor', pr.headSha, 'HEAD'], { allowFail: true })).code !== 0) return;
+  const [fetched, under] = await Promise.all([
+    repo.git.text(['branch', '-r', '--format=%(refname:short)', '--points-at', pr.headSha], { allowFail: true }),
+    repo.git.run(['merge-base', '--is-ancestor', pr.headSha, 'HEAD'], { allowFail: true }),
+  ]);
+  if (under.code !== 0 || !fetched.split('\n').some((r) => r.endsWith(`/${pr.head}`))) return;
   await warm(warmKey(pr.headSha, pr.number), () => commitChecks(repo, pr.headSha, pr.number));
 }
 

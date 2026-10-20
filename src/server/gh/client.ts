@@ -258,20 +258,23 @@ export function viewerLogin(): Promise<string> {
   return viewer;
 }
 
+/** How long a warmed answer waits for the request it was made for. */
+const WARM = 10_000;
 const warmed = new Map<string, { at: number; value: Promise<unknown> }>();
 
-/** Start `fn()` ahead of a request the page is about to make; failures aren't kept. */
+/** Start `fn()` ahead of a request the page is about to make (unless that's under way); failures aren't kept. */
 export function warm<T>(key: string, fn: () => Promise<T>): Promise<unknown> {
-  const value = fn();
-  warmed.set(key, { at: Date.now(), value });
+  const hit = warmed.get(key);
+  const value = hit && Date.now() - hit.at < WARM ? hit.value : fn();
+  if (value !== hit?.value) warmed.set(key, { at: Date.now(), value });
   return value.catch(() => warmed.get(key)?.value === value && warmed.delete(key));
 }
 
-/** What `warm(key)` started, at most `ms` ago, taken once: later requests ask GitHub again. */
-export function takeWarm<T>(key: string, ms = 10_000): Promise<T> | undefined {
+/** What `warm(key)` started, taken once: later requests ask GitHub again. */
+export function takeWarm<T>(key: string): Promise<T> | undefined {
   const hit = warmed.get(key);
   warmed.delete(key);
-  return hit && Date.now() - hit.at < ms ? (hit.value as Promise<T>) : undefined;
+  return hit && Date.now() - hit.at < WARM ? (hit.value as Promise<T>) : undefined;
 }
 
 /** `fn()`'s result for `ms`, per key; failures aren't kept. */

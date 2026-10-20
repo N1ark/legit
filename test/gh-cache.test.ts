@@ -95,3 +95,16 @@ test('the status brings the pull request of the branch asked about when the serv
   await get('pr', { branch: 'feature/cache' });
   assert.equal((await get('status', { branch: 'feature/cache' })).pr, null);
 });
+
+test("checks aren't warmed for a head the branch's remote-tracking ref isn't at (the header shows another commit's)", async () => {
+  const repo = await Repo.open(demo);
+  const ref = `refs/remotes/origin/${git('symbolic-ref', '--short', 'HEAD')}`;
+  const tip = git('rev-parse', ref);
+  git('update-ref', ref, `${tip}~`);
+  try {
+    assert.ok(!(await calls(() => warmGithub(repo))).includes('GraphQL CommitChecks'));
+  } finally {
+    git('update-ref', ref, tip);
+  }
+  assert.ok((await calls(() => warmGithub(repo))).includes('GraphQL CommitChecks'));
+});

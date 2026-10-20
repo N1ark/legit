@@ -358,6 +358,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (req.headers.host !== origin) return send(res, 403, { error: 'Forbidden' });
     const url = new URL(req.url ?? '/', 'http://x');
     const path = url.pathname;
+    if (path === '/') warmGithub(repo);
     try {
       if (path.startsWith('/api/')) await api(req, res, path, url.searchParams);
       else if (opts.dev) opts.dev(req, res, () => send(res, 404, { error: 'Not found' }));

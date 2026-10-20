@@ -72,7 +72,8 @@ export async function githubRoute(repo: Repo, method: string, name: string, inpu
 /**
  * Ask GitHub what the page asks first while it loads, so the answers are there when it does: the
  * token and who it is (with no repo yet, for a spare server), and the repo's branch's pull
- * request, its checks, and the notifications. Nothing for a repo that isn't on GitHub.
+ * request, its checks, and the notifications. Nothing for a repo that isn't on GitHub. Called as
+ * the server starts and as it serves the page.
  */
 export async function warmGithub(repo?: Repo) {
   try {
@@ -83,8 +84,11 @@ export async function warmGithub(repo?: Repo) {
     if (!repo) return void (await viewer);
     const notifs = warmNotifications();
     const branch = await repo.currentBranch();
-    const pr = branch ? await prForBranch(repo, branch) : null;
-    await Promise.all([viewer, notifs, warmChecks(repo, pr)]);
+    if (!branch) return void (await Promise.all([viewer, notifs]));
+    // The pull request it had last time is most likely still the one: its checks needn't wait for it.
+    const last = await knownPr(repo, branch, true);
+    const checks = warmChecks(repo, last ?? null).catch(() => {});
+    await Promise.all([viewer, notifs, checks, warmChecks(repo, await prForBranch(repo, branch))]);
   } catch {
     // The page's own requests say what went wrong.
   }

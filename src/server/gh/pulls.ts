@@ -57,12 +57,12 @@ export async function prForBranch(repo: Repo, branch: string, fresh = false): Pr
   });
 }
 
-/** What `prForBranch` would answer at once, from its cache; undefined when it would ask GitHub. */
-export async function knownPr(repo: Repo, branch: string): Promise<PullRequest | null | undefined> {
+/** What `prForBranch` would answer at once, from its cache (`stale`: or last did); undefined when it would ask GitHub. */
+export async function knownPr(repo: Repo, branch: string, stale = false): Promise<PullRequest | null | undefined> {
   const r = await ghRepos(repo, branch);
   if (!r) return null;
   const hit = known.get(`${r.base}\0${r.headOwner}\0${branch}`);
-  return hit && Date.now() - hit.at < TTL ? hit.pr : undefined;
+  return hit && (stale || Date.now() - hit.at < TTL) ? hit.pr : undefined;
 }
 
 /** Forget cached lookups, after something changed a pull request. */
