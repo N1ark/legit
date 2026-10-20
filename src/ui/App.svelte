@@ -105,7 +105,7 @@
   // The branch's pull request follows the branch, its tip and what was last fetched of it.
   $effect(() => {
     void [app.repo?.branch, app.repo?.head, app.repo?.push?.tip];
-    if (app.repo) untrack(() => gh.refresh());
+    if (app.repo) untrack(() => gh.follow());
   });
 
   type Action =

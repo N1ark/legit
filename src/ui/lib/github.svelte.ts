@@ -59,8 +59,10 @@ class Github {
   private lastAt = 0;
   private tickAt = 0;
   private statusAt = 0;
-  private statusLoad: Promise<void> | null = null;
+  private statusLoad: Promise<{ status: GithubStatus; n: number; branch: string | null }> | null = null;
+  private statusN = 0;
   private gen = 0;
+  private followed: string | null = null;
 
   /**
    * Look again: who's signed in (once it's known, else every so often, or now with `retry`), and
@@ -73,17 +75,28 @@ class Github {
     if (branch !== this.branch) this.pr = undefined;
     this.branch = branch;
     this.lastAt = Date.now();
+    const ask = (b: string) => ghRequest<PullRequest | null>('pr', { branch: b, fresh: opts.fresh ? 1 : null });
     try {
       // Not signed in may only mean GitHub was out of reach when this window loaded (just woken up,
       // say): ask again, or the pull request would stay gone until a reload.
-      if (this.statusLoad || !this.status || opts.retry || (!this.ready && Date.now() - this.statusAt > 15_000)) {
-        await this.loadStatus(opts.retry);
+      const asking = !!this.statusLoad || !this.status || !!opts.retry || (!this.ready && Date.now() - this.statusAt > 15_000);
+      const status = asking ? this.loadStatus(opts.retry, branch) : null;
+      // Asked alongside the status rather than after it (dropped if that says signed out). When the
+      // server has it at hand the status brings it, and both show at once, so the views that follow
+      // them ask about the pull request's head once.
+      const early = branch && (status ? !!app.repo?.github : this.ready) ? ask(branch) : null;
+      early?.catch(() => {});
+      let pr: PullRequest | null | undefined;
+      if (status) {
+        const s = await status;
+        if (s.n === this.statusN) this.status = s.status;
+        if (s.branch === branch && !opts.fresh) pr = s.status.pr;
       }
       if (!this.ready || !branch) {
         if (gen === this.gen) this.pr = null;
         return;
       }
-      const pr = await ghRequest<PullRequest | null>('pr', { branch, fresh: opts.fresh ? 1 : null });
+      if (pr === undefined) pr = await (early ?? ask(branch));
       if (gen === this.gen) {
         const changed = JSON.stringify(pr) !== JSON.stringify(this.pr);
         this.pr = pr;
@@ -100,18 +113,26 @@ class Github {
   }
 
   /** Ask who's signed in; refreshes meanwhile wait for the same answer, and only the last one asked is kept. */
-  private loadStatus(retry = false): Promise<void> {
+  private loadStatus(retry: boolean | undefined, branch: string | null): Promise<{ status: GithubStatus; n: number; branch: string | null }> {
     if (this.statusLoad && !retry) return this.statusLoad;
     this.statusAt = Date.now();
-    const load: Promise<void> = ghRequest<GithubStatus>('status', { retry: retry ? 1 : null })
-      .then((s) => {
-        if (this.statusLoad === load) this.status = s;
-      })
+    const n = ++this.statusN;
+    const load = ghRequest<GithubStatus>('status', { retry: retry ? 1 : null, branch })
+      .then((status) => ({ status, n, branch }))
       .finally(() => {
         if (this.statusLoad === load) this.statusLoad = null;
       });
     this.statusLoad = load;
     return load;
+  }
+
+  /** After the repo's state reloads: refresh if the branch, its tip or what was fetched of it moved. */
+  follow() {
+    const r = app.repo;
+    const key = `${r?.branch}\0${r?.head}\0${r?.push?.tip}`;
+    if (key === this.followed) return;
+    this.followed = key;
+    this.refresh();
   }
 
   /** Refresh unless that happened in the last `ms`. */

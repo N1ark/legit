@@ -31,4 +31,6 @@ export interface GithubStatus {
   login: string | null;
   /** Why `login` is null, when it is. */
   error: string | null;
+  /** The pull request of the branch asked about, when the server has it at hand. */
+  pr?: PullRequest | null;
 }

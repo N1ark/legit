@@ -31,15 +31,18 @@ export function pickPr(nodes: any[], headOwner: string): PullRequest | null {
   return pick ? toPullRequest(pick) : null;
 }
 
+const TTL = 15_000;
 const prs = new Map<string, { at: number; value: Promise<PullRequest | null> }>();
+/** The lookups that have their answer. */
+const known = new Map<string, { at: number; pr: PullRequest | null }>();
 
 /** The pull request `branch` is the head of, cached for a few seconds; `fresh` skips the cache. */
 export async function prForBranch(repo: Repo, branch: string, fresh = false): Promise<PullRequest | null> {
   const r = await ghRepos(repo, branch);
   if (!r) return null;
   const key = `${r.base}\0${r.headOwner}\0${branch}`;
-  if (fresh) prs.delete(key);
-  return cached(prs, key, 15_000, async () => {
+  if (fresh) [prs, known].forEach((m) => m.delete(key));
+  return cached(prs, key, TTL, async () => {
     const d = await graphql(
       `query PrForBranch($owner: String!, $name: String!, $head: String!) {
         repository(owner: $owner, name: $name) {
@@ -48,11 +51,22 @@ export async function prForBranch(repo: Repo, branch: string, fresh = false): Pr
       }`,
       { owner: r.owner, name: r.name, head: branch },
     );
-    return pickPr(d.repository?.pullRequests.nodes ?? [], r.headOwner);
+    const pr = pickPr(d.repository?.pullRequests.nodes ?? [], r.headOwner);
+    known.set(key, { at: Date.now(), pr });
+    return pr;
   });
+}
+
+/** What `prForBranch` would answer at once, from its cache; undefined when it would ask GitHub. */
+export async function knownPr(repo: Repo, branch: string): Promise<PullRequest | null | undefined> {
+  const r = await ghRepos(repo, branch);
+  if (!r) return null;
+  const hit = known.get(`${r.base}\0${r.headOwner}\0${branch}`);
+  return hit && Date.now() - hit.at < TTL ? hit.pr : undefined;
 }
 
 /** Forget cached lookups, after something changed a pull request. */
 export function forgetPrs() {
   prs.clear();
+  known.clear();
 }

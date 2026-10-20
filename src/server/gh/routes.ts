@@ -6,7 +6,7 @@ import { GithubError, MOCK, githubToken, resetToken, viewerLogin } from './clien
 import { ghRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import { notificationsGet, notificationsPost, warmNotifications } from './notifications.ts';
-import { prForBranch } from './pulls.ts';
+import { knownPr, prForBranch } from './pulls.ts';
 import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
@@ -28,6 +28,8 @@ const core: Record<string, GetRoute> = {
     } catch (e) {
       status.error = e instanceof Error ? e.message : String(e);
     }
+    const branch = q.get('branch');
+    if (status.login && branch) status.pr = await knownPr(repo, branch);
     return status;
   },
   pr: (repo, q) => prForBranch(repo, q.get('branch') ?? '', q.get('fresh') === '1'),

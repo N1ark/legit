@@ -84,3 +84,14 @@ test('a server warms what the page asks first: those answers come without asking
   assert.deepEqual(await calls(() => get('checks', { sha: head, pr: String(pr.number) })), ['GraphQL CommitChecks']);
   assert.deepEqual((await calls(() => get('notifs'))).filter((c) => c.startsWith('GET')), ['GET /notifications']);
 });
+
+test('the status brings the pull request of the branch asked about when the server has it at hand', async () => {
+  const repo = await Repo.open(demo);
+  const get = (name: string, q: Record<string, string> = {}) => githubRoute(repo, 'GET', name, new URLSearchParams(q)) as Promise<any>;
+  const pr = await get('pr', { branch: 'feature/parser' });
+  assert.deepEqual(await calls(async () => assert.deepEqual((await get('status', { branch: 'feature/parser' })).pr, pr)), []);
+  assert.equal((await get('status', { branch: 'feature/cache' })).pr, undefined);
+  assert.equal((await get('status')).pr, undefined);
+  await get('pr', { branch: 'feature/cache' });
+  assert.equal((await get('status', { branch: 'feature/cache' })).pr, null);
+});
