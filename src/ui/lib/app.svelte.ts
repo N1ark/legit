@@ -21,7 +21,8 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 }
 
 class App {
-  repo = $state<RepoState | null>(null);
+  /** Replaced, never changed in place: a refresh brings a whole new one. */
+  repo = $state.raw<RepoState | null>(null);
   /** Selected commit SHAs, in click order. */
   selected = $state<string[]>([]);
   anchor: string | null = null;
@@ -42,15 +43,20 @@ class App {
 
   /** Everything the list shows, newest first: the state's commits, older ones, and expanded merges' commits. */
   commits = $derived.by(() => {
-    const base = this.repo?.commits ?? [];
-    const older = this.older && this.older.from === base.at(-1)?.sha ? this.older.commits : [];
+    const base = this.repo?.commits ?? NONE;
+    const older = this.older && this.older.from === base.at(-1)?.sha ? this.older.commits : NONE;
+    // The same list when a refresh changed nothing in it, so what derives from it stays as it is.
+    const last = this.listed;
+    if (last && last.base === base && last.older === older && last.expanded === this.expanded) return last.out;
     const out: CommitInfo[] = [];
     for (const c of [...base, ...older]) {
       out.push(c);
       if (c.merge) out.push(...(this.expanded[c.sha]?.commits ?? []));
     }
+    this.listed = { base, older, expanded: this.expanded, out };
     return out;
   });
+  private listed: { base: CommitInfo[]; older: CommitInfo[]; expanded: unknown; out: CommitInfo[] } | null = null;
   /** No older history left to load. */
   atEnd = $derived(!!this.older && this.older.from === this.repo?.commits.at(-1)?.sha && !this.older.more);
   editable = $derived(this.commits.filter((c) => c.editable));
@@ -135,16 +141,25 @@ class App {
   async refresh() {
     const gen = ++this.gen;
     try {
-      const repo = await request<RepoState>('/api/state');
-      if (gen === this.gen) this.setRepo(repo);
+      const res = await fetch('/api/state');
+      const text = await res.text();
+      if (!res.ok) throw new Error((JSON.parse(text) as { error?: string }).error ?? res.statusText);
+      // Window focus and file events refresh far more often than anything changes.
+      if (gen !== this.gen || (text === this.fetched?.text && this.repo === this.fetched.repo)) return;
+      this.setRepo(JSON.parse(text));
+      this.fetched = { text, repo: this.repo! };
     } catch (e) {
       toast.error(e);
     }
   }
 
+  /** The state `refresh` last applied, as the server sent it. */
+  private fetched: { text: string; repo: RepoState } | null = null;
+
   private setRepo(repo: RepoState, focus?: string[]) {
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
+    repo.commits = keepCommits(this.repo?.commits, repo.commits);
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(this.commits.map((c) => c.sha));
@@ -731,6 +746,25 @@ export const WORK = 'work';
 export const EDITING = 'editing';
 
 export const app = new App();
+
+const NONE: CommitInfo[] = [];
+
+/**
+ * `next`, keeping the commits `prev` already had unchanged (a commit's SHA fixes all but whether
+ * it's pushed or rewritable), and `prev` itself if it's the same list, so that rows don't re-render.
+ */
+function keepCommits(prev: CommitInfo[] | undefined, next: CommitInfo[]): CommitInfo[] {
+  if (!prev?.length) return next;
+  const by = new Map(prev.map((c) => [c.sha, c]));
+  let same = prev.length === next.length;
+  const out = next.map((c, i) => {
+    const p = by.get(c.sha);
+    const kept = p && p.pushed === c.pushed && p.editable === c.editable ? p : c;
+    if (kept !== prev[i]) same = false;
+    return kept;
+  });
+  return same ? prev : out;
+}
 
 export function shortSha(c: CommitInfo | string) {
   return (typeof c === 'string' ? c : c.sha).slice(0, 7);
