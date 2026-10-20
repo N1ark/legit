@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-20
 
 - Switching repos is quicker, and going back to one of the last few is quicker still.
 - Notifications show whether each pull request or issue is open, a draft, merged or closed.
+- The window is ready sooner: the commit list, the first diff, and the branch's pull request, checks and notifications all show up faster.
+- Long histories and branch lists stay smooth: scrolling, **j**/**k** and filtering no longer lag.
+- Big commits open several times faster (thousands of files, huge or minified files), and diffs come up already highlighted.
+- Staging, committing, undoing and switching branches are quicker, and a big file that's partly staged no longer takes seconds to show.
+- Changes to ignored files (build output, `node_modules`) no longer refresh the window, and a hidden window stops asking GitHub for updates.
+- A branch with the same name as a tag can be pushed again.
 
 ## 0.6.0 — 2026-10-19
 
