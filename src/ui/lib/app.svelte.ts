@@ -8,13 +8,19 @@ import type {
   Stashes, SyncResult,
 } from '../../shared/types.ts';
 
+/** GETs index.html sent before the bundle loaded, by path. */
+const early: Record<string, Promise<Response> | undefined> = (window as any).__legitEarly ?? {};
+
 export async function request<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(
-    path,
-    body === undefined
-      ? {}
-      : { method: 'POST', headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify(body) },
-  );
+  const sent = body === undefined ? early[path] : undefined;
+  if (sent) delete early[path];
+  const res = await (sent ??
+    fetch(
+      path,
+      body === undefined
+        ? {}
+        : { method: 'POST', headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify(body) },
+    ));
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error ?? res.statusText), { code: data.code as string | undefined });
   return data;
@@ -143,6 +149,7 @@ class App {
   }
 
   private setRepo(repo: RepoState, focus?: string[]) {
+    const first = !this.repo;
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     this.repo = repo;
@@ -153,6 +160,8 @@ class App {
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
     this.selected = sel;
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
+    // The first commit shown: its diff is asked for now, not once the list and the view have rendered.
+    if (first && sel.length === 1 && sel[0] !== WORK) this.prefetch(sel[0]);
   }
 
   /** Load the next page of older history (the list calls this when scrolled near its end). */
