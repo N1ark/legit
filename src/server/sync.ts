@@ -164,7 +164,7 @@ export async function editStop(git: Git): Promise<EditStop | null> {
   if (!existsSync(join(git.gitDir, 'rebase-merge'))) return null;
   const [amend, head, todo] = await Promise.all([
     readGitFile(git, 'rebase-merge/amend'),
-    git.text(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true }),
+    git.headState().then((h) => h.head ?? ''),
     readGitFile(git, 'rebase-merge/git-rebase-todo'),
   ]);
   if (!amend || amend !== head) return null;
@@ -196,11 +196,10 @@ export async function networkEnv(git: Git): Promise<Record<string, string>> {
 
 /** The remote to fetch: the current branch's upstream remote, else origin, else the first one. */
 export async function remoteFor(git: Git, branch: string | null): Promise<string | null> {
-  const [up, remotes] = await Promise.all([
+  const [up, { names }] = await Promise.all([
     branch ? git.text(['for-each-ref', '--format=%(upstream:remotename)', `refs/heads/${branch}`]) : '',
-    git.text(['remote']),
+    git.remotes(),
   ]);
-  const names = remotes.split('\n').filter(Boolean);
   if (up && names.includes(up)) return up;
   return names.includes('origin') ? 'origin' : (names[0] ?? null);
 }
@@ -236,7 +235,7 @@ export function fetchFrom(git: Git, remote: string): Promise<void> {
 
 /** Every remote, at once; one that fails doesn't stop the others, and the error names it. */
 export async function fetchRemote(repo: Repo): Promise<SyncResult> {
-  const remotes = (await repo.git.text(['remote'])).split('\n').filter(Boolean);
+  const remotes = (await repo.git.remotes()).names;
   if (!remotes.length) throw new GitError('This repository has no remote to fetch from.');
   const results = await Promise.allSettled(remotes.map((r) => fetchFrom(repo.git, r)));
   const fetched = remotes.filter((_, i) => results[i].status === 'fulfilled');

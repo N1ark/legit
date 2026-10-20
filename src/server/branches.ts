@@ -34,9 +34,7 @@ async function validName(repo: Repo, name: string): Promise<string> {
   return name;
 }
 
-async function sha(repo: Repo, ref: string): Promise<string | null> {
-  return (await repo.git.text(['rev-parse', '-q', '--verify', ref], { allowFail: true })) || null;
-}
+const sha = (repo: Repo, ref: string): Promise<string | null> => repo.git.resolve(ref);
 
 const localExists = async (repo: Repo, name: string) => !!(await sha(repo, `refs/heads/${name}`));
 
@@ -46,7 +44,7 @@ const localExists = async (repo: Repo, name: string) => !!(await sha(repo, `refs
  * if the switch fails.
  */
 async function switchTo(repo: Repo, args: string[], target: string, stash = false) {
-  const where = async () => `${await repo.currentBranch()} ${await sha(repo, 'HEAD')}`;
+  const where = async () => JSON.stringify(await repo.git.headState());
   const before = await where();
   const stashed = stash ? await stashPush(repo.git, await repo.currentBranch()) : null;
   const r = await repo.git.run(['switch', '--no-guess', ...args], { allowFail: true });

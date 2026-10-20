@@ -43,6 +43,22 @@ test('lcs finds a longest common subsequence', () => {
   assert.deepEqual(lcs(['a', 'b', 'c', 'a', 'b', 'b', 'a'], ['c', 'b', 'a', 'b', 'a', 'c']).filter((j) => j >= 0).length, 4);
   assert.deepEqual(lcs([], ['a']), []);
   assert.deepEqual(lcs(['a', 'x', 'b'], ['a', 'b']), [0, -1, 1]);
+  // Against a quadratic table, on small random inputs: always a common subsequence, and a longest one.
+  let seed = 7;
+  const rnd = (n: number) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  for (let it = 0; it < 2000; it++) {
+    const alpha = 1 + rnd(4);
+    const a = Array.from({ length: rnd(20) }, () => String(rnd(alpha)));
+    const b = Array.from({ length: rnd(20) }, () => String(rnd(alpha)));
+    const t = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) t[i][j] = a[i] === b[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+    }
+    const m = lcs(a, b);
+    const pairs = m.flatMap((j, i) => (j < 0 ? [] : [[i, j]]));
+    assert.ok(pairs.every(([i, j], k) => a[i] === b[j] && (k === 0 || j > pairs[k - 1][1])));
+    assert.equal(pairs.length, t[0][0]);
+  }
 });
 
 test('what is staged, line by line; a line edited again after staging is mixed until picked', () => {
@@ -108,4 +124,11 @@ test('staging line after line from one snapshot, as quick clicks do; files stage
   all = await repo.work();
   f = all.files.find((x) => x.path === 'f')!;
   assert.deepEqual([f.stage, f.staged], ['all', [0, 1, 2, 3, 4]]);
+});
+
+test('lines of a long file with many changes align without running out of memory', () => {
+  const a = Array.from({ length: 20000 }, (_, i) => `line ${i}`);
+  const b = a.filter((_, i) => i % 10).map((s, i) => (i % 10 === 1 ? `${s} changed` : s));
+  const m = lcs(a, b);
+  assert.equal(m.filter((j) => j >= 0).length, 16200);
 });
