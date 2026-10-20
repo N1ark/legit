@@ -1,12 +1,13 @@
 // CI on GitHub: a commit's checks (one GraphQL query), many commits' combined states at once (for
 // the commit list), an Actions job's steps and log, and re-running or cancelling a workflow run.
 
-import { GithubError, graphql, rest } from './client.ts';
+import { GithubError, graphql, rest, takeWarm, warm } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { toCommitChecks, rollupState, toJobInfo } from './checks-map.ts';
 import { parseJobLog } from './joblog.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
 import type { CommitChecks, JobInfo, JobLog, RollupState } from '../../shared/gh-checks.ts';
+import type { PullRequest } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -54,6 +55,15 @@ export async function commitChecks(repo: Repo, commit: string, pr?: number): Pro
   const r = await needGhRepos(repo);
   const d = await graphql(CHECKS_QUERY, { owner: r.owner, name: r.name, sha: commit, pr: pr ?? 0, hasPr: !!pr });
   return toCommitChecks(commit, d.repository?.object ?? null);
+}
+
+const warmKey = (commit: string, pr?: number) => `checks ${commit}:${pr ?? ''}`;
+
+/** The checks the header will ask for first: the pull request's head's, when it's HEAD or under it. */
+export async function warmChecks(repo: Repo, pr: PullRequest | null) {
+  if (!pr || !SHA.test(pr.headSha)) return;
+  if ((await repo.git.run(['merge-base', '--is-ancestor', pr.headSha, 'HEAD'], { allowFail: true })).code !== 0) return;
+  await warm(warmKey(pr.headSha, pr.number), () => commitChecks(repo, pr.headSha, pr.number));
 }
 
 /** Combined states of many commits, 50 aliases per query; a commit GitHub doesn't have is null. */
@@ -107,7 +117,10 @@ const post = async (repo: Repo, path: string) => {
 };
 
 export const checksGet: Record<string, GetRoute> = {
-  checks: (repo, q) => commitChecks(repo, sha(q.get('sha')), q.get('pr') ? id(q.get('pr')) : undefined),
+  checks: (repo, q) => {
+    const [commit, pr] = [sha(q.get('sha')), q.get('pr') ? id(q.get('pr')) : undefined];
+    return takeWarm<CommitChecks>(warmKey(commit, pr)) ?? commitChecks(repo, commit, pr);
+  },
   checksRollups: (repo, q) => rollups(repo, [...new Set((q.get('shas') ?? '').split(',').filter(Boolean).map(sha))]),
   checksJob: (repo, q) => job(repo, id(q.get('job'))),
   checksLog: (repo, q) => jobLog(repo, id(q.get('job'))),

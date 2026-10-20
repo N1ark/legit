@@ -27,19 +27,24 @@ export function onRest(route: string, fn: RestHandler) {
   restHandlers.push({ method, pattern, keys, fn });
 }
 
+/** Every call answered, `GraphQL Name` or `GET /path`, oldest first: what tests count. */
+export const mockCalls: string[] = [];
+
 const latency = () => new Promise((r) => setTimeout(r, 150 + Math.random() * 250));
 
 export async function mockGraphql(query: string, vars: Record<string, unknown>): Promise<unknown> {
-  await latency();
   const name = /\b(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? '';
+  mockCalls.push(`GraphQL ${name}`);
+  await latency();
   const fn = graphqlHandlers.get(name);
   if (!fn) throw new GithubError(`GitHub mock: no handler for GraphQL operation "${name}".`, 500);
   return structuredClone(await fn(vars));
 }
 
 export async function mockRest(method: string, path: string, body: unknown): Promise<unknown> {
-  await latency();
   const url = new URL(path, 'https://api.github.com');
+  mockCalls.push(`${method} ${url.pathname}`);
+  await latency();
   for (const h of restHandlers) {
     const m = h.method === method ? h.pattern.exec(url.pathname) : null;
     if (!m) continue;

@@ -1,7 +1,7 @@
 // The signed-in user's GitHub notifications (REST only: GraphQL has none). Polled with
 // If-Modified-Since, so a poll that finds nothing new costs no rate limit.
 
-import { GithubError, rest, restSince } from './client.ts';
+import { GithubError, rest, restSince, takeWarm, warm } from './client.ts';
 import { resolveRefs } from './issues.ts';
 import { log } from '../log.ts';
 import type { GhNotification, GhNotificationType, GhNotifications } from '../../shared/gh-notifications.ts';
@@ -113,8 +113,11 @@ const threadId = (b: any): string => {
   return b.id;
 };
 
+/** Fetch them ahead of the page's first look. */
+export const warmNotifications = () => warm('notifs', () => list(false));
+
 export const notificationsGet: Record<string, GetRoute> = {
-  notifs: (_, q) => list(q.get('fresh') === '1'),
+  notifs: (_, q) => (q.get('fresh') === '1' ? list(true) : (takeWarm<GhNotifications>('notifs') ?? list(false))),
 };
 
 export const notificationsPost: Record<string, PostRoute> = {

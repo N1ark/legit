@@ -6,6 +6,7 @@
 // closed the window, quit, or crashed), after letting any running operation finish.
 
 import { parseArgs } from 'node:util';
+import { warmGithub } from './gh/routes.ts';
 import { Repo } from './repo.ts';
 import { serve } from './server.ts';
 
@@ -29,6 +30,9 @@ function firstLine(): Promise<string> {
     process.stdin.on('data', onData).on('end', onEnd);
   });
 }
+
+// A spare signs in to GitHub while it waits: that's the same for every repo.
+if (!positionals[0]) warmGithub();
 
 let repo: Repo;
 try {

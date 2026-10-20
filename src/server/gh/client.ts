@@ -191,8 +191,25 @@ export interface RestOpts {
   safe?: boolean;
 }
 
+const inflight = new Map<string, Promise<unknown>>();
+
+/** `fn()`, shared with an identical read still waiting for its answer (each joiner gets its own copy). */
+function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const going = inflight.get(key) as Promise<T> | undefined;
+  if (going) return going.then((v) => structuredClone(v));
+  // Joiners copy it straight off `raw`, before the first caller (a tick later, on `raw.finally`) sees it.
+  const raw = fn();
+  inflight.set(key, raw);
+  return raw.finally(() => inflight.get(key) === raw && inflight.delete(key));
+}
+
 /** A REST call, e.g. `rest('GET', '/repos/o/r/pulls?head=o:b')`; 204s return null. */
-export async function rest<T = any>(method: string, path: string, body?: unknown, opts: RestOpts = {}): Promise<T> {
+export function rest<T = any>(method: string, path: string, body?: unknown, opts: RestOpts = {}): Promise<T> {
+  if (method !== 'GET') return restCall(method, path, body, opts);
+  return once(`GET ${path}\0${opts.accept ?? ''}\0${!!opts.text}`, () => restCall<T>(method, path, body, opts));
+}
+
+async function restCall<T>(method: string, path: string, body: unknown, opts: RestOpts): Promise<T> {
   if (MOCK) return mockRest(method, path, body) as T;
   const res = await send(path, {
     method,
@@ -217,7 +234,12 @@ export async function restSince<T = any>(path: string, since: string | null): Pr
 }
 
 /** A GraphQL query or mutation; it must be named (`query Name(…)`), which is how the mock finds it. */
-export async function graphql<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+export function graphql<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  if (!/^\s*query\b/.test(query)) return graphqlCall(query, variables);
+  return once(`${query}\0${JSON.stringify(variables)}`, () => graphqlCall<T>(query, variables));
+}
+
+async function graphqlCall<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   if (MOCK) return mockGraphql(query, variables) as T;
   const res = await rest<{ data?: T; errors?: { message: string; type?: string }[] }>('POST', '/graphql', { query, variables }, { safe: /^\s*query\b/.test(query) });
   if (res.errors?.length) {
@@ -234,6 +256,22 @@ export function viewerLogin(): Promise<string> {
   viewer ??= graphql<{ viewer: { login: string } }>('query Viewer { viewer { login } }').then((d) => d.viewer.login);
   viewer.catch(() => (viewer = null));
   return viewer;
+}
+
+const warmed = new Map<string, { at: number; value: Promise<unknown> }>();
+
+/** Start `fn()` ahead of a request the page is about to make; failures aren't kept. */
+export function warm<T>(key: string, fn: () => Promise<T>): Promise<unknown> {
+  const value = fn();
+  warmed.set(key, { at: Date.now(), value });
+  return value.catch(() => warmed.get(key)?.value === value && warmed.delete(key));
+}
+
+/** What `warm(key)` started, at most `ms` ago, taken once: later requests ask GitHub again. */
+export function takeWarm<T>(key: string, ms = 10_000): Promise<T> | undefined {
+  const hit = warmed.get(key);
+  warmed.delete(key);
+  return hit && Date.now() - hit.at < ms ? (hit.value as Promise<T>) : undefined;
 }
 
 /** `fn()`'s result for `ms`, per key; failures aren't kept. */

@@ -9,7 +9,7 @@ import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.t
 import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
 import './gh/mock/index.ts';
-import { githubRoute } from './gh/routes.ts';
+import { githubRoute, warmGithub } from './gh/routes.ts';
 import {
   checkoutRemote, createBranch, deleteBranch, deleteRemoteBranch, deletedBranches, remoteBranches, renameBranch, restoreBranch,
   deleteBranches, deleteRemoteBranches, remotes, setUpstream, unsetUpstream,
@@ -84,6 +84,7 @@ const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
 const MAX_IMAGE = 50 * 1024 * 1024;
 
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
+  warmGithub(repo);
   const clients = new Set<ServerResponse>();
   const summaries = new Map<string, string>();
 
