@@ -28,17 +28,10 @@
   import PushButton from './PushButton.svelte';
   import RebaseOnBase from './RebaseOnBase.svelte';
   import RepoPicker from './RepoPicker.svelte';
-  import Settings from './Settings.svelte';
   import CommitView from './CommitView.svelte';
-  import ConflictView from './ConflictView.svelte';
-  import EditView from './EditView.svelte';
-  import FindBar from './FindBar.svelte';
-  import SquashView from './SquashView.svelte';
-  import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import Brand from './Brand.svelte';
   import Notifications from './gh/Notifications.svelte';
-  import PrView from './gh/PrView.svelte';
   import PrChip from './gh/PrChip.svelte';
   import GithubMenu from './gh/GithubMenu.svelte';
   import ChecksChip from './gh/ChecksChip.svelte';
@@ -49,6 +42,15 @@
   import { formatPerson } from './lib/people.ts';
   import { newWorktree } from './lib/worktrees.svelte.ts';
   import { rebuildOn } from './lib/branches.svelte.ts';
+  import { lazy, preload } from './lib/lazy.svelte.ts';
+
+  const Settings = lazy(() => import('./Settings.svelte'));
+  const ConflictView = lazy(() => import('./ConflictView.svelte'));
+  const EditView = lazy(() => import('./EditView.svelte'));
+  const FindBar = lazy(() => import('./FindBar.svelte'));
+  const SquashView = lazy(() => import('./SquashView.svelte'));
+  const StashView = lazy(() => import('./StashView.svelte'));
+  const PrView = lazy(() => import('./gh/PrView.svelte'));
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -82,7 +84,7 @@
   };
 
   onMount(() => {
-    app.start();
+    app.start().then(preload);
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
@@ -248,24 +250,24 @@
     </aside>
     <section data-scroller>
       {#if finder.open}
-        <div class="find"><div class="bar"><FindBar /></div></div>
+        <div class="find"><div class="bar"><FindBar.component /></div></div>
       {/if}
       {#if gh.view?.kind === 'pr'}
         {#key gh.view.number}
-          <PrView number={gh.view.number} />
+          <PrView.component number={gh.view.number} />
         {/key}
       {:else if app.stash}
         {#key app.stash.sha}
-          <StashView stash={app.stash} />
+          <StashView.component stash={app.stash} />
         {/key}
       {:else if app.selected[0] === WORK && app.repo?.conflict?.edit}
-        <EditView />
+        <EditView.component />
       {:else if app.selected[0] === WORK && app.repo?.conflict}
-        <ConflictView />
+        <ConflictView.component />
       {:else if app.selected[0] === WORK}
         <WorkView />
       {:else if app.selection.length > 1}
-        <SquashView commits={app.selection} />
+        <SquashView.component commits={app.selection} />
       {:else if app.selection.length === 1}
         {#key app.selection[0].sha}
           <CommitView commit={app.selection[0]} />
@@ -287,7 +289,7 @@
 <SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
-  <Settings {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
+  <Settings.component {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />
