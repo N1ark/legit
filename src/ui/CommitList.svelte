@@ -183,6 +183,16 @@
     ]);
   }
 
+  // Rows scrolling under a still pointer aren't being pointed at: prefetching each would queue dozens of diffs.
+  let scrolledAt = 0;
+  function onscroll() {
+    scrolledAt = performance.now();
+    loadIfNearEnd();
+  }
+  function hovered(sha: string) {
+    if (performance.now() - scrolledAt > 150) app.prefetch(sha);
+  }
+
   // Older history loads as the list nears its end, and again after each page if it still does.
   function loadIfNearEnd() {
     if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 600) app.loadOlder();
@@ -226,7 +236,7 @@
 </script>
 
 <!-- Only the rows in view are mounted: histories run to thousands of commits. -->
-<div class="list" role="listbox" aria-multiselectable="true" bind:this={list} onscroll={loadIfNearEnd}>
+<div class="list" role="listbox" aria-multiselectable="true" bind:this={list} onscroll={onscroll}>
   <div class="probe" aria-hidden="true"><div bind:this={probe}><div class="boundary">read-only</div></div></div>
   {#if list}
     <VirtualList bind:this={rows} {items} rowHeight={heightOf} key={(it) => it.key} scroller={list}>
@@ -288,7 +298,7 @@
             aria-posinset={it.i + (app.hasWork ? 2 : 1)}
             draggable={c.editable && !app.repo?.blocked}
             onclick={(e) => onclick(e, c.sha)}
-            onmouseenter={() => app.prefetch(c.sha)}
+            onmouseenter={() => hovered(c.sha)}
             oncontextmenu={(e) => oncontextmenu(e, c.sha)}
             onkeydown={() => {}}
             ondragstart={(e) => ondragstart(e, c.sha)}
