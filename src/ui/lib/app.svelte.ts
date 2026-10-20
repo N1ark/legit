@@ -1,4 +1,7 @@
-import { IS_TAURI, copyText, toast } from 'purr';
+import { IS_TAURI, copyText, persisted, toast } from 'purr';
+import { expandable } from '../../shared/context.ts';
+import { highlight } from './highlighter.ts';
+import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
@@ -244,10 +247,17 @@ class App {
     return p;
   }
 
-  /** Warm the caches for a commit: its file list and the files on its first screen (generated ones start collapsed). */
+  /** The commits prefetched last, whose highlighting is still worth working out. */
+  private prefetched: string[] = [];
+
+  /**
+   * Warm the caches for a commit: its file list, and the files on its first screen (generated ones
+   * start collapsed) and their highlighting, which the worker does when the diff shown leaves it free.
+   */
   prefetch(sha: string): Promise<unknown> {
+    this.prefetched = [sha, ...this.prefetched.filter((s) => s !== sha)].slice(0, 4);
     return this.diff(sha)
-      .then((d) => {
+      .then(async (d) => {
         const first: number[] = [];
         let y = 0;
         for (let i = 0; i < d.files.length && y < 2000; i++) {
@@ -255,7 +265,15 @@ class App {
           if (f.rows && !f.generated) first.push(i);
           y += f.generated ? 44 : 40 + f.rows * 19;
         }
-        if (first.length) return this.fileContents(d, first);
+        if (!first.length) return;
+        const res = await this.fileContents(d, first);
+        for (const i of first) {
+          const f = d.files[i];
+          if (f.rows > PREHIGHLIGHT_ROWS) continue;
+          const rows = buildRows(res[i], expandable(f), noExpansion(), hideWhitespace.value);
+          const wanted = () => this.prefetched.includes(sha);
+          highlight(highlightKey(d, i, f.syntax, undefined, rows.ws), f.path, rowHunks(rows), () => Infinity, wanted, f.syntax);
+        }
       })
       .catch(() => {});
   }
@@ -736,6 +754,16 @@ interface View {
 export const WORK = 'work';
 /** What identifies file i's diff: its token in a working-tree snapshot (unchanged files keep it across snapshots), else its place in the diff. */
 export const fileKey = (d: DiffSummary, i: number) => (d.files[i].token ? `${d.files[i].token}:${d.files[i].path}` : `${d.sha}:${i}`);
+
+/** Highlighting's cache key for file i's rows: with grammar `syntax`, lines `x` shown between hunks, whitespace changes hidden (`ws`). */
+export const highlightKey = (d: DiffSummary, i: number, syntax: string | undefined, x: Expansion | undefined, ws: boolean) =>
+  `${fileKey(d, i)}:${syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (ws ? ':ws' : '');
+
+/** Show lines whose only change is whitespace as unchanged, in every diff. */
+export const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false);
+
+/** Bigger files aren't highlighted ahead of being shown: the worker can't be interrupted. */
+const PREHIGHLIGHT_ROWS = 3000;
 
 /** `diffPosition` key of the view of the commit being edited (see EditView). */
 export const EDITING = 'editing';

@@ -22,13 +22,19 @@ interface Job {
 
 const cache = new Map<string, Tokens | null>();
 const queue: Job[] = [];
+/** Jobs queued or running, by key. */
+const jobs = new Map<string, Job>();
 let worker: Worker | null = null;
 let running: Job | null = null;
 let nextId = 0;
 
 function pump() {
   if (running) return;
-  for (let k = queue.length - 1; k >= 0; k--) if (!queue[k].wanted()) queue.splice(k, 1);
+  for (let k = queue.length - 1; k >= 0; k--) {
+    if (queue[k].wanted()) continue;
+    jobs.delete(queue[k].key);
+    queue.splice(k, 1);
+  }
   if (!queue.length) return;
   let best = 0;
   for (let k = 1; k < queue.length; k++) if (queue[k].priority() < queue[best].priority()) best = k;
@@ -42,6 +48,7 @@ function start() {
   w.onmessage = (e: MessageEvent<{ tokens: Tokens | null }>) => {
     const job = running!;
     running = null;
+    jobs.delete(job.key);
     if (cache.size > 300) cache.delete(cache.keys().next().value!);
     cache.set(job.key, e.data.tokens);
     job.done(e.data.tokens);
@@ -62,8 +69,23 @@ export function highlight(
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
   // The worker would refuse it, after copying it all over.
   if (!highlightable(hunks)) return Promise.resolve(null);
+  const same = jobs.get(key);
+  if (same) {
+    // Asked for again (prefetched, then shown): it runs as soon as either wants it, for both.
+    const { priority: p, wanted: w, done: d } = same;
+    return new Promise((done) => {
+      same.priority = () => Math.min(p(), priority());
+      same.wanted = () => w() || wanted();
+      same.done = (t) => {
+        d(t);
+        done(t);
+      };
+    });
+  }
   return new Promise((done) => {
-    queue.push({ key, path, hunks, syntax, priority, wanted, done });
+    const job = { key, path, hunks, syntax, priority, wanted, done };
+    jobs.set(key, job);
+    queue.push(job);
     pump();
   });
 }

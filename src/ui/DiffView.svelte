@@ -1,10 +1,3 @@
-<script module lang="ts">
-  import { persisted } from 'purr';
-
-  // Shown as unchanged lines in every diff, kept across diffs.
-  const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false);
-</script>
-
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
@@ -22,6 +15,7 @@
     fixedRange,
     menu,
     offsets,
+    persisted,
     rowAt,
     Switch,
     toast,
@@ -40,7 +34,7 @@
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
-  import { type DiffPosition, app, fileKey } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
@@ -459,8 +453,7 @@
   function queueHighlight(i: number, rows: FileRows) {
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
-    const key =
-      `${fileKey(summary, i)}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (rows.ws ? ':ws' : '');
+    const key = highlightKey(summary, i, files[i].syntax, x, rows.ws);
     const want = () => alive && contents[i] === rows;
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
