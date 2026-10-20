@@ -199,9 +199,7 @@ export class Git {
    */
   async memo<T>(key: string, fn: () => Promise<T>, list = false): Promise<T> {
     const memos = list ? this.lists : this.memos;
-    // Deepening a shallow clone (or grafts) changes what history a commit has.
-    const stamps = await Promise.all(['shallow', 'info/grafts'].map((f) => stat(join(this.commonDir, f)).then((st) => ` ${st.size}:${st.mtimeMs}`, () => '')));
-    key += stamps.join('');
+    key += await this.historyStamp();
     let p = memos.get(key) as Promise<T> | undefined;
     if (p) memos.delete(key);
     else {
@@ -211,6 +209,17 @@ export class Git {
     }
     memos.set(key, p);
     return p;
+  }
+
+  private stamp: Promise<string> | null = null;
+
+  /** Deepening a shallow clone (or grafts) changes what history a commit has. Shared by calls made together. */
+  private historyStamp(): Promise<string> {
+    return (this.stamp ??= Promise.all(
+      ['shallow', 'info/grafts'].map((f) => stat(join(this.commonDir, f)).then((st) => ` ${st.size}:${st.mtimeMs}`, () => '')),
+    )
+      .then((s) => s.join(''))
+      .finally(() => (this.stamp = null)));
   }
 
   /** `rev-list --first-parent --max-count=<n> <sha>`, newest first. */

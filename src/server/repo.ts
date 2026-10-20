@@ -74,16 +74,18 @@ const remoteOf = (view: RefView, names: string[]) =>
 
 /** What the commit list shows of a commit. `local`: SHAs not on any remote-tracking branch. */
 export function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
-  const a = parseIdent(toUtf8(c.author));
-  return {
-    sha: c.sha,
-    ...parseMessage(toUtf8(c.message)),
-    author: { name: a.name, email: a.email, time: a.time },
-    pushed: !local.has(c.sha),
-    editable,
-    merge: c.parents.length > 1,
-  };
+  let parsed = parsedCommits.get(c);
+  if (!parsed) {
+    const a = parseIdent(toUtf8(c.author));
+    parsed = { ...parseMessage(toUtf8(c.message)), author: { name: a.name, email: a.email, time: a.time } };
+    parsedCommits.set(c, parsed);
+  }
+  const { subject, body, coauthors, author } = parsed;
+  return { sha: c.sha, subject, body, coauthors, author, pushed: !local.has(c.sha), editable, merge: c.parents.length > 1 };
 }
+
+/** Commits' messages and authors as `info` gives them, parsed once (commits never change). */
+const parsedCommits = new WeakMap<RawCommit, Pick<CommitInfo, 'subject' | 'body' | 'coauthors' | 'author'>>();
 
 export class Repo {
   readonly git: Git;
