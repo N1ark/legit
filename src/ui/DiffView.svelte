@@ -468,6 +468,7 @@
 
   async function expand(i: number, k: number, side: 'top' | 'bottom') {
     const x = (expansions[i] ??= noExpansion());
+    const loaded = !!x.file;
     if (!x.file) {
       if (opening[i]) return;
       opening[i] = true;
@@ -483,7 +484,7 @@
     }
     const before = contents[i];
     // Its size is known once the file is (after the last hunk); a short gap shows all at once.
-    const left = build(i, before.hunks).hidden[k] ?? 0;
+    const left = (loaded ? before : build(i, before.hunks)).hidden[k] ?? 0;
     const n = left <= STEP ? left : STEP;
     // Nothing comes before the first hunk's gap but the file's start, so it only grows upwards.
     const s = k === 0 ? 'bottom' : side;
@@ -495,7 +496,7 @@
   function replaceRows(i: number, rows: FileRows) {
     const before = contents[i];
     const moved = rowMap(before, rows);
-    if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows) };
+    if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows, moved) };
     if (editing?.i === i) {
       const n = before.n[editing.r];
       const r = moved[editing.r] >= 0 ? moved[editing.r] : rows.n.findIndex((m, k) => m === n && !isHead(rows.kind[k]));

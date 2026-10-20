@@ -241,18 +241,21 @@ export function rowHunks(rows: FileRows): HunkData[] {
   return out;
 }
 
-const lineKey = (rows: FileRows, r: number) => `${rows.o[r]},${rows.n[r]}`;
-
 /** Where each line is in `to`, for the rows of `from` (the same file, with more or less shown). */
 export function rowMap(from: FileRows, to: FileRows): Int32Array {
-  const at = new Map<string, number>();
-  for (let r = 0; r < to.kind.length; r++) if (!isHead(to.kind[r])) at.set(lineKey(to, r), r);
-  return Int32Array.from(from.kind, (k, r) => (isHead(k) ? -1 : (at.get(lineKey(from, r)) ?? -1)));
+  // A line is its old and new numbers: one exact number while the old ones stay under 2^21.
+  let small = true;
+  for (const rows of [from, to]) for (let r = 0; r < rows.o.length && small; r++) small = rows.o[r] < 2 ** 21;
+  const key = small
+    ? (rows: FileRows, r: number): number | string => rows.o[r] * 2 ** 32 + rows.n[r]
+    : (rows: FileRows, r: number): number | string => `${rows.o[r]},${rows.n[r]}`;
+  const at = new Map<number | string, number>();
+  for (let r = 0; r < to.kind.length; r++) if (!isHead(to.kind[r])) at.set(key(to, r), r);
+  return Int32Array.from(from.kind, (k, r) => (isHead(k) ? -1 : (at.get(key(from, r)) ?? -1)));
 }
 
-/** Highlighting of `from`'s rows moved to theirs in `to`, rows new in `to` left plain. */
-export function moveTokens(t: Tokens, from: FileRows, to: FileRows): Tokens {
-  const map = rowMap(from, to);
+/** Highlighting of `from`'s rows moved to theirs in `to` (`map`: `rowMap(from, to)`), rows new in `to` left plain. */
+export function moveTokens(t: Tokens, from: FileRows, to: FileRows, map = rowMap(from, to)): Tokens {
   const runs: (Uint32Array | null)[] = new Array(to.kind.length).fill(null);
   map.forEach((r, k) => {
     if (r >= 0) runs[r] = t.data.subarray(t.offsets[k], t.offsets[k + 1]);
