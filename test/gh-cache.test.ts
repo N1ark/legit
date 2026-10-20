@@ -108,3 +108,17 @@ test("checks aren't warmed for a head the branch's remote-tracking ref isn't at 
   }
   assert.ok((await calls(() => warmGithub(repo))).includes('GraphQL CommitChecks'));
 });
+
+test("the warm-up also has the pull request's stack and review threads ready", async () => {
+  const repo = await Repo.open(demo);
+  const get = (name: string, q: Record<string, string> = {}) => githubRoute(repo, 'GET', name, new URLSearchParams(q)) as Promise<any>;
+  // A branch the stack and threads weren't looked up for yet, with another branch about.
+  const was = git('symbolic-ref', '--short', 'HEAD');
+  const branch = 'feature/parser';
+  git('switch', '-q', branch);
+  git('branch', 'extra');
+  after(() => (git('switch', '-q', was), git('branch', '-D', 'extra')));
+  assert.deepEqual((await calls(() => warmGithub(repo))).filter((c) => /PrStack|ReviewThreads/.test(c)).sort(), ['GraphQL PrStack', 'GraphQL ReviewThreads']);
+  const pr = await get('pr', { branch });
+  assert.deepEqual(await calls(() => Promise.all([get('prStack', { branch }), get('reviewThreads', { number: String(pr.number) })])), []);
+});
