@@ -81,7 +81,7 @@ export async function stashes(git: Git): Promise<Stashes> {
  * Returns the new stash's SHA, or null when there was nothing to stash.
  */
 export async function stashPush(git: Git, branch: string | null): Promise<string | null> {
-  const top = () => git.text(['rev-parse', '-q', '--verify', 'refs/stash'], { allowFail: true });
+  const top = () => git.resolve('refs/stash');
   const before = await top();
   const label = branch ? `legit: on ${branch}` : 'legit: detached HEAD';
   const r = await git.run(['stash', 'push', '--include-untracked', '-m', label], { allowFail: true });
@@ -116,7 +116,7 @@ async function checkApply(git: Git, sha: string) {
   }
 
   // Files the stash would create must not exist yet (untracked, ignored, or tracked here).
-  const head = (await git.run(['rev-parse', '-q', '--verify', 'HEAD'], { allowFail: true })).out.toString('latin1').trim();
+  const head = (await git.headState()).head ?? '';
   const indexed = new Set<string>();
   const paths = [...mine];
   for (let i = 0; i < paths.length; i += 500) {
@@ -167,7 +167,7 @@ function onDisk(root: string, path: string) {
 export async function applyStash(git: Git, sha: string) {
   await checkApply(git, sha);
   const c = await git.commit(sha);
-  const head = await git.text(['rev-parse', '-q', '--verify', 'HEAD'], { allowFail: true });
+  const head = (await git.headState()).head ?? '';
   const index = head === c.parents[0] ? ['--index'] : [];
   const r = await git.run(['stash', 'apply', ...index, sha], { allowFail: true });
   const unmerged = await git.text(['ls-files', '-u']);
