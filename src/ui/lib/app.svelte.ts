@@ -239,15 +239,16 @@ class App {
     return p;
   }
 
-  /** Warm the caches for a commit: its file list and the files on its first screen. */
-  prefetch(sha: string) {
-    this.diff(sha)
+  /** Warm the caches for a commit: its file list and the files on its first screen (generated ones start collapsed). */
+  prefetch(sha: string): Promise<unknown> {
+    return this.diff(sha)
       .then((d) => {
         const first: number[] = [];
         let y = 0;
         for (let i = 0; i < d.files.length && y < 2000; i++) {
-          if (d.files[i].rows) first.push(i);
-          y += 40 + d.files[i].rows * 19;
+          const f = d.files[i];
+          if (f.rows && !f.generated) first.push(i);
+          y += f.generated ? 44 : 40 + f.rows * 19;
         }
         if (first.length) return this.fileContents(sha, first);
       })
@@ -383,8 +384,12 @@ class App {
       return;
     } else {
       this.selected = [sha];
-      const i = this.commits.findIndex((x) => x.sha === sha);
-      for (const n of [this.commits[i - 1], this.commits[i + 1]]) if (n) this.prefetch(n.sha);
+      // Its neighbours once its own first screen is in, so their requests don't hold it up.
+      this.prefetch(sha).then(() => {
+        if (this.selected.length !== 1 || this.selected[0] !== sha) return;
+        const i = this.commits.findIndex((x) => x.sha === sha);
+        for (const n of [this.commits[i - 1], this.commits[i + 1]]) if (n) this.prefetch(n.sha);
+      });
     }
     this.anchor = sha;
   }
