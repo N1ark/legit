@@ -2,7 +2,8 @@
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
   // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
   // right-clicking one opens its menu.
-  import { Twisty, tooltip } from 'purr';
+  import { Twisty, fixedRange, tooltip } from 'purr';
+  import { untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
   import { fileTree, treeRows } from './lib/tree.ts';
 
@@ -27,15 +28,23 @@
   let collapsed = $state<Record<string, boolean>>({});
   const rows = $derived(treeRows(tree, collapsed));
   let list: HTMLElement;
+  let above: HTMLElement;
+
+  // Only the rows near the view are mounted (a commit can touch thousands of files); rows are ROW px.
+  const ROW = 24;
+  const OVERSCAN = 600;
+  let scrollTop = $state(0);
+  let height = $state(0);
+  const shown = $derived(fixedRange(rows.length, ROW, scrollTop - OVERSCAN, height + 2 * OVERSCAN));
 
   $effect(() => {
-    void current;
-    const row = list?.querySelector<HTMLElement>('.is-current');
-    if (!row) return;
-    const top = row.offsetTop;
-    const bottom = top + row.offsetHeight;
-    if (top < list.scrollTop) list.scrollTop = top - row.offsetHeight;
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + row.offsetHeight;
+    const at = current;
+    const k = untrack(() => rows.findIndex((r) => r.kind === 'file' && r.index === at));
+    if (k < 0 || !list) return;
+    const top = above.offsetTop + k * ROW;
+    const bottom = top + ROW;
+    if (top < list.scrollTop) list.scrollTop = top - ROW;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + ROW;
   });
 
   const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
@@ -49,8 +58,16 @@
   }
 </script>
 
-<div class="tree" bind:this={list} role="tree" aria-label="Changed files">
-  {#each rows as r (r.kind === 'dir' ? `d:${r.path}` : r.index)}
+<div
+  class="tree"
+  bind:this={list}
+  bind:clientHeight={height}
+  role="tree"
+  aria-label="Changed files"
+  onscroll={() => (scrollTop = list.scrollTop)}
+>
+  <div bind:this={above} style:height="{shown[0] * ROW}px"></div>
+  {#each rows.slice(shown[0], shown[1]) as r (r.kind === 'dir' ? `d:${r.path}` : r.index)}
     {#if r.kind === 'dir'}
       <button
         class="row dir"
@@ -86,6 +103,7 @@
       </button>
     {/if}
   {/each}
+  <div style:height="{(rows.length - shown[1]) * ROW}px"></div>
 </div>
 
 <style>
