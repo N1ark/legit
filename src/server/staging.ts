@@ -224,7 +224,8 @@ export function lcs(a: string[], b: string[]): number[] {
   const trace: Int32Array[] = [];
   let found = false;
   for (let d = 0; d <= max && !found; d++) {
-    trace.push(v.slice());
+    // Only diagonals -d-1..d+1 are read back at step d: keeping the whole frontier made this O((n+m)·d) in memory.
+    trace.push(v.slice(off - d - 1, off + d + 2));
     for (let k = -d; k <= d; k += 2) {
       let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
       let y = x - k;
@@ -244,9 +245,10 @@ export function lcs(a: string[], b: string[]): number[] {
   let y = m;
   for (let d = trace.length - 1; d >= 0; d--) {
     const t = trace[d];
+    const o = d + 1;
     const k = x - y;
-    const pk = k === -d || (k !== d && t[off + k - 1] < t[off + k + 1]) ? k + 1 : k - 1;
-    const px = t[off + pk];
+    const pk = k === -d || (k !== d && t[o + k - 1] < t[o + k + 1]) ? k + 1 : k - 1;
+    const px = t[o + pk];
     const py = px - pk;
     while (x > px && y > py) match[lo + --x] = lo + --y;
     if (d > 0) [x, y] = [px, py];
