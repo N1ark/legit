@@ -3,7 +3,7 @@
 // Strings holding git object content are "byte strings" (latin1-decoded) so they
 // round-trip exactly; `toUtf8` / `fromUtf8` convert at the UI boundary.
 
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
@@ -134,6 +134,7 @@ export class Git {
   private commits = new Map<string, RawCommit>();
   private written = new Set<string>();
   private pending: Promise<void>[] = [];
+  private reader: ObjectReader;
 
   private constructor(root: string, gitDir: string, commonDir: string, objectsDir: string, hashAlgo: string) {
     this.root = root;
@@ -145,6 +146,7 @@ export class Git {
       hashAlgo === 'sha256'
         ? '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321'
         : '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    this.reader = new ObjectReader(root);
   }
 
   static async open(path: string): Promise<Git> {
@@ -173,23 +175,9 @@ export class Git {
     return (await this.run(args, opts)).out.toString('utf8').trim();
   }
 
-  /** Read many objects at once. Missing objects are absent from the result. */
-  async readObjects(names: string[]): Promise<Map<string, { type: string; data: Buffer }>> {
-    const res = new Map<string, { type: string; data: Buffer }>();
-    if (!names.length) return res;
-    const { out } = await this.run(['cat-file', '--batch'], { input: names.join('\n') + '\n' });
-    let pos = 0;
-    for (const name of names) {
-      const eol = out.indexOf(10, pos);
-      const header = out.toString('latin1', pos, eol);
-      pos = eol + 1;
-      if (header.endsWith(' missing') || header.endsWith(' ambiguous')) continue;
-      const [, type, size] = header.split(' ');
-      const n = Number(size);
-      res.set(name, { type, data: out.subarray(pos, pos + n) });
-      pos += n + 1;
-    }
-    return res;
+  /** Read many objects at once (through one long-lived `cat-file --batch`). Missing objects are absent from the result. */
+  readObjects(names: string[]): Promise<Map<string, { type: string; data: Buffer }>> {
+    return this.reader.read(names.filter((n) => n && !n.includes('\n')));
   }
 
   /** Load commits (cached: commits are immutable). */
@@ -264,6 +252,126 @@ export class Git {
   /** Start a tree merger; call `close()` when done. */
   merger(): Merger {
     return new Merger(this.root);
+  }
+}
+
+interface ObjectRequest {
+  names: string[];
+  next: number;
+  res: Map<string, { type: string; data: Buffer }>;
+  done: (r: Map<string, { type: string; data: Buffer }>) => void;
+  fail: (e: Error) => void;
+}
+
+type Handle = { ref(): void; unref(): void };
+
+/** Ends an idle `cat-file --batch` after this long. */
+const READER_IDLE_MS = 30_000;
+
+/**
+ * One long-lived `git cat-file --batch` answering object reads in turn (a process per read
+ * costs a few ms). It only reads objects by name, which never change, and git looks for new
+ * packs and loose objects whenever one isn't found, so it never answers out of date.
+ */
+class ObjectReader {
+  private cwd: string;
+  private proc: ChildProcess | null = null;
+  private chunks: Buffer[] = [];
+  private length = 0;
+  /** Bytes needed before the next response can be parsed. */
+  private need = 1;
+  private waiting: ObjectRequest[] = [];
+  private idle: NodeJS.Timeout | undefined;
+  private err = '';
+
+  constructor(cwd: string) {
+    this.cwd = cwd;
+  }
+
+  read(names: string[]): Promise<Map<string, { type: string; data: Buffer }>> {
+    const res = new Map<string, { type: string; data: Buffer }>();
+    if (!names.length) return Promise.resolve(res);
+    clearTimeout(this.idle);
+    const p = this.proc ?? this.start();
+    p.ref();
+    (p.stdout as unknown as Handle).ref();
+    return new Promise((done, fail) => {
+      this.waiting.push({ names, next: 0, res, done, fail });
+      p.stdin!.write(names.join('\n') + '\n');
+    });
+  }
+
+  private start() {
+    const p = spawn('git', ['cat-file', '--batch'], { cwd: this.cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    this.proc = p;
+    this.chunks = [];
+    this.length = 0;
+    this.need = 1;
+    this.err = '';
+    p.stdout!.on('data', (d: Buffer) => this.data(d));
+    p.stderr!.on('data', (d: Buffer) => (this.err += d.toString('utf8')));
+    p.stdin!.on('error', () => {});
+    const die = (e?: Error) => {
+      if (this.proc !== p) return;
+      this.proc = null;
+      clearTimeout(this.idle);
+      const err = new GitError(`git cat-file failed: ${this.err.trim() || e?.message || 'it exited'}`);
+      for (const w of this.waiting.splice(0)) w.fail(err);
+    };
+    p.on('error', die);
+    p.on('close', () => die());
+    return p;
+  }
+
+  private data(d: Buffer) {
+    this.chunks.push(d);
+    this.length += d.length;
+    if (this.length < this.need) return;
+    const buf = this.chunks.length === 1 ? this.chunks[0] : Buffer.concat(this.chunks, this.length);
+    let pos = 0;
+    this.need = 1;
+    while (this.waiting.length) {
+      const w = this.waiting[0];
+      const eol = buf.indexOf(10, pos);
+      if (eol < 0) {
+        this.need = buf.length - pos + 1;
+        break;
+      }
+      const header = buf.toString('latin1', pos, eol);
+      if (header.endsWith(' missing') || header.endsWith(' ambiguous')) pos = eol + 1;
+      else {
+        const [, type, size] = header.split(' ');
+        const end = eol + 1 + Number(size);
+        if (buf.length < end + 1) {
+          this.need = end + 1 - pos;
+          break;
+        }
+        w.res.set(w.names[w.next], { type, data: buf.subarray(eol + 1, end) });
+        pos = end + 1;
+      }
+      if (++w.next === w.names.length) {
+        this.waiting.shift();
+        w.done(w.res);
+      }
+    }
+    const rest = buf.subarray(pos);
+    this.chunks = rest.length ? [rest] : [];
+    this.length = rest.length;
+    if (!this.waiting.length && this.proc) this.rest(this.proc);
+  }
+
+  /** Let node exit while nothing is being read, and end the process after a while. */
+  private rest(p: ChildProcess) {
+    p.unref();
+    for (const s of [p.stdin, p.stdout, p.stderr]) (s as unknown as Handle).unref();
+    clearTimeout(this.idle);
+    this.idle = setTimeout(() => {
+      if (this.proc === p && !this.waiting.length) {
+        this.proc = null;
+        p.stdin!.end();
+      }
+    }, READER_IDLE_MS);
+    this.idle.unref();
   }
 }
 
