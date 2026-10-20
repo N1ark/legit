@@ -10,7 +10,7 @@
   import { app } from '../lib/app.svelte.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
-  import { gh, ghPost, ghRequest } from '../lib/github.svelte.ts';
+  import { gh, ghPost, ghRequest, loadPrview } from '../lib/github.svelte.ts';
   import PrMergeBox from './PrMergeBox.svelte';
   import PrReview from './PrReview.svelte';
   import PrSide from './PrSide.svelte';
@@ -34,7 +34,7 @@
     const g = ++gen;
     loadedAt = Date.now();
     try {
-      const got = await ghRequest<PrOverview>('prview', { number });
+      const got = await loadPrview(number);
       if (g !== gen) return;
       pr = got;
       error = null;

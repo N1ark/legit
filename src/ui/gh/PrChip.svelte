@@ -9,7 +9,7 @@
   import { ArrowSquareOut, Article, GitBranch, GitPullRequest, Stack, Warning } from 'purr/icons';
   import { untrack } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
-  import { gh } from '../lib/github.svelte.ts';
+  import { gh, prefetchPrview } from '../lib/github.svelte.ts';
   import { STATE_LABEL } from '../lib/gh-pr.ts';
   import { openCreatePr, prs, restack, retarget, switchToEntry } from '../lib/gh-prs.svelte.ts';
   import Markdown from '../Markdown.svelte';
@@ -45,7 +45,10 @@
 
   function show() {
     open = !open;
-    if (open) prs.loadStack();
+    if (!open) return;
+    prs.loadStack();
+    // Its overview is likely next.
+    if (pr && !shown) prefetchPrview(pr.number);
   }
 
   async function choose(e: StackEntry) {

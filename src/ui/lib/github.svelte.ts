@@ -4,6 +4,7 @@
 import { toast } from 'purr';
 import { app, request } from './app.svelte.ts';
 import type { GithubStatus, PullRequest } from '../../shared/github.ts';
+import type { PrOverview } from '../../shared/gh-prview.ts';
 
 /**
  * GitHub reads sent at once; the others wait their turn. The page gets six connections to the
@@ -38,6 +39,25 @@ export function ghRequest<T>(name: string, query?: Record<string, string | numbe
 
 /** POST `body` to `/api/gh/<name>`. */
 export const ghPost = <T,>(name: string, body: unknown = {}) => ghRequest<T>(name, undefined, body);
+
+const PREFETCHED = 10_000;
+const prviews = new Map<number, { at: number; value: Promise<PrOverview> }>();
+
+/** Start loading pull request `number`'s overview, about to be opened (its card is shown). */
+export function prefetchPrview(number: number) {
+  const hit = prviews.get(number);
+  if (hit && Date.now() - hit.at < PREFETCHED) return;
+  const value = ghRequest<PrOverview>('prview', { number });
+  value.catch(() => {});
+  prviews.set(number, { at: Date.now(), value });
+}
+
+/** Pull request `number`'s overview: the one prefetched in the last few seconds (taken once), else asked for. */
+export function loadPrview(number: number): Promise<PrOverview> {
+  const hit = prviews.get(number);
+  prviews.delete(number);
+  return hit && Date.now() - hit.at < PREFETCHED ? hit.value : ghRequest<PrOverview>('prview', { number });
+}
 
 /** What the main area shows instead of a commit, when not null. */
 export type GhView = { kind: 'pr'; number: number };
