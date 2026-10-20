@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
@@ -55,6 +55,22 @@ interface Move {
   /** Another branch moved (refs/heads/<name>), not HEAD: commits copied to it. */
   ref?: string;
 }
+
+/** What `state()` reads of the refs: the branch (its SHA and upstream) and every remote-tracking ref. */
+interface RefView {
+  sha: string | null;
+  upstream: string;
+  remote: string;
+  remoteRef: string;
+  /** refname → SHA. */
+  remotes: Map<string, string>;
+  /** Changes whenever a remote-tracking ref does. */
+  fingerprint: string;
+}
+
+/** The remote a branch syncs with, as `remoteFor` (sync.ts) picks it. */
+const remoteOf = (view: RefView, names: string[]) =>
+  view.remote && names.includes(view.remote) ? view.remote : names.includes('origin') ? 'origin' : (names[0] ?? null);
 
 /** What the commit list shows of a commit. `local`: SHAs not on any remote-tracking branch. */
 export function info(c: RawCommit, local: Set<string>, editable: boolean): CommitInfo {
@@ -104,8 +120,7 @@ export class Repo {
   }
 
   async head(): Promise<string | null> {
-    const r = await this.git.run(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true });
-    return r.code === 0 ? r.out.toString('latin1').trim() : null;
+    return (await this.git.headState()).head;
   }
 
   blocked(): string | null {
@@ -119,42 +134,43 @@ export class Repo {
   }
 
   async state(): Promise<RepoState> {
-    const [head, branch, remoteUrls] = await Promise.all([
-      this.head(),
-      this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true }),
-      this.git.text(['config', '--get-regexp', '^remote\\..*\\.url$'], { allowFail: true }),
+    const { branch, head } = await this.git.headState();
+    const stacks = this.stacksFor(branch);
+    const [view, remotes, work, sync, stashed, list] = await Promise.all([
+      this.refView(branch),
+      this.git.remotes(),
+      workCounts(this.git),
+      syncState(this),
+      stashFor(this.git, branch),
+      head ? this.git.firstParent(head, LIMIT) : [],
     ]);
-    const push = head && branch ? await this.pushInfo(branch) : null;
-    const remotes = new Map(
-      remoteUrls.split('\n').flatMap((l) => {
-        const m = /^remote\.(.+)\.url (.+)$/.exec(l);
-        return m ? [[m[1], m[2]] as const] : [];
-      }),
-    );
+    const [push, canUndo, canRedo, base, unpushed, commits] = await Promise.all([
+      head && branch ? this.pushInfo(branch, view, remotes.names) : null,
+      this.applies(stacks.undo.at(-1), 'after', head),
+      this.applies(stacks.redo.at(-1), 'before', head),
+      baseBranch(this.git, branch, head, { remote: remoteOf(view, remotes.names), refs: view.remotes }),
+      head ? this.unpushed(head, LIMIT, view) : [],
+      this.git.loadCommits(list),
+    ]);
     const state: RepoState = {
       root: this.git.root,
       name: basename(this.git.root),
-      branch: branch || null,
+      branch,
       head,
       commits: [],
       blocked: head ? this.blocked() : 'This branch has no commits yet.',
-      canUndo: await this.applies(this.stacksFor(branch || null).undo.at(-1), 'after', head),
-      canRedo: await this.applies(this.stacksFor(branch || null).redo.at(-1), 'before', head),
+      canUndo,
+      canRedo,
       push,
-      github: pickGithubRepo(remotes, push?.remote),
-      work: await workCounts(this.git),
-      ...(await syncState(this)),
-      stashed: await stashFor(this.git, branch || null),
-      base: await baseBranch(this.git, branch || null, head),
+      github: pickGithubRepo(remotes.urls, push?.remote),
+      work,
+      ...sync,
+      stashed,
+      base,
     };
     if (!head) return state;
 
-    const [list, unpushed] = await Promise.all([
-      this.git.text(['rev-list', '--first-parent', `--max-count=${LIMIT}`, head]),
-      this.git.text(['rev-list', '--first-parent', `--max-count=${LIMIT}`, head, '--not', '--remotes']),
-    ]);
-    const local = new Set(unpushed.split('\n'));
-    const commits = await this.git.loadCommits(list.split('\n'));
+    const local = new Set(unpushed);
     let editable = true;
     let past = 0;
     for (const c of commits) {
@@ -165,6 +181,40 @@ export class Repo {
     return state;
   }
 
+  /** The branch's upstream, and every remote-tracking ref, in one `for-each-ref`. */
+  private async refView(branch: string | null): Promise<RefView> {
+    const out = await this.git.text([
+      'for-each-ref',
+      '--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)',
+      ...(branch ? [`refs/heads/${branch}`] : []),
+      'refs/remotes/',
+    ]);
+    const view: RefView = { sha: null, upstream: '', remote: '', remoteRef: '', remotes: new Map(), fingerprint: '' };
+    const hash = createHash('sha1');
+    for (const line of out.split('\n')) {
+      const [ref, sha, upstream, remote, remoteRef] = line.split('\0');
+      if (ref.startsWith('refs/remotes/')) {
+        view.remotes.set(ref, sha);
+        hash.update(`${ref} ${sha}\n`);
+      } else if (ref === `refs/heads/${branch}`) Object.assign(view, { sha, upstream, remote, remoteRef });
+    }
+    view.fingerprint = hash.digest('hex');
+    return view;
+  }
+
+  /**
+   * Of the first `n` commits of `sha`'s first-parent history, those on no remote-tracking branch
+   * (`rev-list --first-parent --max-count=<n> <sha> --not --remotes`), cached while the remotes don't move.
+   */
+  private unpushed(sha: string, n: number, view: RefView): Promise<string[]> {
+    if (!view.remotes.size) return this.git.firstParent(sha, n);
+    return this.git.memo(
+      `unpushed ${sha} ${n} ${view.fingerprint}`,
+      async () => (await this.git.text(['rev-list', '--first-parent', `--max-count=${n}`, sha, '--not', '--remotes'])).split('\n').filter(Boolean),
+      true,
+    );
+  }
+
   /**
    * First-parent history older than `sha` (the oldest commit shown so far), newest first.
    * It's never editable: it's past what `state()` lists.
@@ -173,11 +223,11 @@ export class Repo {
     const parent = (await this.git.commit(sha)).parents[0];
     if (!parent) return { commits: [], more: false };
     const [list, unpushed] = await Promise.all([
-      this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent]),
+      this.git.firstParent(parent, PAGE + 1),
       this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent, '--not', '--remotes']),
     ]);
     const local = new Set(unpushed.split('\n'));
-    const commits = await this.git.loadCommits(list.split('\n'));
+    const commits = await this.git.loadCommits(list);
     return { commits: commits.slice(0, PAGE).map((c) => info(c, local, false)), more: commits.length > PAGE };
   }
 
@@ -202,8 +252,7 @@ export class Repo {
     if (why) throw new GitError(why);
     const head = await this.head();
     if (!head) throw new GitError('This branch has no commits yet.');
-    const list = await this.git.text(['rev-list', '--first-parent', `--max-count=${LIMIT}`, head]);
-    const all = await this.git.loadCommits(list.split('\n'));
+    const all = await this.git.loadCommits(await this.git.firstParent(head, LIMIT));
     const end = all.findIndex((c) => c.parents.length > 1);
     return end < 0 ? all : all.slice(0, end);
   }
@@ -405,7 +454,7 @@ export class Repo {
   }
 
   async backups(): Promise<Backup[]> {
-    const branch = (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
+    const branch = await this.currentBranch();
     const prefix = this.backupPrefix(branch);
     const out = await this.git.text([
       'for-each-ref', '--sort=-refname', '--format=%(refname)%00%(objectname)%00%(subject)', prefix,
@@ -719,7 +768,7 @@ export class Repo {
   private async applies(m: Move | undefined, side: 'before' | 'after', head: string | null): Promise<boolean> {
     if (!m) return false;
     if (!m.ref) return m[side] === head;
-    return (await this.git.text(['rev-parse', '-q', '--verify', m.ref], { allowFail: true })) === m[side];
+    return (await this.git.resolve(m.ref)) === m[side];
   }
 
   /** Move another branch from `from` to `to` (after a backup of `from`), with a compare-and-swap. */
@@ -758,7 +807,7 @@ export class Repo {
   }
 
   async currentBranch(): Promise<string | null> {
-    return (await this.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
+    return (await this.git.headState()).branch;
   }
 
   private stacksFor(branch: string | null) {
@@ -964,31 +1013,27 @@ export class Repo {
   }
 
   /** Upstream of `branch` and how far apart they are, or where publishing it would go. */
-  private async pushInfo(branch: string): Promise<PushInfo | null> {
-    const [info, remotes] = await Promise.all([
-      this.git.text([
-        'for-each-ref',
-        '--format=%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track,nobracket)',
-        `refs/heads/${branch}`,
-      ]),
-      this.git.text(['remote']),
-    ]);
-    const [upstream, remote, remoteRef, track] = info.split('\0');
-    if (upstream && remote && remoteRef && track !== 'gone') {
-      const n = (k: string) => Number(new RegExp(`${k} (\\d+)`).exec(track)?.[1] ?? 0);
-      const [ahead, behind] = [n('ahead'), n('behind')];
-      const [rewritten, tip] = await Promise.all([
-        ahead > 0 && behind > 0 && this.hadTip(branch, upstream),
-        this.git.text(['rev-parse', '-q', '--verify', `${upstream}^{commit}`], { allowFail: true }),
-      ]);
-      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip: tip || null };
+  private async pushInfo(branch: string, view?: RefView, remoteNames?: string[]): Promise<PushInfo | null> {
+    view ??= await this.refView(branch);
+    const names = remoteNames ?? (await this.git.remotes()).names;
+    const { sha, upstream, remote, remoteRef } = view;
+    const tip = !upstream ? null : upstream.startsWith('refs/remotes/') ? (view.remotes.get(upstream) ?? null) : await this.git.resolve(upstream);
+    if (sha && upstream && remote && remoteRef && tip) {
+      const [ahead, behind] = await this.git.memo(`ahead-behind ${sha} ${tip}`, async () =>
+        (await this.git.text(['rev-list', '--left-right', '--count', `${sha}...${tip}`])).split(/\s+/).map(Number),
+      );
+      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, upstream));
+      return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip };
     }
-    const names = remotes.split('\n').filter(Boolean);
     // An upstream that isn't on the remote (yet, or any more) is where publishing goes.
     const set = !!remote && names.includes(remote) && remoteRef.startsWith('refs/heads/');
     const target = set ? remote : names.includes('origin') ? 'origin' : names[0];
     if (!target) return null;
-    const count = await this.git.text(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
+    const count = sha
+      ? await this.git.memo(`local-count ${sha} ${view.fingerprint}`, () =>
+          this.git.text(['rev-list', '--count', sha, '--not', '--remotes'], { allowFail: true }),
+        )
+      : '';
     const name = set ? remoteRef.slice('refs/heads/'.length) : branch;
     return { remote: target, branch: name, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
   }
@@ -1077,20 +1122,17 @@ export class Repo {
 
   /** Local branches, most recently committed first. */
   async branches(): Promise<BranchInfo[]> {
-    const [out, current] = await Promise.all([
-      this.git.text([
-        'for-each-ref', '--sort=-committerdate',
-        '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)',
-        'refs/heads',
-      ]),
-      this.currentBranch(),
+    const out = await this.git.text([
+      'for-each-ref', '--sort=-committerdate',
+      '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(HEAD)',
+      'refs/heads',
     ]);
     return out
       .split('\n')
       .filter(Boolean)
       .map((line) => {
-        const [name, sha, subject, time, upstream, track, worktree, remote, remoteRef] = line.split('\0');
-        const here = name === current;
+        const [name, sha, subject, time, upstream, track, worktree, remote, remoteRef, head] = line.split('\0');
+        const here = head === '*';
         const tracking = remote && remote !== '.' && remoteRef.startsWith('refs/heads/') ? { remote, branch: remoteRef.slice('refs/heads/'.length) } : null;
         return {
           name, sha, subject, time: Number(time), upstream: upstream || null, tracking, track: track || null, current: here,

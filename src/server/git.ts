@@ -5,8 +5,8 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
@@ -124,6 +124,13 @@ function serializeCommit(c: Omit<RawCommit, 'sha'>): Buffer {
   return Buffer.from(s + '\n' + c.message, 'latin1');
 }
 
+const HEX = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** Refs kept in the common dir (shared by worktrees), which `readRef` reads from their files. */
+const SHARED_REF = /^refs\/(?:heads|remotes|tags)\/|^refs\/stash$/;
+/** A ref name `readRef` can look up as a file: one of those, and nothing git would read as more than a name. */
+const fileRef = (ref: string) =>
+  SHARED_REF.test(ref) && !/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{|\.lock$|\/$|\/\.|\/\//.test(ref);
+
 export class Git {
   readonly root: string;
   readonly gitDir: string;
@@ -134,6 +141,11 @@ export class Git {
   private commits = new Map<string, RawCommit>();
   private written = new Set<string>();
   private pending: Promise<void>[] = [];
+  /** Refs live in a reftable rather than files: always ask git. */
+  private reftable: boolean;
+  private packed: { key: string; refs: Map<string, string> } | null = null;
+  private memos = new Map<string, Promise<unknown>>();
+  private lists = new Map<string, Promise<unknown>>();
   private reader: ObjectReader;
 
   private constructor(root: string, gitDir: string, commonDir: string, objectsDir: string, hashAlgo: string) {
@@ -146,6 +158,7 @@ export class Git {
       hashAlgo === 'sha256'
         ? '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321'
         : '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    this.reftable = existsSync(join(commonDir, 'reftable'));
     this.reader = new ObjectReader(root);
   }
 
@@ -178,6 +191,144 @@ export class Git {
   /** Read many objects at once (through one long-lived `cat-file --batch`). Missing objects are absent from the result. */
   readObjects(names: string[]): Promise<Map<string, { type: string; data: Buffer }>> {
     return this.reader.read(names.filter((n) => n && !n.includes('\n')));
+  }
+
+  /**
+   * `fn()`'s result, kept under `key`, which must only name things that never change (object SHAs),
+   * so it can never go stale. A failure isn't kept. `list`: the result is a long list, of which fewer are kept.
+   */
+  async memo<T>(key: string, fn: () => Promise<T>, list = false): Promise<T> {
+    const memos = list ? this.lists : this.memos;
+    // Deepening a shallow clone (or grafts) changes what history a commit has.
+    const stamps = await Promise.all(['shallow', 'info/grafts'].map((f) => stat(join(this.commonDir, f)).then((st) => ` ${st.size}:${st.mtimeMs}`, () => '')));
+    key += stamps.join('');
+    let p = memos.get(key) as Promise<T> | undefined;
+    if (p) memos.delete(key);
+    else {
+      p = fn();
+      p.catch(() => memos.get(key) === p && memos.delete(key));
+      if (memos.size >= (list ? 20 : 1000)) memos.delete(memos.keys().next().value!);
+    }
+    memos.set(key, p);
+    return p;
+  }
+
+  /** `rev-list --first-parent --max-count=<n> <sha>`, newest first. */
+  firstParent(sha: string, n: number): Promise<string[]> {
+    const list = async () => (await this.text(['rev-list', '--first-parent', `--max-count=${n}`, sha])).split('\n').filter(Boolean);
+    return HEX.test(sha) ? this.memo(`first-parent ${sha} ${n}`, list, true) : list();
+  }
+
+  /** packed-refs (refname → SHA), read again only when the file changes. */
+  private async packedRefs(): Promise<Map<string, string>> {
+    const file = join(this.commonDir, 'packed-refs');
+    const st = await stat(file).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    });
+    if (!st) return new Map();
+    const key = `${st.ino} ${st.size} ${st.mtimeMs} ${st.ctimeMs}`;
+    if (this.packed?.key !== key) {
+      const refs = new Map<string, string>();
+      for (const line of (await readFile(file, 'latin1')).split('\n')) {
+        if (!line || line[0] === '#' || line[0] === '^') continue;
+        const sp = line.indexOf(' ');
+        refs.set(line.slice(sp + 1).trimEnd(), line.slice(0, sp));
+      }
+      this.packed = { key, refs };
+    }
+    return this.packed.refs;
+  }
+
+  /**
+   * A branch's, remote-tracking branch's, tag's or the stash's SHA, read from its file or
+   * packed-refs as git does (no process); null when it doesn't exist, undefined when it can't be
+   * read that way (another ref store, a symref out of these, an unexpected format).
+   */
+  async readRef(ref: string, depth = 0): Promise<string | null | undefined> {
+    if (this.reftable || depth > 5 || !fileRef(ref)) return undefined;
+    try {
+      const text = (await readFile(join(this.commonDir, ref), 'latin1')).trim();
+      if (HEX.test(text)) return text;
+      if (text.startsWith('ref: ')) return this.readRef(text.slice(5), depth + 1);
+      return undefined;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'EISDIR') return undefined;
+    }
+    try {
+      return (await this.packedRefs()).get(ref) ?? null;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Where a symbolic ref such as `refs/remotes/origin/HEAD` points (null if it isn't one); undefined when only git can say. */
+  async readSymref(ref: string): Promise<string | null | undefined> {
+    if (this.reftable || !fileRef(ref)) return undefined;
+    try {
+      const text = (await readFile(join(this.commonDir, ref), 'latin1')).trim();
+      return text.startsWith('ref: ') ? text.slice(5) : HEX.test(text) ? null : undefined;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR' ? null : undefined;
+    }
+  }
+
+  /** `git remote` (sorted, as it lists them) and each remote's URL, from one read of the config. */
+  async remotes(): Promise<{ names: string[]; urls: Map<string, string> }> {
+    const legacy = ['remotes', 'branches'].some((d) => {
+      try {
+        return readdirSync(join(this.commonDir, d)).length > 0;
+      } catch {
+        return false;
+      }
+    });
+    const [config, listed] = await Promise.all([
+      this.run(['config', '-z', '--get-regexp', '^remote\\.'], { allowFail: true }),
+      // Remotes can also be files in the git dir, which only `git remote` knows how to read.
+      legacy ? this.text(['remote'], { allowFail: true }) : null,
+    ]);
+    const names = new Set<string>();
+    const urls = new Map<string, string>();
+    for (const entry of config.out.toString('utf8').split('\0')) {
+      const nl = entry.indexOf('\n');
+      const key = nl < 0 ? entry : entry.slice(0, nl);
+      const dot = key.lastIndexOf('.');
+      if (!key.startsWith('remote.') || dot <= 'remote.'.length) continue;
+      const name = key.slice('remote.'.length, dot);
+      names.add(name);
+      if (key.slice(dot + 1) === 'url' && nl >= 0) urls.set(name, entry.slice(nl + 1));
+    }
+    for (const n of listed?.split('\n') ?? []) if (n) names.add(n);
+    return { names: [...names].sort(), urls };
+  }
+
+  /** `rev-parse -q --verify <ref>`, read from the ref's file where that's safe. */
+  async resolve(ref: string): Promise<string | null> {
+    const known = await this.readRef(ref);
+    if (known !== undefined) return known;
+    return (await this.text(['rev-parse', '-q', '--verify', ref], { allowFail: true })) || null;
+  }
+
+  /**
+   * The branch HEAD is on (null when detached) and its commit (null when it has none yet), as
+   * `symbolic-ref --short HEAD` and `rev-parse HEAD^{commit}` say; read from files where that's safe.
+   */
+  async headState(): Promise<{ branch: string | null; head: string | null }> {
+    const text = this.reftable ? '' : await readFile(join(this.gitDir, 'HEAD'), 'latin1').catch(() => '');
+    const m = /^ref: (refs\/heads\/(.+))\n?$/.exec(text);
+    if (m && !m[2].startsWith('.')) {
+      const head = await this.readRef(m[1]);
+      if (head !== undefined) return { branch: m[2], head };
+    } else if (HEX.test(text.trim())) {
+      return { branch: null, head: text.trim() };
+    }
+    const [head, branch] = await Promise.all([
+      this.run(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true }),
+      this.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true }),
+    ]);
+    return { branch: branch || null, head: head.code === 0 ? head.out.toString('latin1').trim() : null };
   }
 
   /** Load commits (cached: commits are immutable). */

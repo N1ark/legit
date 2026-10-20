@@ -30,7 +30,11 @@ async function list(git: Git): Promise<{ sha: string; message: string; time: num
 }
 
 /** Paths a stash touches (byte strings): tracked changes from its base, and its untracked files. */
-async function stashPaths(git: Git, sha: string): Promise<{ tracked: string[]; untracked: string[] }> {
+function stashPaths(git: Git, sha: string): Promise<{ tracked: string[]; untracked: string[] }> {
+  return git.memo(`stash-paths ${sha}`, () => readStashPaths(git, sha));
+}
+
+async function readStashPaths(git: Git, sha: string): Promise<{ tracked: string[]; untracked: string[] }> {
   const c = await git.commit(sha);
   if (c.parents.length < 2) throw new GitError(`${sha.slice(0, 7)} is not a stash.`);
   const names = async (args: string[]) =>
@@ -51,7 +55,7 @@ async function entry(git: Git, s: { sha: string; message: string; time: number }
 
 /** The newest stash legit made when leaving `branch`, if any. */
 export async function stashFor(git: Git, branch: string | null): Promise<StashEntry | null> {
-  if (!branch) return null;
+  if (!branch || (await git.readRef('refs/stash')) === null) return null;
   const s = (await list(git)).find((x) => OURS.exec(x.message)?.[1] === branch);
   return s ? entry(git, s) : null;
 }
