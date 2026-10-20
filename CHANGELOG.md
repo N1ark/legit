@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Switching repos is quicker, and going back to one of the last few is quicker still.
+- Notifications show whether each pull request or issue is open, a draft, merged or closed.
 
 ## 0.6.0 — 2026-10-19
 

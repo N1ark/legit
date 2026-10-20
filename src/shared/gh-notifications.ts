@@ -1,5 +1,7 @@
 // GitHub notifications, as the notifications panel shows them (server/gh/notifications.ts).
 
+import type { RefState } from './gh-issues.ts';
+
 export type GhNotificationType = 'PullRequest' | 'Issue' | 'CheckSuite' | 'Release' | 'Discussion' | 'Commit' | 'Other';
 
 export interface GhNotification {
@@ -16,6 +18,10 @@ export interface GhNotification {
   type: GhNotificationType;
   /** The pull request's or issue's number. */
   number: number | null;
+  /** The pull request's or issue's state, when it could be looked up. */
+  state: RefState | null;
+  /** A closed issue that won't be done. */
+  notPlanned: boolean;
   /** Where it is on github.com, at the latest comment when there is one. */
   url: string;
 }

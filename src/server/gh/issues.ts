@@ -71,13 +71,14 @@ export function refsQuery(refs: string[]): { query: string; variables: Record<st
 const refCache = new Map<string, { at: number; value: IssueRef | null }>();
 const REF_TTL = 120_000;
 
-/** What each of `refs` (`owner/repo#123`) is, null when it's nothing (or out of reach); cached a couple of minutes. */
-export async function resolveRefs(refs: string[]): Promise<Record<string, IssueRef | null>> {
+/** What each of `refs` (`owner/repo#123`) is, null when it's nothing (or out of reach); cached a couple of
+ *  minutes, or until `changedAt[ref]` (ms) says it changed since. */
+export async function resolveRefs(refs: string[], changedAt: Record<string, number> = {}): Promise<Record<string, IssueRef | null>> {
   const out: Record<string, IssueRef | null> = {};
   const missing: string[] = [];
   for (const ref of new Set(refs.map((r) => r.toLowerCase()).filter((r) => REF.test(r)))) {
     const hit = refCache.get(ref);
-    if (hit && Date.now() - hit.at < REF_TTL) out[ref] = hit.value;
+    if (hit && Date.now() - hit.at < REF_TTL && hit.at >= (changedAt[ref] ?? 0)) out[ref] = hit.value;
     else missing.push(ref);
   }
   const chunks = Array.from({ length: Math.ceil(missing.length / BATCH) }, (_, i) => missing.slice(i * BATCH, (i + 1) * BATCH));

@@ -11,6 +11,8 @@
   import { app } from '../lib/app.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
   import { notifications } from '../lib/gh-notifications.svelte.ts';
+  import { refStateWords } from '../lib/gh-links.ts';
+  import RefIcon from './RefIcon.svelte';
 
   let open = $state(false);
   let button = $state<HTMLButtonElement | null>(null);
@@ -49,6 +51,9 @@
     Commit: 'Commit',
     Other: 'Notification',
   };
+
+  /** A pull request's or issue's state, when it's known, to show as GitHub does. */
+  const refOf = (n: GhNotification) => (n.state ? { state: n.state, isPullRequest: n.type === 'PullRequest', notPlanned: n.notPlanned } : null);
 
   function toggle(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
     button = e.currentTarget;
@@ -112,8 +117,13 @@
       <ol>
         {#each items as n (n.id)}
           {@const Icon = ICONS[n.type]}
+          {@const ref = refOf(n)}
           <li class:unread={n.unread}>
-            <span class="icon" use:tooltip={kind[n.type]}><Icon /></span>
+            {#if ref}
+              <span class="icon" use:tooltip={refStateWords(ref)}><RefIcon {ref} /></span>
+            {:else}
+              <span class="icon" use:tooltip={kind[n.type]}><Icon /></span>
+            {/if}
             <button
               class="main"
               use:tooltip={notifications.here(n) ? 'Open in legit' : 'Open on GitHub'}

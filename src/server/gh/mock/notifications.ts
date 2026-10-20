@@ -20,6 +20,8 @@ db.notifications = [
   thread(904, 'acme/widgets', 'ci_activity', 'CheckSuite', 'CI workflow run failed for feature/parser-errors branch', null, null, 70),
   thread(905, 'acme/widgets', 'author', 'PullRequest', 'Add a parser for widget specs', 'pulls/12', 'issues/comments/7790', 140, false),
   thread(906, 'acme/gadgets', 'assign', 'Issue', 'Crash when the config file is empty', 'issues/41', null, 300),
+  thread(909, 'acme/widgets', 'state_change', 'PullRequest', 'Fix a typo in the README', 'pulls/9', null, 600, false),
+  thread(910, 'acme/widgets', 'comment', 'Issue', 'Build fails on Windows paths', 'issues/3', 'issues/comments/7702', 900, false),
   thread(907, 'acme/gadgets', 'subscribed', 'Release', 'v2.3.0', 'releases/123', null, 1500, false),
   thread(908, 'octocat/dotfiles', 'team_mention', 'Discussion', 'Sharing a zsh prompt across machines', null, null, 2900, false),
 ];

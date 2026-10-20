@@ -2,6 +2,8 @@
 // If-Modified-Since, so a poll that finds nothing new costs no rate limit.
 
 import { GithubError, rest, restSince } from './client.ts';
+import { resolveRefs } from './issues.ts';
+import { log } from '../log.ts';
 import type { GhNotification, GhNotificationType, GhNotifications } from '../../shared/gh-notifications.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
 
@@ -59,8 +61,28 @@ export function toNotification(n: any): GhNotification {
     title: n.subject.title,
     type,
     number: number ? Number(number[1]) : null,
+    state: null,
+    notPlanned: false,
     url: notificationUrl(repo, n.subject.url, n.subject.latest_comment_url, n.subject.type),
   };
+}
+
+const refOf = (n: GhNotification) => `${n.repo}#${n.number}`.toLowerCase();
+
+/** Each pull request's and issue's state (open, merged…), looked up in one query, and again once its thread moves. */
+async function withStates(items: GhNotification[]): Promise<GhNotification[]> {
+  const subjects = items.filter((n) => n.number !== null && (n.type === 'PullRequest' || n.type === 'Issue'));
+  if (!subjects.length) return items;
+  try {
+    const refs = await resolveRefs(subjects.map(refOf), Object.fromEntries(subjects.map((n) => [refOf(n), n.updatedAt])));
+    return items.map((n) => {
+      const ref = n.number === null ? null : refs[refOf(n)];
+      return ref ? { ...n, state: ref.state, notPlanned: ref.notPlanned } : n;
+    });
+  } catch (e) {
+    log('Notifications: no states,', e instanceof Error ? e.message : e);
+    return items;
+  }
 }
 
 /** The last page fetched, kept for 304s, and patched by our own writes (GitHub's Last-Modified may not move for them). */
@@ -77,7 +99,7 @@ async function list(fresh: boolean): Promise<GhNotifications> {
     }
     throw e;
   }
-  return last!.result;
+  return { ...last!.result, items: await withStates(last!.result.items) };
 }
 
 function patch(ids: (id: string) => boolean, change: 'read' | 'done') {
