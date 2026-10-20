@@ -90,7 +90,7 @@
       app.refresh();
       gh.refreshIfOlder(30_000);
     };
-    const poll = setInterval(() => gh.refreshIfOlder(60_000), 60_000);
+    const poll = setInterval(() => document.hidden || gh.refreshIfOlder(60_000), 60_000);
     const leave = () => remember(app.snapshot());
     window.addEventListener('focus', focus);
     window.addEventListener('pagehide', leave);
