@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, sep } from 'node:path';
 import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
 import { imageType } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
@@ -21,7 +21,7 @@ import { displaySettings, globalSettingsFile, effectiveSettings, readSettings, r
 import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
-import { GitError } from './git.ts';
+import { type Git, GitError } from './git.ts';
 import { log, logText } from './log.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
@@ -83,6 +83,20 @@ const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
 /** Images bigger than this aren't shown. */
 const MAX_IMAGE = 50 * 1024 * 1024;
 
+/** Most changed paths checked for being ignored at once; past that, a change is just assumed to count. */
+const MAX_CHECKED = 2000;
+
+/** Every path (relative to the root) is ignored by git, and isn't tracked. Asks a fresh git, so it knows the current rules. */
+async function allIgnored(git: Git, paths: string[]): Promise<boolean> {
+  if (!paths.length) return true;
+  const r = await git
+    .run(['check-ignore', '-z', '--stdin'], { input: paths.join('\0') + '\0', env: { GIT_OPTIONAL_LOCKS: '0' }, allowFail: true })
+    .catch(() => null);
+  if (r?.code !== 0) return false;
+  const ignored = new Set(r.out.toString('utf8').split('\0'));
+  return paths.every((p) => ignored.has(p));
+}
+
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   const clients = new Set<ServerResponse>();
   const summaries = new Map<string, string>();
@@ -96,12 +110,20 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       for (const c of clients) c.write('data: change\n\n');
     }, 60);
   };
-  // Throttled rather than debounced, so a file that keeps changing still shows up.
+  // Throttled rather than debounced, so a file that keeps changing still shows up. Changes only
+  // to ignored files (build output, node_modules) can't change what's uncommitted, so they don't count.
   let workTimer: NodeJS.Timeout | undefined;
-  const notifyWork = () => {
-    workTimer ??= setTimeout(() => {
+  let changed = new Set<string>();
+  let anyChange = false;
+  const notifyWork = (path?: string) => {
+    if (path === undefined || changed.size >= MAX_CHECKED) anyChange = true;
+    else changed.add(path);
+    workTimer ??= setTimeout(async () => {
       workTimer = undefined;
-      for (const c of clients) c.write('data: work\n\n');
+      const [paths, any] = [[...changed], anyChange];
+      [changed, anyChange] = [new Set(), false];
+      if (!clients.size) return;
+      if (any || !(await allIgnored(repo.git, paths))) for (const c of clients) c.write('data: work\n\n');
     }, 250);
   };
   // Fetches and pushes say how far they've got, as a `progress` event.
@@ -116,13 +138,14 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const name = f?.toString() ?? '';
       if (name.endsWith('.lock')) return;
       if (relevant.test(name)) notify();
-      else if (name === 'index') notifyWork();
+      else if (name === 'index') notifyWork(undefined);
     }),
   );
   watchers.push(
     watch(repo.git.root, { recursive: true }, (_, f) => {
-      const name = f?.toString() ?? '';
-      if (name !== '.git' && !name.startsWith('.git/') && !name.startsWith('.git\\')) notifyWork();
+      const name = f?.toString();
+      if (name === '.git' || name?.startsWith('.git/') || name?.startsWith('.git\\')) return;
+      notifyWork(name && sep === '/' ? name : undefined);
     }),
   );
 
