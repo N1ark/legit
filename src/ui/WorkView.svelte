@@ -24,6 +24,8 @@
 
   let loading = false;
   let again = false;
+  /** The response `work` was made from. */
+  let shown: string | null = null;
   /** Show what's staged again even if the snapshot is the same (a pick failed). */
   let resync = false;
   async function load() {
@@ -35,13 +37,17 @@
     loading = true;
     try {
       const res = await fetch('/api/work');
-      const w: WorkState | { error: string } = await res.json();
-      if ('error' in w) error = w.error;
-      else if (!pending) {
+      const text = await res.text();
+      const w: WorkState | { error: string } = JSON.parse(text);
+      if ('error' in w) {
+        error = w.error;
+        shown = null;
+      } else if (!pending) {
         error = null;
         if (resync || w.changes.sha !== work?.changes.sha) staged = stagedSel(w.changes);
         resync = false;
-        work = w;
+        // The same answer again (most refreshes change nothing here) has nothing to redraw.
+        if (text !== shown) [work, shown] = [w, text];
       } else again = true;
     } finally {
       loading = false;
