@@ -8,7 +8,7 @@
   // in another worktree switches to that worktree.
   // In upstream mode, it lists the remote branches a local one can track, and names not on a remote yet.
   import {
-    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, formatRelative, isMac, menu, rank, toast, tooltip, type MaybeEntry,
+    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, VirtualList, formatRelative, isMac, menu, rank, toast, tooltip, type MaybeEntry,
   } from 'purr';
   import {
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
@@ -120,6 +120,29 @@
   const HEADINGS: Partial<Record<Row['kind'], string>> = {
     remote: 'Remote branches', deleted: 'Recently deleted', publish: 'Not on the remote yet',
   };
+
+  /** The rows with their section headings, as the virtual list lays them out; `at[k]` is row k's place. */
+  const laid = $derived.by(() => {
+    const items: ({ key: string; heading: string } | { key: string; heading?: undefined; r: Row; k: number })[] = [];
+    const at: number[] = [];
+    rows.forEach((r, k) => {
+      if (HEADINGS[r.kind] && rows[k - 1]?.kind !== r.kind && !(promoted && k === 0)) items.push({ key: `heading:${r.kind}`, heading: HEADINGS[r.kind]! });
+      at.push(items.length);
+      items.push({ key: key(r), r, k });
+    });
+    return { items, at };
+  });
+  const items = $derived(laid.items);
+  let rowsEl = $state<HTMLElement>();
+  let vlist = $state<{ scrollToIndex: (index: number) => void }>();
+  /** Row and heading heights, which follow the theme's tokens: measured off-screen when the list shows. */
+  let probe = $state<HTMLElement>();
+  let sizes = $state({ row: 24, heading: 29 });
+  $effect(() => {
+    // The layout height, not the box on screen: the popover may still be scaling in.
+    const [heading, row] = probe ? [...probe.children].map((e) => parseFloat(getComputedStyle(e).height)) : [];
+    if (heading && row) sizes = { row, heading };
+  });
 
   /** The current branch, or in upstream mode the branch's current upstream. */
   function current(r: Row): boolean {
@@ -451,7 +474,7 @@
       e.preventDefault();
       const n = rows.length;
       if (n) active = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-      listEl?.querySelector(`[data-row="${active}"]`)?.scrollIntoView({ block: 'nearest' });
+      vlist?.scrollToIndex(laid.at[active] ?? -1);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       choose(rows[active]);
@@ -575,69 +598,78 @@
       {:else if !rows.length}
         <p class="muted">No match</p>
       {:else}
-        <ol bind:this={listEl} role="listbox" aria-label="Branches" aria-multiselectable={mode === 'switch'}>
-          {#each rows as r, k (key(r))}
-            {#if HEADINGS[r.kind] && rows[k - 1]?.kind !== r.kind && !(promoted && k === 0)}
-              <li class="heading muted" role="presentation">{HEADINGS[r.kind]}</li>
-            {/if}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <li
-              class="row-item"
-              class:is-cursor={k === active}
-              class:is-current={isChosen(r)}
-              class:current={current(r)}
-              role="option"
-              aria-selected={chosen.size ? isChosen(r) : k === active}
-              data-row={k}
-              onclick={(e) => onrowclick(e, r)}
-              onmousedown={(e) => e.shiftKey && e.preventDefault()}
-              oncontextmenu={(e) => oncontextmenu(e, r, k)}
-              onmousemove={() => (active = k)}
-            >
-              {#if r.kind === 'create'}
-                <span class="check"><Plus weight="bold" /></span>
-                <span class="name">Create branch <b class="mono">{r.name}</b></span>
-                <span class="subject muted">from {app.repo?.branch ?? 'HEAD'}</span>
-              {:else if r.kind === 'publish'}
-                <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowUp />{/if}</span>
-                <span class="name mono">{r.remote}/{r.name}</span>
-                <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; push publishes it</span>
-              {:else if r.kind === 'local'}
-                {@const b = r.b}
-                <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
-                <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
-                {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
-                {#if b.worktree}
-                  <span class="worktree muted" use:tooltip={`Checked out in ${b.worktree}; picking it switches there`}>
-                    <FolderSimple />{folder(b.worktree)}
-                  </span>
+        <!-- Only the rows in view are mounted: a repo can have hundreds of branches. -->
+        <div class="rows" bind:this={rowsEl} role="listbox" aria-label="Branches" aria-multiselectable={mode === 'switch'}>
+          <div class="probe" aria-hidden="true" bind:this={probe}><div><div class="heading">x</div></div><div><div class="row-item opt">x</div></div></div>
+          {#if rowsEl}
+            <VirtualList bind:this={vlist} {items} rowHeight={(it) => (it.heading !== undefined ? sizes.heading : sizes.row)} key={(it) => it.key} scroller={rowsEl}>
+              {#snippet children(it)}
+                {#if it.heading !== undefined}
+                  <div class="heading muted" role="presentation">{it.heading}</div>
+                {:else}
+                  {@const r = it.r}
+                  {@const k = it.k}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
+                  <div
+                    class="row-item opt"
+                    class:is-cursor={k === active}
+                    class:is-current={isChosen(r)}
+                    class:current={current(r)}
+                    role="option"
+                    aria-selected={chosen.size ? isChosen(r) : k === active}
+                    data-row={k}
+                    onclick={(e) => onrowclick(e, r)}
+                    onmousedown={(e) => e.shiftKey && e.preventDefault()}
+                    oncontextmenu={(e) => oncontextmenu(e, r, k)}
+                    onmousemove={() => (active = k)}
+                  >
+                    {#if r.kind === 'create'}
+                      <span class="check"><Plus weight="bold" /></span>
+                      <span class="name">Create branch <b class="mono">{r.name}</b></span>
+                      <span class="subject muted">from {app.repo?.branch ?? 'HEAD'}</span>
+                    {:else if r.kind === 'publish'}
+                      <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowUp />{/if}</span>
+                      <span class="name mono">{r.remote}/{r.name}</span>
+                      <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; push publishes it</span>
+                    {:else if r.kind === 'local'}
+                      {@const b = r.b}
+                      <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
+                      <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
+                      <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                      {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
+                      {#if b.worktree}
+                        <span class="worktree muted" use:tooltip={`Checked out in ${b.worktree}; picking it switches there`}>
+                          <FolderSimple />{folder(b.worktree)}
+                        </span>
+                      {/if}
+                      {#if promoted && k === 0}<span class="default">default branch</span>{/if}
+                      {#if b.track === 'gone'}
+                        <span class="track" use:tooltip={`${b.upstream} isn't on the remote; the next push publishes it`}>not on remote</span>
+                      {:else if b.track}<span class="track">{b.track}</span>{/if}
+                      <span class="when muted">{formatRelative(b.time * 1000)}</span>
+                      {@render browseButton(r)}
+                    {:else if r.kind === 'remote'}
+                      {@const b = r.b}
+                      <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
+                      <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
+                      <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
+                      {#if prs.byRemote[`${b.remote}/${b.name}`]}<PrBadge pr={prs.byRemote[`${b.remote}/${b.name}`]} />{/if}
+                      {#if promoted && k === 0}<span class="default">default branch</span>{/if}
+                      <span class="when muted">{formatRelative(b.time * 1000)}</span>
+                      {@render browseButton(r)}
+                    {:else}
+                      {@const b = r.b}
+                      <span class="check"><ArrowCounterClockwise /></span>
+                      <span class="name mono gone"><Highlight text={b.name} indices={r.indices} /></span>
+                      <span class="subject muted" use:tooltip={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
+                      <span class="when muted">{formatRelative(b.time)}</span>
+                    {/if}
+                  </div>
                 {/if}
-                {#if promoted && k === 0}<span class="default">default branch</span>{/if}
-                {#if b.track === 'gone'}
-                  <span class="track" use:tooltip={`${b.upstream} isn't on the remote; the next push publishes it`}>not on remote</span>
-                {:else if b.track}<span class="track">{b.track}</span>{/if}
-                <span class="when muted">{formatRelative(b.time * 1000)}</span>
-                {@render browseButton(r)}
-              {:else if r.kind === 'remote'}
-                {@const b = r.b}
-                <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
-                <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
-                <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
-                {#if prs.byRemote[`${b.remote}/${b.name}`]}<PrBadge pr={prs.byRemote[`${b.remote}/${b.name}`]} />{/if}
-                {#if promoted && k === 0}<span class="default">default branch</span>{/if}
-                <span class="when muted">{formatRelative(b.time * 1000)}</span>
-                {@render browseButton(r)}
-              {:else}
-                {@const b = r.b}
-                <span class="check"><ArrowCounterClockwise /></span>
-                <span class="name mono gone"><Highlight text={b.name} indices={r.indices} /></span>
-                <span class="subject muted" use:tooltip={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
-                <span class="when muted">{formatRelative(b.time)}</span>
-              {/if}
-            </li>
-          {/each}
-        </ol>
+              {/snippet}
+            </VirtualList>
+          {/if}
+        </div>
       {/if}
       {#if mode === 'switch' && chosen.size > 1}
         <div class="pick bulk">
@@ -754,7 +786,8 @@
     margin: var(--gap-2) var(--gap-3);
   }
 
-  ol {
+  ol,
+  .rows {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -762,12 +795,32 @@
     overflow: auto;
   }
 
-  li {
+  .rows {
+    position: relative;
+  }
+
+  /* Out of the way, and adding nothing to what scrolls. */
+  .probe {
+    position: absolute;
+    width: 100%;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+  }
+
+  li,
+  .opt {
     cursor: pointer;
     font-size: var(--fs-base);
   }
 
-  li.heading {
+  .heading {
+    flex: 1;
+    min-width: 0;
+  }
+
+  li.heading,
+  .heading {
     cursor: default;
     font-size: var(--fs-xs);
     padding: var(--sp-4) var(--gap-3) var(--gap-2);
@@ -795,7 +848,7 @@
     text-decoration: line-through;
   }
 
-  li.current .name {
+  .opt.current .name {
     color: var(--theme2);
   }
 
