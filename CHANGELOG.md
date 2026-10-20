@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Switching repos is quicker, and going back to one of the last few is quicker still.
+
 ## 0.6.0 — 2026-10-19
 
 - **Help ▸ Logs** (or Settings ▸ Logs) shows what went wrong lately — failed requests, and GitHub calls that failed or were slow — to copy into a bug report.

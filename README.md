@@ -218,8 +218,11 @@ npm run check      # svelte-check + tsc
 - `src-tauri/` is the desktop shell (Tauri 2). Its one window is backed by a `legit-server` sidecar for the repo it
   shows: the same engine, built by `scripts/build-sidecar.mjs` into a standalone binary with Node's single-executable
   support, which is why the app is ~145 MB (almost all of it Node). The window loads the UI from that server.
-  Switching repo starts a server for the new one, loads the page from it (so nothing of the old repo's state carries
-  over, besides what the page asked the app to keep for coming back), and stops the old server. A server exits only
+  Switching repo loads the page from a server for the new one (so nothing of the old repo's state carries over, besides
+  what the page asked the app to keep for coming back): the one kept from showing it before, or else a spare, started
+  ahead of need and told the repo on its stdin (another spare starts a few seconds later). The old server keeps running,
+  up to three of them, the least recently shown stopped first, so going back to a repo starts nothing and finds the
+  server's caches, and the page's (same origin), warm. A server exits only
   after any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list
   is `recent-repos` in the app's config dir. The page can call only eight app commands (`capabilities/default.json`):
   list the recent repos, open one *from that list*, open another of the shown repo's worktrees (as `git worktree list`

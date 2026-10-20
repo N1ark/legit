@@ -1,9 +1,10 @@
 // Native shell for legit: one window, backed by a `legit-server` sidecar (the Node engine
 // compiled into a standalone binary) for the repository it shows. Opening another repository
-// starts a server for it, points the window at it, and stops the old one.
+// points the window at a server for it: one kept from showing it before, or a spare started
+// ahead of need. The old one is kept running for a while, so going back to it is quick.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,8 +19,15 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 struct Server {
     repo: PathBuf,
     child: Child,
+    /// Where it serves the UI, "http://127.0.0.1:<port>/".
+    url: Url,
+}
+
+impl Server {
     /// The page's origin, "http://127.0.0.1:<port>".
-    origin: String,
+    fn origin(&self) -> String {
+        self.url.origin().ascii_serialization()
+    }
 }
 
 /// The server of the window's repository.
@@ -31,6 +39,22 @@ impl Current {
         self.0.lock().unwrap().as_ref().map(|s| s.repo.clone())
     }
 }
+
+/// Servers of repositories shown before, most recent first, kept running so that going back to
+/// one skips starting a server, and its caches (and the page's, by origin) are still warm.
+#[derive(Default)]
+struct Warm(Mutex<Vec<Server>>);
+
+/// How many servers besides the window's are kept running.
+const WARM_MAX: usize = 3;
+
+/// A server started ahead of need, waiting on stdin for the repository to serve (see sidecar.ts),
+/// so opening a repository doesn't wait for one to load.
+#[derive(Default)]
+struct Spare(Mutex<Option<Child>>);
+
+/// How long after a spare is used another is started, so it doesn't slow down the page loading.
+const SPARE_DELAY: Duration = Duration::from_secs(3);
 
 /// What each repository's page last asked to keep (selection, drafts, scroll), so coming back to
 /// it finds things as they were, by repository; and every server's origin, to know a page's
@@ -67,6 +91,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .manage(Current::default())
+        .manage(Warm::default())
+        .manage(Spare::default())
         .manage(Recent::default())
         .manage(Views::default())
         .manage(Leaving::default())
@@ -101,10 +127,8 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                let server = window.state::<Current>().0.lock().unwrap().take();
-                if let Some(server) = server {
-                    thread::spawn(move || stop(server));
-                }
+                let servers = take_all(window.app_handle());
+                thread::spawn(move || stop(servers));
             }
         })
         .setup(|app| {
@@ -121,9 +145,7 @@ fn main() {
         .expect("failed to start legit")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(server) = app.state::<Current>().0.lock().unwrap().take() {
-                    stop(server);
-                }
+                stop(take_all(app));
             }
         });
 }
@@ -402,13 +424,16 @@ fn server_log(app: &AppHandle) -> Box<dyn std::io::Write + Send> {
     }
 }
 
-/// Start a server for `repo`; returns it and the URL it serves the UI on.
-fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
+/// Launch a server: for `repo`, or a spare waiting to be told which (see `Spare`).
+fn launch(app: &AppHandle, repo: Option<&Path>) -> Result<Child, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let sidecar = exe.with_file_name("legit-server");
     let dist = app.path().resource_dir().map_err(|e| e.to_string())?.join("dist");
-    let mut child = Command::new(&sidecar)
-        .arg(repo)
+    let mut command = Command::new(&sidecar);
+    if let Some(repo) = repo {
+        command.arg(repo);
+    }
+    command
         .arg("--dist")
         .arg(&dist)
         .env("PATH", git_path())
@@ -416,7 +441,45 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Couldn't start {}: {e}", sidecar.display()))?;
+        .map_err(|e| format!("Couldn't start {}: {e}", sidecar.display()))
+}
+
+/// The spare, told to serve `repo`; None if there's none, or it can't be told (it died, or the
+/// path won't fit on a line).
+fn use_spare(app: &AppHandle, repo: &Path) -> Option<Child> {
+    let path = repo.to_str().filter(|p| !p.contains('\n'))?;
+    let mut spare = app.state::<Spare>().0.lock().unwrap().take()?;
+    refill_spare(app);
+    let alive = matches!(spare.try_wait(), Ok(None));
+    if alive && writeln!(spare.stdin.as_mut()?, "{path}").is_ok() {
+        return Some(spare);
+    }
+    stop(vec![spare]);
+    None
+}
+
+/// Start another spare in a while, unless there's one already or the window has gone.
+fn refill_spare(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(SPARE_DELAY);
+        let state = app.state::<Spare>();
+        let mut spare = state.0.lock().unwrap();
+        if spare.is_none() && app.get_webview_window(WINDOW).is_some() {
+            *spare = launch(&app, None).ok();
+        }
+    });
+}
+
+/// Start a server for `repo` (the spare, if there is one); returns it and the URL it serves the UI on.
+fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
+    let mut child = match use_spare(app, repo) {
+        Some(child) => child,
+        None => {
+            refill_spare(app);
+            launch(app, Some(repo))?
+        }
+    };
 
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut url = String::new();
@@ -437,34 +500,74 @@ fn spawn_server(app: &AppHandle, repo: &Path) -> Result<(Child, Url), String> {
     match Url::parse(&url) {
         Ok(url) => Ok((child, url)),
         Err(e) => {
-            stop(Server { repo: repo.to_path_buf(), child, origin: String::new() });
+            stop(vec![child]);
             Err(e.to_string())
         }
     }
 }
 
+/// The server kept for `repo`, if it's still running and the repository's still there.
+fn take_warm(app: &AppHandle, repo: &Path) -> Option<Server> {
+    let mut server = {
+        let state = app.state::<Warm>();
+        let mut warm = state.0.lock().unwrap();
+        let i = warm.iter().position(|s| s.repo == repo)?;
+        warm.remove(i)
+    };
+    if matches!(server.child.try_wait(), Ok(None)) && is_repo(repo) {
+        return Some(server);
+    }
+    thread::spawn(move || stop(vec![server.child]));
+    None
+}
+
+/// Keep the server the window just left running, stopping the least recently shown past `WARM_MAX`.
+fn keep_warm(app: &AppHandle, server: Server) {
+    let state = app.state::<Warm>();
+    let mut warm = state.0.lock().unwrap();
+    warm.insert(0, server);
+    let keep = warm.len().min(WARM_MAX);
+    let extra: Vec<Child> = warm.split_off(keep).into_iter().map(|s| s.child).collect();
+    if !extra.is_empty() {
+        thread::spawn(move || stop(extra));
+    }
+}
+
+/// Every server: the window's, the warm ones and the spare.
+fn take_all(app: &AppHandle) -> Vec<Child> {
+    let mut all: Vec<Child> = app.state::<Warm>().0.lock().unwrap().drain(..).map(|s| s.child).collect();
+    all.extend(app.state::<Current>().0.lock().unwrap().take().map(|s| s.child));
+    all.extend(app.state::<Spare>().0.lock().unwrap().take());
+    all
+}
+
 fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
-    let (child, url) = spawn_server(app, repo)?;
-    let server = Server { repo: repo.to_path_buf(), child, origin: url.origin().ascii_serialization() };
-    app.state::<Views>().origins.lock().unwrap().insert(server.origin.clone(), repo.to_path_buf());
+    let server = match take_warm(app, repo) {
+        Some(server) => server,
+        None => {
+            let (child, url) = spawn_server(app, repo)?;
+            Server { repo: repo.to_path_buf(), child, url }
+        }
+    };
+    app.state::<Views>().origins.lock().unwrap().insert(server.origin(), repo.to_path_buf());
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
     if let Some(window) = app.get_webview_window(WINDOW) {
         // The page loads afresh from the new server, so nothing of the old repository carries over.
-        if let Err(e) = window.navigate(url) {
-            stop(server);
+        if let Err(e) = window.navigate(server.url.clone()) {
+            stop(vec![server.child]);
             return Err(e.to_string());
         }
         let _ = window.set_title(&name);
         let old = app.state::<Current>().0.lock().unwrap().replace(server);
         if let Some(old) = old {
-            thread::spawn(move || stop(old));
+            keep_warm(app, old);
         }
         update_recent(app, move |list| list.insert(0, opened));
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(server.url.clone()))
         .title(&name)
         .inner_size(1320.0, 860.0)
         .min_inner_size(760.0, 480.0)
@@ -475,7 +578,7 @@ fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
         .traffic_light_position(tauri::LogicalPosition::new(16.0, 26.0))
         .build();
     if let Err(e) = window {
-        stop(server);
+        stop(vec![server.child]);
         return Err(e.to_string());
     }
     *app.state::<Current>().0.lock().unwrap() = Some(server);
@@ -483,19 +586,24 @@ fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Close the server's stdin so it exits once any running operation is done; kill it
-/// only if it hasn't after a grace period.
-fn stop(mut server: Server) {
-    drop(server.child.stdin.take());
+/// Close the servers' stdin so each exits once any running operation is done; kill those that
+/// haven't after a grace period.
+fn stop(mut children: Vec<Child>) {
+    for child in &mut children {
+        drop(child.stdin.take());
+    }
     let deadline = Instant::now() + SHUTDOWN_GRACE;
     while Instant::now() < deadline {
-        if let Ok(Some(_)) = server.child.try_wait() {
+        children.retain_mut(|c| !matches!(c.try_wait(), Ok(Some(_))));
+        if children.is_empty() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    let _ = server.child.kill();
-    let _ = server.child.wait();
+    for child in &mut children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn eval_focused(app: &AppHandle, js: &str) {
