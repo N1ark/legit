@@ -57,6 +57,8 @@
   let help = $state(false);
   /** The settings' section shown, while they're open. */
   let settings = $state<string | null>(null);
+  /** GitHub waits for the first screen to be painted, so its requests and renders don't hold that up. */
+  let github = $state(false);
 
   // The commit list's width: dragged live, remembered when the drag ends.
   const LIST_WIDTH = 440;
@@ -84,7 +86,10 @@
   };
 
   onMount(() => {
-    app.start().then(preload);
+    app.start().then(() => {
+      requestAnimationFrame(() => setTimeout(() => (github = true)));
+      preload();
+    });
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
@@ -107,7 +112,7 @@
   // The branch's pull request follows the branch, its tip and what was last fetched of it.
   $effect(() => {
     void [app.repo?.branch, app.repo?.head, app.repo?.push?.tip];
-    if (app.repo) untrack(() => gh.refresh());
+    if (app.repo && github) untrack(() => gh.refresh());
   });
 
   type Action =
@@ -190,8 +195,10 @@
     {#if app.repo}
       <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
-      <PrChip />
-      <ChecksChip />
+      {#if github}
+        <PrChip />
+        <ChecksChip />
+      {/if}
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<Spinner label="Working" />{/if}
@@ -203,10 +210,10 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRight />
     </IconButton>
-    <Notifications />
+    {#if github}<Notifications />{/if}
     <StashPanel />
     <Backups />
-    <GithubMenu />
+    {#if github}<GithubMenu />{/if}
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><Gear /></IconButton>
   </header>
 
