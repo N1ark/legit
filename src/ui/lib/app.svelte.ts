@@ -402,7 +402,7 @@ class App {
     const i = this.commits.findIndex((c) => c.sha === cur);
     if (i === 0 && dir < 0 && !extend && this.hasWork) {
       this.selectWork();
-      document.querySelector('[data-sha="work"]')?.scrollIntoView({ block: 'nearest' });
+      this.reveal?.(WORK);
       return;
     }
     let j = Math.max(0, Math.min(this.commits.length - 1, i + dir));
@@ -416,8 +416,11 @@ class App {
       this.selected = keep ? this.selected.filter((s) => s !== cur) : [...this.selected, next.sha];
       this.anchor = next.sha;
     } else this.select(next.sha);
-    document.querySelector(`[data-sha="${next.sha}"]`)?.scrollIntoView({ block: 'nearest' });
+    this.reveal?.(next.sha);
   }
+
+  /** Scrolls the commit list to a row (set by the list, which only mounts the rows in view). */
+  reveal: ((sha: string) => void) | null = null;
 
   /** Move the selected commits by `dir` positions (negative = newer). */
   move(dir: number) {

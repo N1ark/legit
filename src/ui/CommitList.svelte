@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Avatar, Spinner, Tag, Twisty, formatRelative, isMac, menu, tooltip } from 'purr';
+  import { Avatar, Spinner, Tag, Twisty, VirtualList, formatRelative, isMac, menu, tooltip } from 'purr';
   import { tick } from 'svelte';
   import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, CopySimple, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Stack, Trash, Users } from 'purr/icons';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
@@ -8,7 +8,63 @@
   import CommitChecks from './gh/CommitChecks.svelte';
   import { copyToBranch, newBranch, rebuildOn } from './lib/branches.svelte.ts';
 
-  let list = $state<HTMLOListElement>();
+  let list = $state<HTMLDivElement>();
+  let rows = $state<{ scrollToIndex: (index: number) => void }>();
+  let probe = $state<HTMLDivElement>();
+
+  /** What the list shows, in order: each a row of the virtual list. */
+  type Item =
+    | { kind: 'work'; key: string }
+    | { kind: 'boundary'; key: string; merge: boolean }
+    | { kind: 'commit'; key: string; c: CommitInfo; i: number }
+    | { kind: 'note'; key: string; side: boolean; loading?: boolean; more?: number };
+
+  const items = $derived.by(() => {
+    const out: Item[] = [];
+    const commits = app.commits;
+    if (app.hasWork && app.repo) out.push({ kind: 'work', key: WORK });
+    for (let i = 0; i < commits.length; i++) {
+      const c = commits[i];
+      if (!c.editable && (i === 0 || commits[i - 1].editable)) out.push({ kind: 'boundary', key: `boundary:${c.sha}`, merge: c.merge });
+      out.push({ kind: 'commit', key: c.sha, c, i });
+      const m = c.merge ? app.expanded[c.sha] : undefined;
+      if (m === null) out.push({ kind: 'note', key: `note:${c.sha}`, side: true, loading: true });
+      else if (m?.commits.length === 0) out.push({ kind: 'note', key: `note:${c.sha}`, side: true });
+      if (c.side && commits[i + 1]?.side !== c.side) {
+        const s = app.expanded[c.side];
+        if (s && s.total > s.commits.length) out.push({ kind: 'note', key: `more:${c.side}`, side: true, more: s.total - s.commits.length });
+      }
+    }
+    if (app.loadingOlder) out.push({ kind: 'note', key: 'older', side: false, loading: true });
+    return out;
+  });
+  /** Where each SHA (and the work row) sits in `items`. */
+  const positions = $derived.by(() => {
+    const at = new Map<string, number>();
+    items.forEach((it, k) => (it.kind === 'commit' || it.kind === 'work') && at.set(it.key, k));
+    return at;
+  });
+  const options = $derived(app.commits.length + (app.hasWork ? 1 : 0));
+
+  /** The read-only divider's height, which follows the font: measured once, off-screen. */
+  let boundaryHeight = $state(36);
+  $effect(() => {
+    if (probe) boundaryHeight = parseFloat(getComputedStyle(probe).height);
+  });
+  const ROW = 30;
+  const heightOf = (it: Item) => (it.kind === 'boundary' ? boundaryHeight : ROW);
+
+  /** Whether the item at `k` is a selected row, which a selected neighbour joins up with. */
+  function joined(k: number): boolean {
+    const it = items[k];
+    return it?.kind === 'commit' ? app.selected.includes(it.c.sha) : it?.kind === 'work' && app.selected[0] === WORK;
+  }
+
+  // Keyboard steps bring the new row into view, mounted or not.
+  $effect(() => {
+    app.reveal = (sha) => rows?.scrollToIndex(positions.get(sha) ?? -1);
+    return () => (app.reveal = null);
+  });
 
   $effect(() => app.keep('list', () => list?.scrollTop ?? 0));
   $effect(() => {
@@ -142,6 +198,8 @@
     dragging = app.editable.map((c) => c.sha).filter((s) => app.selected.includes(s));
     e.dataTransfer!.effectAllowed = 'move';
     e.dataTransfer!.setData('text/plain', dragging.join(' '));
+    // A row scrolled out of view is unmounted, and its dragend never comes: the next pointer move after the drag ends it.
+    window.addEventListener('pointermove', () => dragging && ondragend(), { once: true });
   }
 
   function ondragover(e: DragEvent, sha: string) {
@@ -167,125 +225,155 @@
   }
 </script>
 
-<ol class="list" role="listbox" aria-multiselectable="true" bind:this={list} onscroll={loadIfNearEnd}>
-  {#if app.hasWork && app.repo}
-    {@const w = app.repo.work}
-    <li
-      data-sha={WORK}
-      class="row work"
-      class:is-current={app.selected[0] === WORK}
-      role="option"
-      aria-selected={app.selected[0] === WORK}
-      onclick={() => app.selectWork()}
-      onkeydown={() => {}}
-    >
-      <span class="grip"><PencilSimpleLine /></span>
-      {#if app.repo.conflict?.edit}
-        <span class="subject">Editing "{app.repo.conflict.edit.subject}"</span>
-      {:else if app.repo.conflict}
-        {@const c = app.repo.conflict}
-        <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
-        {#if c.files.length}<span use:tooltip={'Files with conflicts'}><Tag color="var(--warn)" label="{c.files.length} conflicted" /></span>{/if}
-      {:else}
-        <span class="subject">Uncommitted changes</span>
-      {/if}
-      {#if w.staged}<span use:tooltip={'Files with staged changes'}><Tag color="var(--add)" label="{w.staged} staged" /></span>{/if}
-      {#if w.unstaged}<span use:tooltip={'Files with unstaged changes'}><Tag label="{w.unstaged} changed" /></span>{/if}
-      {#if w.untracked}<span use:tooltip={'Untracked files'}><Tag label="{w.untracked} new" /></span>{/if}
-    </li>
+<!-- Only the rows in view are mounted: histories run to thousands of commits. -->
+<div class="list" role="listbox" aria-multiselectable="true" bind:this={list} onscroll={loadIfNearEnd}>
+  <div class="probe" aria-hidden="true"><div bind:this={probe}><div class="boundary">read-only</div></div></div>
+  {#if list}
+    <VirtualList bind:this={rows} {items} rowHeight={heightOf} key={(it) => it.key} scroller={list}>
+      {#snippet children(it, index)}
+        {@const up = joined(index - 1)}
+        {@const down = joined(index + 1)}
+        {#if it.kind === 'work' && app.repo}
+          {@const w = app.repo.work}
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
+          <div
+            data-sha={WORK}
+            class="row work"
+            class:is-current={app.selected[0] === WORK}
+            class:join-up={app.selected[0] === WORK && up}
+            class:join-down={app.selected[0] === WORK && down}
+            role="option"
+            aria-selected={app.selected[0] === WORK}
+            aria-setsize={options}
+            aria-posinset={1}
+            onclick={() => app.selectWork()}
+            onkeydown={() => {}}
+          >
+            <span class="grip"><PencilSimpleLine /></span>
+            {#if app.repo.conflict?.edit}
+              <span class="subject">Editing "{app.repo.conflict.edit.subject}"</span>
+            {:else if app.repo.conflict}
+              {@const c = app.repo.conflict}
+              <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
+              {#if c.files.length}<span use:tooltip={'Files with conflicts'}><Tag color="var(--warn)" label="{c.files.length} conflicted" /></span>{/if}
+            {:else}
+              <span class="subject">Uncommitted changes</span>
+            {/if}
+            {#if w.staged}<span use:tooltip={'Files with staged changes'}><Tag color="var(--add)" label="{w.staged} staged" /></span>{/if}
+            {#if w.unstaged}<span use:tooltip={'Files with unstaged changes'}><Tag label="{w.unstaged} changed" /></span>{/if}
+            {#if w.untracked}<span use:tooltip={'Untracked files'}><Tag label="{w.untracked} new" /></span>{/if}
+          </div>
+        {:else if it.kind === 'boundary'}
+          <div class="boundary muted">
+            <span use:tooltip={it.merge ? "History below a merge can't be rewritten" : "Older history can't be rewritten here"}>read-only</span>
+          </div>
+        {:else if it.kind === 'commit'}
+          {@const c = it.c}
+          {@const selected = app.selected.includes(c.sha)}
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
+          <div
+            data-sha={c.sha}
+            class="row"
+            class:is-current={selected}
+            class:join-up={selected && up}
+            class:join-down={selected && down}
+            class:locked={!c.editable}
+            class:side={c.side}
+            class:dnd-dragging={dragging?.includes(c.sha)}
+            class:dnd-before={drop?.sha === c.sha && !drop.after}
+            class:dnd-after={drop?.sha === c.sha && drop.after}
+            role="option"
+            aria-selected={selected}
+            aria-setsize={options}
+            aria-posinset={it.i + (app.hasWork ? 2 : 1)}
+            draggable={c.editable && !app.repo?.blocked}
+            onclick={(e) => onclick(e, c.sha)}
+            onmouseenter={() => app.prefetch(c.sha)}
+            oncontextmenu={(e) => oncontextmenu(e, c.sha)}
+            onkeydown={() => {}}
+            ondragstart={(e) => ondragstart(e, c.sha)}
+            ondragover={(e) => c.editable && ondragover(e, c.sha)}
+            ondragleave={() => drop?.sha === c.sha && (drop = null)}
+            {ondrop}
+            {ondragend}
+          >
+            {#if c.merge && !c.side}
+              {@const open = c.sha in app.expanded}
+              <button
+                class="grip twisty"
+                use:tooltip={open ? 'Hide the merged commits' : 'Show the merged commits'}
+                aria-label={open ? 'Hide the merged commits' : 'Show the merged commits'}
+                aria-expanded={open}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  app.toggleMerge(c.sha);
+                }}
+              >
+                <Twisty {open} size={10} />
+              </button>
+            {:else}
+              <span class="grip">
+                {#if c.merge}<GitMerge />{:else if c.editable}<DotsSixVertical weight="bold" />{/if}
+              </span>
+            {/if}
+            <span class="sha mono">{shortSha(c)}</span>
+            <span class="who" use:tooltip={`${c.author.name} <${c.author.email}>`}>
+              <Avatar
+                name={c.author.name}
+                src={avatarUrl(c.author.email, 16)}
+                seed={c.author.email.toLowerCase()}
+                size={16}
+                round
+                title=""
+              />
+            </span>
+            <span class="subject" class:muted={!c.subject}
+              >{#if c.subject}<Markdown text={c.subject} inline links="mod" />{:else}(no message){/if}</span
+            >
+            {#if c.coauthors.length}
+              <span class="meta" use:tooltip={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
+            {/if}
+            <span class="meta">{formatRelative(c.author.time * 1000)}</span>
+            {#if c.pushed}<CommitChecks sha={c.sha} />{/if}
+            <span class="meta pushed" use:tooltip={c.pushed ? 'Pushed: rewriting it needs a force-push' : null}>{#if c.pushed}<CloudCheck />{/if}</span>
+          </div>
+        {:else if it.kind === 'note'}
+          <div class="note muted" class:side={it.side}>
+            {#if it.more !== undefined}…and {it.more} more{:else if it.loading}<Spinner size={12} /> Loading…{:else}No commits brought in{/if}
+          </div>
+        {/if}
+      {/snippet}
+    </VirtualList>
   {/if}
-  {#each app.commits as c, i (c.sha)}
-    {#if !c.editable && (i === 0 || app.commits[i - 1].editable)}
-      <li class="boundary muted">
-        <span use:tooltip={c.merge ? "History below a merge can't be rewritten" : "Older history can't be rewritten here"}>read-only</span>
-      </li>
-    {/if}
-    <li
-      data-sha={c.sha}
-      class="row"
-      class:is-current={app.selected.includes(c.sha)}
-      class:locked={!c.editable}
-      class:side={c.side}
-      class:dnd-dragging={dragging?.includes(c.sha)}
-      class:dnd-before={drop?.sha === c.sha && !drop.after}
-      class:dnd-after={drop?.sha === c.sha && drop.after}
-      role="option"
-      aria-selected={app.selected.includes(c.sha)}
-      draggable={c.editable && !app.repo?.blocked}
-      onclick={(e) => onclick(e, c.sha)}
-      onmouseenter={() => app.prefetch(c.sha)}
-      oncontextmenu={(e) => oncontextmenu(e, c.sha)}
-      onkeydown={() => {}}
-      ondragstart={(e) => ondragstart(e, c.sha)}
-      ondragover={(e) => c.editable && ondragover(e, c.sha)}
-      ondragleave={() => drop?.sha === c.sha && (drop = null)}
-      {ondrop}
-      {ondragend}
-    >
-      {#if c.merge && !c.side}
-        {@const open = c.sha in app.expanded}
-        <button
-          class="grip twisty"
-          use:tooltip={open ? 'Hide the merged commits' : 'Show the merged commits'}
-          aria-label={open ? 'Hide the merged commits' : 'Show the merged commits'}
-          aria-expanded={open}
-          onclick={(e) => {
-            e.stopPropagation();
-            app.toggleMerge(c.sha);
-          }}
-        >
-          <Twisty {open} size={10} />
-        </button>
-      {:else}
-        <span class="grip">
-          {#if c.merge}<GitMerge />{:else if c.editable}<DotsSixVertical weight="bold" />{/if}
-        </span>
-      {/if}
-      <span class="sha mono">{shortSha(c)}</span>
-      <span class="who" use:tooltip={`${c.author.name} <${c.author.email}>`}>
-        <Avatar
-          name={c.author.name}
-          src={avatarUrl(c.author.email, 16)}
-          seed={c.author.email.toLowerCase()}
-          size={16}
-          round
-          title=""
-        />
-      </span>
-      <span class="subject" class:muted={!c.subject}
-        >{#if c.subject}<Markdown text={c.subject} inline links="mod" />{:else}(no message){/if}</span
-      >
-      {#if c.coauthors.length}
-        <span class="meta" use:tooltip={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
-      {/if}
-      <span class="meta">{formatRelative(c.author.time * 1000)}</span>
-      {#if c.pushed}<CommitChecks sha={c.sha} />{/if}
-      <span class="meta pushed" use:tooltip={c.pushed ? 'Pushed: rewriting it needs a force-push' : null}>{#if c.pushed}<CloudCheck />{/if}</span>
-    </li>
-    {#if c.merge && app.expanded[c.sha] === null}
-      <li class="note side muted"><Spinner size={12} /> Loading…</li>
-    {:else if c.merge && app.expanded[c.sha]?.commits.length === 0}
-      <li class="note side muted">No commits brought in</li>
-    {/if}
-    {#if c.side && app.commits[i + 1]?.side !== c.side}
-      {@const m = app.expanded[c.side]}
-      {#if m && m.total > m.commits.length}
-        <li class="note side muted">…and {m.total - m.commits.length} more</li>
-      {/if}
-    {/if}
-  {/each}
-  {#if app.loadingOlder}
-    <li class="note muted"><Spinner size={12} /> Loading…</li>
-  {/if}
-</ol>
+</div>
 
 <style>
   .list {
-    list-style: none;
-    margin: 0;
+    position: relative;
     padding: var(--gap-3) 0;
     overflow: auto;
     flex: 1;
+  }
+
+  /* Out of the way, and adding nothing to what scrolls. */
+  .probe {
+    position: absolute;
+    width: 100%;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+  }
+
+  .probe > div {
+    display: flow-root;
+  }
+
+  /* Each item fills the virtual list's row it sits in. */
+  .row,
+  .note,
+  .boundary {
+    flex: 1;
+    min-width: 0;
   }
 
   .row {
@@ -310,18 +398,18 @@
   }
 
   /* Adjacent selected rows read as one block, with a thin divider between them. */
-  .row.is-current:has(+ .row.is-current) {
+  .row.join-down {
     border-bottom-left-radius: 0;
     border-bottom-right-radius: 0;
   }
 
-  .row.is-current + .row.is-current {
+  .row.join-up {
     position: relative;
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
 
-  .row.is-current + .row.is-current::before {
+  .row.join-up::before {
     content: '';
     position: absolute;
     top: 0;
