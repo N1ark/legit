@@ -566,26 +566,25 @@
   // Words changed within a line, worked out as its rows are shown.
   const words = new WeakMap<FileRows, (r: number) => number[] | null>();
 
-  /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`); null when it's plain text. */
-  function lineSegments(i: number, r: number): { t: string; c: string; w?: boolean; m?: number }[] | null {
-    const rows = contents[i];
+  /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`, at `at`); null when it's plain text. */
+  function lineSegments(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
     const text = rows.text[r];
-    const tok = tokens[i];
     let diff = words.get(rows);
     if (!diff) words.set(rows, (diff = wordDiff(rows)));
     const changed = diff(r);
-    const at = hits.get(i)?.get(r);
     if (!tok && !changed && !at) return null;
-    const segs = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
+    const segs: { t: string; c: string; w?: boolean; m?: number }[] = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
     const cut = changed ? cutWords(segs, changed) : segs;
     return at ? markSegments(cut, at, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) : cut;
   }
 
-  /** Row r's code, built directly rather than as a block per run (rows mount by the hundred while scrolling). */
-  function code(i: number, r: number) {
+  /**
+   * Row r's code, built directly rather than as a block per run (rows mount by the hundred while
+   * scrolling). Given its file's rows, highlighting and matches, so it's redone when those change.
+   */
+  function code(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
     return (el: HTMLElement) => {
-      const rows = contents[i];
-      const segs = lineSegments(i, r);
+      const segs = lineSegments(i, r, rows, tok, at);
       el.textContent = '';
       if (!segs) el.append(rows.text[r]);
       for (const seg of segs ?? []) {
@@ -1112,6 +1111,8 @@
         {@const f = files[i]}
         {@const state = fileState(f)}
         {@const rows = contents[i]}
+        {@const tok = tokens[i]}
+        {@const fileHits = hits.get(i)}
         <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
@@ -1279,7 +1280,7 @@
                                 onblur={closeUnchanged}
                                 {@attach attachEditor}
                               ></textarea></span
-                            >{:else}<span class="code" {@attach code(i, r)}></span>{/if}
+                            >{:else}<span class="code" {@attach code(i, r, rows, tok, fileHits?.get(r))}></span>{/if}
                         </div>
                       {/if}
                       {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
