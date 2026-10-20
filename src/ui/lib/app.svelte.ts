@@ -208,12 +208,17 @@ class App {
     return d;
   }
 
-  /** Contents of some of a commit's files; misses are fetched in one request. */
-  async fileContents(sha: string, files: number[]): Promise<Record<number, HunkData[]>> {
-    const key = (i: number) => `${sha}:${i}`;
+  /** File i's contents are loaded or on their way. */
+  hasContents(d: DiffSummary, i: number): boolean {
+    return this.contents.has(fileKey(d, i));
+  }
+
+  /** Contents of some of a diff's files; misses are fetched in one request. */
+  async fileContents(d: DiffSummary, files: number[]): Promise<Record<number, HunkData[]>> {
+    const key = (i: number) => fileKey(d, i);
     const missing = files.filter((i) => !this.contents.has(key(i)));
     if (missing.length) {
-      const batch = request<FileContents>(`/api/diff/${sha}/files?i=${missing.join(',')}`);
+      const batch = request<FileContents>(`/api/diff/${d.sha}/files?i=${missing.join(',')}`);
       for (const i of missing) {
         const p = batch.then((r) => r[i] ?? []);
         p.catch(() => this.contents.delete(key(i)));
@@ -250,7 +255,7 @@ class App {
           if (f.rows && !f.generated) first.push(i);
           y += f.generated ? 44 : 40 + f.rows * 19;
         }
-        if (first.length) return this.fileContents(sha, first);
+        if (first.length) return this.fileContents(d, first);
       })
       .catch(() => {});
   }
@@ -315,7 +320,7 @@ class App {
     if (sha === EDITING) return;
     const d = await this.diff(sha);
     const want = d.files.flatMap((f, i) => (f.rows && at.shown.includes(f.path) ? [i] : []));
-    if (want.length) await this.fileContents(sha, want);
+    if (want.length) await this.fileContents(d, want);
   }
 
   /** Where the shown commit's diff is scrolled to, when `sha` is the one shown. */
@@ -729,6 +734,9 @@ interface View {
 
 /** Selection key of the "Uncommitted changes" entry. */
 export const WORK = 'work';
+/** What identifies file i's diff: its token in a working-tree snapshot (unchanged files keep it across snapshots), else its place in the diff. */
+export const fileKey = (d: DiffSummary, i: number) => (d.files[i].token ? `${d.files[i].token}:${d.files[i].path}` : `${d.sha}:${i}`);
+
 /** `diffPosition` key of the view of the commit being edited (see EditView). */
 export const EDITING = 'editing';
 

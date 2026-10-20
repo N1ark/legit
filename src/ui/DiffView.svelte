@@ -40,7 +40,7 @@
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
-  import { type DiffPosition, app } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, fileKey } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
@@ -429,7 +429,14 @@
     }
     if (!want.length) return;
     for (const i of want) requested.add(i);
-    app.fileContents(summary.sha, want).then(
+    // What's already loaded (prefetched, or unchanged in a new snapshot) shows without waiting for the rest.
+    const have = want.filter((i) => app.hasContents(summary, i));
+    if (have.length) load(have);
+    if (have.length < want.length) load(want.filter((i) => !have.includes(i)));
+  });
+
+  function load(want: number[]) {
+    app.fileContents(summary, want).then(
       (res) => {
         if (!alive) return;
         const next = { ...contents };
@@ -443,7 +450,7 @@
         toast.error(e);
       },
     );
-  });
+  }
 
   /** File i's rows from its hunks, with the lines shown between them and whitespace as the switch has it. */
   const build = (i: number, hunks: HunkData[]) =>
@@ -453,7 +460,7 @@
     const distance = () => Math.abs(tops[i] - view.top);
     const x = expansions[i];
     const key =
-      `${summary.sha}:${i}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (rows.ws ? ':ws' : '');
+      `${fileKey(summary, i)}:${files[i].syntax ?? ''}` + (x ? `:${x.top.join()}/${x.bottom.join()}` : '') + (rows.ws ? ':ws' : '');
     const want = () => alive && contents[i] === rows;
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
       if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
@@ -631,7 +638,7 @@
     const want = untrack(() => files.flatMap((f, i) => (f.rows && !contents[i] && !requested.has(i) ? [i] : [])));
     if (!want.length) return;
     for (const i of want) requested.add(i);
-    app.fileContents(summary.sha, want).then(
+    app.fileContents(summary, want).then(
       (res) => {
         if (!alive) return;
         const next = { ...contents };

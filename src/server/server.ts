@@ -200,6 +200,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const generated = await generatedPaths(repo.git, source, paths, settings.collapse);
       const s = summarize(d, generated, syntaxes(settings.syntax, paths));
       for (const [k, sizes] of await fileSizes(repo.git, d)) Object.assign(s.files[k], sizes);
+      // A snapshot's key changes with any file: the UI keeps what it loaded of the others by their tokens.
+      if (work) s.files.forEach((f, k) => (f.token = d.files[k].token));
       json = JSON.stringify(s);
       if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
       summaries.set(d.sha, json);
