@@ -28,17 +28,10 @@
   import PushButton from './PushButton.svelte';
   import RebaseOnBase from './RebaseOnBase.svelte';
   import RepoPicker from './RepoPicker.svelte';
-  import Settings from './Settings.svelte';
   import CommitView from './CommitView.svelte';
-  import ConflictView from './ConflictView.svelte';
-  import EditView from './EditView.svelte';
-  import FindBar from './FindBar.svelte';
-  import SquashView from './SquashView.svelte';
-  import StashView from './StashView.svelte';
   import WorkView from './WorkView.svelte';
   import Brand from './Brand.svelte';
   import Notifications from './gh/Notifications.svelte';
-  import PrView from './gh/PrView.svelte';
   import PrChip from './gh/PrChip.svelte';
   import GithubMenu from './gh/GithubMenu.svelte';
   import ChecksChip from './gh/ChecksChip.svelte';
@@ -49,12 +42,23 @@
   import { formatPerson } from './lib/people.ts';
   import { newWorktree } from './lib/worktrees.svelte.ts';
   import { rebuildOn } from './lib/branches.svelte.ts';
+  import { lazy, preload } from './lib/lazy.svelte.ts';
+
+  const Settings = lazy(() => import('./Settings.svelte'));
+  const ConflictView = lazy(() => import('./ConflictView.svelte'));
+  const EditView = lazy(() => import('./EditView.svelte'));
+  const FindBar = lazy(() => import('./FindBar.svelte'));
+  const SquashView = lazy(() => import('./SquashView.svelte'));
+  const StashView = lazy(() => import('./StashView.svelte'));
+  const PrView = lazy(() => import('./gh/PrView.svelte'));
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
   /** The settings' section shown, while they're open. */
   let settings = $state<string | null>(null);
+  /** GitHub waits for the first screen to be painted, so its requests and renders don't hold that up. */
+  let github = $state(false);
 
   // The commit list's width: dragged live, remembered when the drag ends.
   const LIST_WIDTH = 440;
@@ -82,7 +86,10 @@
   };
 
   onMount(() => {
-    app.start();
+    app.start().then(() => {
+      requestAnimationFrame(() => setTimeout(() => (github = true)));
+      preload();
+    });
     const events = new EventSource('/api/events');
     events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
@@ -105,7 +112,7 @@
   // The branch's pull request follows the branch, its tip and what was last fetched of it.
   $effect(() => {
     void [app.repo?.branch, app.repo?.head, app.repo?.push?.tip];
-    if (app.repo) untrack(() => gh.follow());
+    if (app.repo && github) untrack(() => gh.follow());
   });
 
   type Action =
@@ -188,8 +195,10 @@
     {#if app.repo}
       <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
-      <PrChip />
-      <ChecksChip />
+      {#if github}
+        <PrChip />
+        <ChecksChip />
+      {/if}
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
     {#if app.busy}<Spinner label="Working" />{/if}
@@ -201,10 +210,10 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRight />
     </IconButton>
-    <Notifications />
+    {#if github}<Notifications />{/if}
     <StashPanel />
     <Backups />
-    <GithubMenu />
+    {#if github}<GithubMenu />{/if}
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><Gear /></IconButton>
   </header>
 
@@ -248,24 +257,24 @@
     </aside>
     <section data-scroller>
       {#if finder.open}
-        <div class="find"><div class="bar"><FindBar /></div></div>
+        <div class="find"><div class="bar"><FindBar.component /></div></div>
       {/if}
       {#if gh.view?.kind === 'pr'}
         {#key gh.view.number}
-          <PrView number={gh.view.number} />
+          <PrView.component number={gh.view.number} />
         {/key}
       {:else if app.stash}
         {#key app.stash.sha}
-          <StashView stash={app.stash} />
+          <StashView.component stash={app.stash} />
         {/key}
       {:else if app.selected[0] === WORK && app.repo?.conflict?.edit}
-        <EditView />
+        <EditView.component />
       {:else if app.selected[0] === WORK && app.repo?.conflict}
-        <ConflictView />
+        <ConflictView.component />
       {:else if app.selected[0] === WORK}
         <WorkView />
       {:else if app.selection.length > 1}
-        <SquashView commits={app.selection} />
+        <SquashView.component commits={app.selection} />
       {:else if app.selection.length === 1}
         {#key app.selection[0].sha}
           <CommitView commit={app.selection[0]} />
@@ -287,7 +296,7 @@
 <SwitchDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
-  <Settings {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
+  <Settings.component {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />

@@ -6,6 +6,16 @@
     <meta name="theme-color" content="#8a2aa2" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>legit</title>
+    <script>
+      // The first requests, sent while the bundle loads; `request` (lib/app.svelte.ts) takes each once.
+      window.__legitEarly = Object.fromEntries(
+        ['/api/state', '/api/display'].map((path) => {
+          const res = fetch(path);
+          res.catch(() => {});
+          return [path, res];
+        }),
+      );
+    </script>
   </head>
   <body>
     <div id="app"></div>
