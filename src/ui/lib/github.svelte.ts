@@ -51,11 +51,12 @@ class Github {
   pr = $state<PullRequest | null | undefined>(undefined);
   /** Bumped by `refresh()`, for views that keep their own GitHub data to reload it. */
   tick = $state(0);
+  /** The branch `pr` is for: until it's the current one, `pr` is the previous branch's. */
+  branch = $state<string | null>(null);
 
   /** On GitHub and signed in. */
   ready = $derived(!!this.status?.repo && !!this.status.login);
 
-  private branch: string | null = null;
   private lastAt = 0;
   private tickAt = 0;
   private statusAt = 0;
@@ -63,6 +64,8 @@ class Github {
   private statusN = 0;
   private gen = 0;
   private followed: string | null = null;
+  /** Each branch's pull request as last looked up. */
+  private seen = new Map<string, PullRequest | null>();
 
   /**
    * Look again: who's signed in (once it's known, else every so often, or now with `retry`), and
@@ -72,7 +75,8 @@ class Github {
   async refresh(opts: { fresh?: boolean; retry?: boolean } = {}) {
     const gen = ++this.gen;
     const branch = app.repo?.branch ?? null;
-    if (branch !== this.branch) this.pr = undefined;
+    // Back on a branch: its pull request as last seen, until GitHub's answer replaces it.
+    if (branch !== this.branch) this.pr = branch ? (this.seen.get(branch) ?? undefined) : undefined;
     this.branch = branch;
     this.lastAt = Date.now();
     const ask = (b: string) => ghRequest<PullRequest | null>('pr', { branch: b, fresh: opts.fresh ? 1 : null });
@@ -97,6 +101,7 @@ class Github {
         return;
       }
       if (pr === undefined) pr = await (early ?? ask(branch));
+      this.seen.set(branch, pr);
       if (gen === this.gen) {
         const changed = JSON.stringify(pr) !== JSON.stringify(this.pr);
         this.pr = pr;

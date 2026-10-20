@@ -28,12 +28,13 @@
   const counts = $derived(data?.counts);
   const state = $derived(data ? overall(data.groups.map((g) => g.state)) : null);
 
-  // A new target and the GitHub refresh that follows it come together: one request does for both.
+  // A new target and the GitHub refresh that follows it come together: one request does for both
+  // (on a new branch, once `gh.pr` is that branch's, or known not to be yet).
   let last = '';
   $effect(() => {
     void gh.tick;
     const sha = target;
-    if (!sha) return;
+    if (!sha || gh.branch !== (app.repo?.branch ?? null)) return;
     const key = `${sha}:${pr}`;
     untrack(() => {
       if (key !== last || Date.now() - checks.loadedAt(sha) > 2000) checks.load(sha, { pr, quiet: true });
