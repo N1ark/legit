@@ -2,7 +2,7 @@
 // file nearest the viewport first, so fast scrolling never queues up stale work.
 
 import type { HunkData } from '../../shared/types.ts';
-import { language } from './languages.ts';
+import { highlightable, language } from './languages.ts';
 import type { Tokens } from './rows.ts';
 
 export type { Tokens };
@@ -60,6 +60,8 @@ export function highlight(
 ): Promise<Tokens | null> {
   if (!syntax && !language(path)) return Promise.resolve(null);
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
+  // The worker would refuse it, after copying it all over.
+  if (!highlightable(hunks)) return Promise.resolve(null);
   return new Promise((done) => {
     queue.push({ key, path, hunks, syntax, priority, wanted, done });
     pump();

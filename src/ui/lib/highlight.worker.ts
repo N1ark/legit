@@ -8,12 +8,9 @@
 
 import type { Grammar, Token, TokenStream } from 'prismjs';
 import type { HunkData } from '../../shared/types.ts';
-import { BUILTIN, LANGS, language } from './languages.ts';
+import { BUILTIN, LANGS, highlightable, language } from './languages.ts';
 
 type Prism = typeof import('prismjs');
-
-const MAX_CHARS = 2_000_000;
-const MAX_LINE = 3_000;
 
 let prism: Promise<Prism> | null = null;
 function core(): Promise<Prism> {
@@ -91,14 +88,7 @@ async function treeSitter(syntax: string, lines: string[]): Promise<Seg[][] | nu
 async function highlight(path: string, hunks: HunkData[], syntax?: string) {
   const lang = language(path);
   if (!lang && !syntax) return null;
-  let chars = 0;
-  for (const h of hunks) {
-    for (const t of h.text) {
-      if (t.length > MAX_LINE) return null;
-      chars += t.length;
-    }
-  }
-  if (chars > MAX_CHARS) return null;
+  if (!highlightable(hunks)) return null;
   // Tree-sitter when the file has a grammar and it loads (tried on the first hunk), else Prism.
   let tokenizeSide: (lines: string[]) => Promise<Seg[][]> | Seg[][];
   const first = syntax && hunks.length ? await treeSitter(syntax, hunks[0].text.filter((_, k) => hunks[0].types[k] !== '-')) : null;

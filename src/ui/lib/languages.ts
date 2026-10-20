@@ -1,5 +1,21 @@
 // Which Prism grammar highlights which file, and how to load it (used by the highlight worker).
 
+/** Files with more text than this, or a longer line, aren't highlighted. */
+const MAX_CHARS = 2_000_000;
+const MAX_LINE = 3_000;
+
+/** Whether hunks' text is small enough to highlight. */
+export function highlightable(hunks: { text: string[] }[]): boolean {
+  let chars = 0;
+  for (const h of hunks) {
+    for (const t of h.text) {
+      if (t.length > MAX_LINE) return false;
+      chars += t.length;
+    }
+  }
+  return chars <= MAX_CHARS;
+}
+
 // Bundled with Prism's core: markup, css, clike, javascript.
 export const BUILTIN = new Set(['markup', 'css', 'clike', 'javascript']);
 
