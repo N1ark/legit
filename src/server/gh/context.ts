@@ -14,24 +14,24 @@ export interface GhRepos {
   headOwner: string;
 }
 
-async function remoteUrls(repo: Repo): Promise<Map<string, string>> {
-  const out = await repo.git.text(['config', '--get-regexp', '^remote\\..*\\.url$'], { allowFail: true });
+/** The config ghRepos reads (remotes' URLs, push remotes), keys as git canonicalizes them, last value winning. */
+async function ghConfig(repo: Repo): Promise<Map<string, string>> {
+  const out = await repo.git.text(['config', '--get-regexp', '^(remote\\..*\\.url|remote\\.pushdefault|branch\\..*\\.(pushremote|remote))$'], { allowFail: true });
   return new Map(
     out.split('\n').flatMap((l) => {
-      const m = /^remote\.(.+)\.url (.+)$/.exec(l);
-      return m ? [[m[1], m[2]] as const] : [];
+      const at = l.indexOf(' ');
+      return at > 0 ? [[l.slice(0, at), l.slice(at + 1)] as const] : [];
     }),
   );
 }
 
 /** The repos for `branch` (default: the current one), or null when nothing is on GitHub. */
 export async function ghRepos(repo: Repo, branch?: string | null): Promise<GhRepos | null> {
-  const remotes = await remoteUrls(repo);
-  branch ??= (await repo.git.text(['symbolic-ref', '-q', '--short', 'HEAD'], { allowFail: true })) || null;
+  const [config, current] = await Promise.all([ghConfig(repo), branch === undefined || branch === null ? repo.currentBranch() : branch]);
+  branch = current;
+  const remotes = new Map([...config].flatMap(([k, v]) => (k.startsWith('remote.') && k.endsWith('.url') ? [[k.slice(7, -4), v] as const] : [])));
   const pushRemote = branch
-    ? (await repo.git.text(['config', `branch.${branch}.pushRemote`], { allowFail: true })) ||
-      (await repo.git.text(['config', 'remote.pushDefault'], { allowFail: true })) ||
-      (await repo.git.text(['config', `branch.${branch}.remote`], { allowFail: true }))
+    ? config.get(`branch.${branch}.pushremote`) || config.get('remote.pushdefault') || config.get(`branch.${branch}.remote`) || ''
     : '';
   const on = (name: string | undefined) => (name ? githubRepo(remotes.get(name) ?? '') : null);
   const head = on(pushRemote) ?? on('origin') ?? [...remotes.keys()].map(on).find(Boolean) ?? null;
