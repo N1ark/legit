@@ -16,7 +16,7 @@
   } from 'purr/icons';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app, request, shortSha } from './lib/app.svelte.ts';
   import {
     commitsRequest, deleteBranch, deleteBranches, deleteRemoteBranch, deleteRemoteBranches, newBranch, rebuild, renameBranch,
     restoreBranch, setUpstream, switchOp, unsetUpstream,
@@ -454,6 +454,19 @@
     menu.show(e, list, r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : r.b.name);
   }
 
+  /** The current branch's menu, from a right-click on the button (the list has it too). */
+  async function buttonMenu(e: MouseEvent) {
+    e.preventDefault();
+    if (!here) return;
+    const { clientX: x, clientY: y } = e;
+    try {
+      const b = (await request<BranchInfo[]>('/api/branches')).find((b) => b.current);
+      if (b) menu.showAt(x, y, localMenu(b), b.name);
+    } catch (err) {
+      toast.error(err);
+    }
+  }
+
   /** The branch a row stands for, to list its commits; null for rows without any to pick. */
   function browsable(r: Row | undefined): string | null {
     if (!here || !r) return null;
@@ -501,6 +514,7 @@
   bind:this={button}
   class="btn btn--ghost branch"
   onclick={() => (open ? (open = false) : show())}
+  oncontextmenu={buttonMenu}
   {disabled}
   aria-expanded={open}
   use:tooltip={'Switch branch (b)'}

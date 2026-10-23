@@ -1,9 +1,9 @@
 <script lang="ts">
   // The repository name in the header. It opens this repository's other worktrees, to switch to
   // one, add one or remove one; in the desktop app, the recent repositories too: pick one to
-  // switch to it, or open another.
-  import { ConfirmButton, Highlight, IS_TAURI, IconButton, Popover, rank, toast, tooltip } from 'purr';
-  import { CaretDown, Check, FolderOpen, FolderPlus, LockSimple, Trash, X } from 'purr/icons';
+  // switch to it, or open another. Right-click a row, or the name, for its menu.
+  import { ConfirmButton, Highlight, IS_TAURI, IconButton, Popover, menu, rank, toast, tooltip, type MaybeEntry } from 'purr';
+  import { ArrowsLeftRight, CaretDown, Check, Copy, FolderOpen, FolderPlus, LockSimple, Trash, X } from 'purr/icons';
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { invoke } from './lib/desktop.ts';
@@ -113,6 +113,59 @@
     if (await removeWorktree(w)) load();
   }
 
+  const copyPath = (path: string): MaybeEntry => ({ label: 'Copy path', icon: Copy, run: () => app.copy(path, 'the path') });
+
+  /** A worktree's or a recent repository's menu: what its row and its buttons do. */
+  function rowMenu(r: Row): MaybeEntry[] {
+    if (r.kind === 'worktree') {
+      const w = r.w;
+      return [
+        opens(r) && { label: 'Switch to it', icon: ArrowsLeftRight, run: () => choose(r) },
+        copyPath(w.path),
+        !w.main && !w.current && w.locked === null && 'separator',
+        !w.main &&
+          !w.current &&
+          w.locked === null && {
+            label: w.missing ? 'Forget' : 'Remove',
+            icon: Trash,
+            danger: true,
+            note: w.missing ? 'Its folder is already gone' : `Deletes its folder${w.branch ? `; ${w.branch} stays` : ''}`,
+            confirm: w.missing ? `Forget ${w.name}` : `Remove ${w.name}`,
+            run: () => remove(w),
+          },
+      ];
+    }
+    if (r.kind === 'recent') {
+      return [
+        opens(r) && { label: 'Open', icon: FolderOpen, run: () => choose(r) },
+        copyPath(r.r.path),
+        'separator',
+        { label: 'Remove from the list', icon: X, run: () => forget(r.r) },
+      ];
+    }
+    return [];
+  }
+
+  function oncontextmenu(e: MouseEvent, r: Row, k: number) {
+    e.preventDefault();
+    picked = k;
+    menu.show(e, rowMenu(r), r.kind === 'worktree' ? r.w.name : r.kind === 'recent' ? r.r.name : null);
+  }
+
+  /** This repository's menu, from a right-click on its name. */
+  function buttonMenu(e: MouseEvent) {
+    const root = app.repo?.root;
+    menu.show(
+      e,
+      [
+        { label: 'New worktree…', icon: FolderPlus, run: () => choose({ kind: 'new' }) },
+        IS_TAURI && { label: 'Open Repository…', icon: FolderOpen, run: () => choose({ kind: 'open' }) },
+        !!root && copyPath(root),
+      ],
+      app.repo?.name,
+    );
+  }
+
   /** Switching away is refused while something runs; adding or removing a worktree isn't. */
   const switches = (r: Row) => r.kind === 'open' || (r.kind === 'recent' && !r.r.current) || (r.kind === 'worktree' && !r.w.current && !r.w.missing);
 
@@ -134,6 +187,7 @@
   bind:this={button}
   class="btn btn--ghost repo"
   onclick={() => (open ? (open = false) : show())}
+  oncontextmenu={buttonMenu}
   aria-expanded={open}
   use:tooltip={IS_TAURI ? `${app.repo?.root} (⌘T)` : app.repo?.root}
 >
@@ -186,6 +240,7 @@
             aria-disabled={off}
             data-row={k}
             onclick={() => choose(r)}
+            oncontextmenu={(e) => oncontextmenu(e, r, k)}
             onmousemove={() => (picked = k)}
           >
             {#if r.kind === 'worktree'}
