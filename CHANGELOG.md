@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0 — 2026-10-23
+
+- Right-clicking the branch or repository name in the top bar opens its menu, as do worktrees and recent repositories in the repository list.
+
 ## 0.9.0 — 2026-10-23
 
 - A new worktree can be made for an existing branch picked from a list, instead of typing its name.
