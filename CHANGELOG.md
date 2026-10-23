@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0 — 2026-10-23
+
+- A new worktree can be made for an existing branch picked from a list, instead of typing its name.
+
 ## 0.8.0 — 2026-10-23
 
 - Reordering, dropping or squashing commits that conflict stops at the conflict for you to resolve (or abort), instead of refusing.

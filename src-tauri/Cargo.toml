@@ -1,6 +1,6 @@
 [package]
 name = "legit"
-version = "0.8.0"
+version = "0.9.0"
 description = "A tiny, fast UI to rewrite git history"
 edition = "2021"
 
