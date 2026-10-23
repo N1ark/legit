@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0 — 2026-10-23
+
+- Reordering, dropping or squashing commits that conflict stops at the conflict for you to resolve (or abort), instead of refusing.
+
 ## 0.7.0 — 2026-10-20
 
 - Switching repos is quicker, and going back to one of the last few is quicker still.
