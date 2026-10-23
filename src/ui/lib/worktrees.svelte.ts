@@ -1,6 +1,6 @@
 // Worktree actions shared by the repository and branch pickers. Switching to another worktree
 // shows it in this window (the app) or this tab (the browser), like switching repository.
-import { IS_TAURI, dialog, toast } from 'purr';
+import { IS_TAURI, toast } from 'purr';
 import type { OpResult, WorktreeInfo, WorktreeRequest } from '../../shared/types.ts';
 import { app, request } from './app.svelte.ts';
 import { invoke } from './desktop.ts';
@@ -19,30 +19,38 @@ export async function openWorktree(path: string) {
   }
 }
 
+/** What `newWorktree` starts from: a branch name to suggest, or a commit (`what` names it) to branch from. */
+export type WorktreeStart = { branch?: string; from?: string; what?: string; track?: boolean };
+
+/** The new-worktree dialog on screen (NewWorktreeDialog.svelte), if any. */
+class WorktreeQuestion {
+  pending = $state<{ start: WorktreeStart; answer: (a: { branch: string; path: string; open: boolean } | null) => void } | null>(null);
+
+  ask(start: WorktreeStart) {
+    this.pending?.answer(null);
+    return new Promise<{ branch: string; path: string; open: boolean } | null>((done) => {
+      this.pending = {
+        start,
+        answer: (a) => {
+          this.pending = null;
+          done(a);
+        },
+      };
+    });
+  }
+}
+
+export const worktreeQuestion = new WorktreeQuestion();
+
 /**
  * Ask for a branch (an existing local one, or a new one from `from`, HEAD by default) and a
  * folder, and add a worktree for it, switching to it by default.
  */
-export async function newWorktree(start: { branch?: string; from?: string; what?: string; track?: boolean } = {}): Promise<boolean> {
-  const from = start.what ?? app.repo?.branch ?? 'HEAD';
-  const answer = await dialog.ask({
-    title: 'New worktree',
-    description: `Checks a branch out in a folder of its own, to work on it alongside this one. A new branch starts from ${from}.`,
-    fields: [
-      { name: 'branch', label: 'Branch', required: true, value: start.branch ?? '', placeholder: 'my-feature' },
-      {
-        name: 'path',
-        label: 'Folder',
-        placeholder: `Next to the repository, as ${app.repo?.name ?? 'repo'}-<branch>`,
-        hint: "Relative to this worktree's folder; ~ is your home folder.",
-      },
-      { name: 'open', label: 'Switch to it', type: 'checkbox', value: true },
-    ],
-    confirmLabel: 'Create worktree',
-  });
-  const branch = String(answer?.branch ?? '').trim();
-  if (!answer || !branch) return false;
-  const req: WorktreeRequest = { branch, path: String(answer.path ?? '').trim() || undefined, from: start.from, track: start.track };
+export async function newWorktree(start: WorktreeStart = {}): Promise<boolean> {
+  const answer = await worktreeQuestion.ask(start);
+  if (!answer) return false;
+  const { branch } = answer;
+  const req: WorktreeRequest = { branch, path: answer.path || undefined, from: start.from, track: start.track };
   let path = '';
   const ok = await app.op('addWorktree', req, undefined, async (r) => (path = (r as OpResult & { path: string }).path));
   if (!ok) return false;

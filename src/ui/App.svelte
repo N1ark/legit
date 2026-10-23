@@ -22,6 +22,7 @@
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
   import StashPanel from './StashPanel.svelte';
+  import NewWorktreeDialog from './NewWorktreeDialog.svelte';
   import SwitchDialog from './SwitchDialog.svelte';
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
@@ -294,6 +295,7 @@
 <ContextMenuHost />
 <DialogHost />
 <SwitchDialog />
+<NewWorktreeDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
   <Settings.component {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
