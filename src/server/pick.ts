@@ -4,7 +4,7 @@
 
 import type { CommitInfo, SyncResult } from '../shared/types.ts';
 import { type Git, GitError, type RawCommit } from './git.ts';
-import { type Repo, info } from './repo.ts';
+import { type Repo, ReplayConflict, info } from './repo.ts';
 import { carry, done, inProgress, unmergedPaths } from './sync.ts';
 
 /** Commits of another branch listed to pick from, at most. */
@@ -150,7 +150,7 @@ export function cherryPick(repo: Repo, req: { shas: string[] }): Promise<SyncRes
       await carry(repo, head, r.tip, 'cherry-pick');
       return done(repo, `Cherry-picked ${plural(r.out.length, 'commit')} onto ${here}${r.skipped}.`, [r.tip]);
     } catch (e) {
-      if (!(e instanceof GitError) || !/^Conflict replaying/.test(e.message)) throw e;
+      if (!(e instanceof ReplayConflict)) throw e;
       conflict = e.message.replace(/ Nothing was changed\.$/, '');
     }
 

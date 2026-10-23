@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { unlink } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
@@ -32,8 +32,14 @@ const PAGE = 200;
 const MERGED = 500;
 const BACKUPS = 'refs/legit/backups';
 
-/** A commit being replayed conflicts with what it's replayed onto. */
-class ReplayConflict extends GitError {}
+/** A commit being replayed conflicts with what it's replayed onto, in `files` (UTF-8). */
+export class ReplayConflict extends GitError {
+  readonly files: string[];
+  constructor(message: string, files: string[]) {
+    super(message);
+    this.files = files;
+  }
+}
 
 interface Item {
   src: RawCommit;
@@ -311,7 +317,7 @@ export class Repo {
         if (!('tree' in r)) {
           const subject = parseMessage(toUtf8(c.message)).subject;
           throw new GitError(
-            `These commits' changes can't be combined: ${c.sha.slice(0, 7)} "${subject}" conflicts with the ones before it, in ${r.conflicts.map(toUtf8).join(', ')}.`,
+            `These commits' changes conflict: ${c.sha.slice(0, 7)} "${subject}" with the ones before it, in ${r.conflicts.map(toUtf8).join(', ')}. Squashing stops there for you to resolve.`,
           );
         }
         tree = r.tree;
@@ -400,9 +406,8 @@ export class Repo {
     const r = await merger.pick(base, onto, c.tree);
     if ('tree' in r) return r.tree;
     const subject = parseMessage(toUtf8(c.message)).subject;
-    throw new ReplayConflict(
-      `Conflict replaying ${c.sha.slice(0, 7)} "${subject}" in: ${r.conflicts.map(toUtf8).join(', ')}. Nothing was changed.`,
-    );
+    const files = r.conflicts.map(toUtf8);
+    throw new ReplayConflict(`${c.sha.slice(0, 7)} "${subject}" conflicts in ${files.join(', ')}. Nothing was changed.`, files);
   }
 
   /**
@@ -614,53 +619,92 @@ export class Repo {
       return this.result(await this.state(), chain.slice(0, k + 1).map((c, i) => [c, shas[i]]), [shas[k]]);
     } catch (e) {
       if (!(e instanceof ReplayConflict)) throw e;
-      return this.rebaseOnto(label, chain, k, tree);
+      const c = chain[k];
+      const base = c.parents[0] ?? null;
+      const edited = this.git.writeCommit({
+        tree,
+        parents: base ? [base] : [],
+        author: c.author,
+        committer: await this.git.committerIdent(),
+        extra: c.extra,
+        message: c.message,
+      });
+      await this.git.flush();
+      await this.verify(base, edited, [edited]);
+      const todo = [`pick ${edited}`, ...chain.slice(0, k).reverse().map((x) => `pick ${x.sha}`)];
+      const finished = await this.rebaseTodo(label, chain, k, todo);
+      return finished ? this.result(await this.state(), [[c, edited]], [edited]) : this.result(await this.state(), [], []);
     }
   }
 
   /**
-   * `chain[k]` rewritten with `tree`, then `git rebase --onto <it> chain[k]`: the commits after
-   * it replayed by git, which stops at a conflict like any rebase. It starts from a clean working
-   * tree (so `git rebase --abort` gets back exactly), after a backup of the tip.
+   * `rewrite`; but if a commit conflicts, `todo()` (lines of a rebase todo, oldest first) is handed
+   * to `git rebase -i` instead, which stops at the conflict for the conflict view (see `rebaseTodo`).
+   * Null then: there are no new SHAs to tell yet.
    */
-  private async rebaseOnto(label: string, chain: RawCommit[], k: number, tree: string): Promise<OpResult> {
-    const c = chain[k];
-    const base = c.parents[0] ?? null;
-    const edited = this.git.writeCommit({
-      tree,
-      parents: base ? [base] : [],
-      author: c.author,
-      committer: await this.git.committerIdent(),
-      extra: c.extra,
-      message: c.message,
-    });
-    await this.git.flush();
-    await this.verify(base, edited, [edited]);
-    await this.requireClean();
+  private async rewriteOrStop(
+    label: string, chain: RawCommit[], k: number, items: Item[], keepsTree: boolean, todo: () => Promise<string[]>,
+  ): Promise<string[] | null> {
+    try {
+      return await this.rewrite(label, chain, k, items, keepsTree);
+    } catch (e) {
+      if (!(e instanceof ReplayConflict)) throw e;
+      await this.rebaseTodo(label, chain, k, await todo(), e);
+      return null;
+    }
+  }
+
+  /**
+   * Replace `chain[0..k]` by a `git rebase -i` onto `chain[k]`'s parent doing `todo`: git replays
+   * it and stops at each conflict like any rebase. It starts from a clean working tree (so
+   * `git rebase --abort` gets back exactly), after a backup of the tip. True if it finished
+   * without stopping. `conflict`: the one that made the in-memory replay give up, for the refusal.
+   */
+  private async rebaseTodo(label: string, chain: RawCommit[], k: number, todo: string[], conflict?: ReplayConflict): Promise<boolean> {
+    const base = chain[k].parents[0] ?? null;
+    await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
+    const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+    if (status) {
+      throw new GitError(
+        conflict
+          ? `Resolving the conflict in ${conflict.files.join(', ')} needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`
+          : `This would change files in your working tree, but you have uncommitted changes:\n${status}\nCommit or stash them first. Nothing was changed.`,
+      );
+    }
     const head = chain[0].sha;
     if ((await this.head()) !== head) throw new GitError('HEAD moved while rewriting; nothing was changed.');
     await this.backup(head, label);
-    const r = await this.git.run(
-      [
-        '-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false',
-        // Keep every commit, as the in-memory replay would: none dropped as empty or as already applied.
-        'rebase', '--no-autosquash', '--reapply-cherry-picks', '--empty=keep', '--onto', edited, c.sha,
-      ],
-      { allowFail: true, timeout: 600_000, env: { GIT_EDITOR: 'true' } },
-    );
-    if (this.blocked()) {
-      // Stopped on a conflict: the conflict view takes it from here.
-      return this.result(await this.state(), [], []);
+    const file = join(tmpdir(), `legit-todo-${randomBytes(6).toString('hex')}`);
+    let r: Awaited<ReturnType<Git['run']>>;
+    try {
+      await writeFile(file, todo.map((l) => l + '\n').join(''));
+      r = await this.git.run(
+        [
+          '-c', 'rebase.autoStash=false', '-c', 'rebase.updateRefs=false', '-c', 'rebase.missingCommitsCheck=ignore',
+          // Keep every commit, as the in-memory replay would: none dropped as empty or as already applied.
+          'rebase', '-i', '--no-autosquash', '--reapply-cherry-picks', '--empty=keep', ...(base ? [base] : ['--root']),
+        ],
+        {
+          allowFail: true,
+          timeout: 600_000,
+          // The todo git writes is replaced by ours.
+          env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: `cp '${file.replace(/'/g, "'\\''")}'` },
+        },
+      );
+    } finally {
+      await unlink(file).catch(() => {});
     }
+    // Stopped on a conflict: the conflict view takes it from here.
+    if (this.blocked()) return false;
     const after = await this.head();
     if (r.code !== 0 || !after || after === head) {
       const output = (r.err + r.out.toString('utf8')).trim();
       throw new GitError(
-        after === head ? `Replaying the later commits failed; nothing was changed.\n${output}` : `Replaying the later commits failed.\n${output}`,
+        after === head ? `Replaying the commits failed; nothing was changed.\n${output}` : `Replaying the commits failed.\n${output}`,
       );
     }
     await this.record({ label, before: head, after });
-    return this.result(await this.state(), [[c, edited]], [edited]);
+    return true;
   }
 
   /** Tree of `c`'s parent plus the changed lines of `diff` for which `apply` is true. */
@@ -725,7 +769,27 @@ export class Repo {
         message: fromUtf8(buildMessage(req.subject, req.body, req.coauthors)),
       };
       const kept = chain.slice(0, k).filter((_, i) => !rest.includes(i));
-      const shas = await this.rewrite('squash', chain, k, [...kept.map((src) => ({ src })), target], true);
+      // As a rebase: the others fixed up into the oldest, the last of them by a copy with the new message.
+      const todo = async () => {
+        const last = chain[rest.at(-1)!];
+        const copy = this.git.writeCommit({
+          tree: last.tree,
+          parents: last.parents,
+          author: chain[k].author,
+          committer: await this.git.committerIdent(),
+          extra: chain[k].extra.filter((h) => !h.startsWith('encoding ')),
+          message: target.message!,
+        });
+        await this.git.flush();
+        return [
+          `pick ${chain[k].sha}`,
+          ...rest.slice(0, -1).map((i) => `fixup ${chain[i].sha}`),
+          `fixup -C ${copy}`,
+          ...kept.toReversed().map((c) => `pick ${c.sha}`),
+        ];
+      };
+      const shas = await this.rewriteOrStop('squash', chain, k, [...kept.map((src) => ({ src })), target], true, todo);
+      if (!shas) return this.result(await this.state(), [], []);
       const renamed: [RawCommit, string][] = kept.map((c, i) => [c, shas[i]]);
       for (const i of idx) renamed.push([chain[i], shas.at(-1)!]);
       return this.result(await this.state(), renamed, [shas.at(-1)!]);
@@ -743,7 +807,9 @@ export class Repo {
       while (k >= 0 && req.order[k] === chain[k].sha) k--;
       if (k < 0) return this.result(await this.state(), [], []);
       const moved = req.order.slice(0, k + 1).map((s) => bySha.get(s)!);
-      const shas = await this.rewrite('reorder', chain, k, moved.map((src) => ({ src })), true);
+      const todo = async () => moved.toReversed().map((c) => `pick ${c.sha}`);
+      const shas = await this.rewriteOrStop('reorder', chain, k, moved.map((src) => ({ src })), true, todo);
+      if (!shas) return this.result(await this.state(), [], []);
       return this.result(await this.state(), moved.map((c, i) => [c, shas[i]]), []);
     });
   }
@@ -761,7 +827,9 @@ export class Repo {
         await this.record({ label: 'drop', before: chain[0].sha, after: base });
         return this.result(await this.state(), [], []);
       }
-      const shas = await this.rewrite('drop', chain, k, kept.map((src) => ({ src })), false);
+      const todo = async () => kept.toReversed().map((c) => `pick ${c.sha}`);
+      const shas = await this.rewriteOrStop('drop', chain, k, kept.map((src) => ({ src })), false, todo);
+      if (!shas) return this.result(await this.state(), [], []);
       return this.result(await this.state(), kept.map((c, i) => [c, shas[i]]), []);
     });
   }

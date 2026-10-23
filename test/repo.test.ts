@@ -97,16 +97,6 @@ test('reorder commits, updating the working tree only when needed', async () => 
   assert.equal(git('status', '--porcelain'), '');
 });
 
-test('reorder conflict leaves history untouched', async () => {
-  commit('base', { f: '1\n' });
-  const a = commit('a', { f: '2\n' });
-  const b = commit('b', { f: '3\n' });
-  const head = git('rev-parse', 'HEAD');
-  const repo = await Repo.open(dir);
-  await assert.rejects(repo.reorder({ order: [a, b, git('rev-parse', 'HEAD~2')] }), /Conflict/);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-});
-
 test('squash non-adjacent commits, then undo and redo', async () => {
   commit('base', { f: '1\n' });
   const a = commit('a', { a: '1\n' });
@@ -172,7 +162,7 @@ test('the diff of a squash that would conflict says so', async () => {
   commit('mid', { f: 'm\n' });
   const c = commit('c', { f: 'c\n' });
   const repo = await Repo.open(dir);
-  await assert.rejects(repo.diff(`q${c}.${a}`), /can't be combined/);
+  await assert.rejects(repo.diff(`q${c}.${a}`), /conflict: .* "c" with the ones before it, in f. Squashing stops there/);
 });
 
 test('reordering updates a clean working tree and refuses to clobber changes', async () => {

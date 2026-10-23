@@ -173,7 +173,7 @@ test('a conflicting rebase stops at each conflict to resolve, continues and undo
   const head = git('rev-parse', 'HEAD');
 
   write('h', 'dirty\n');
-  await assert.rejects(pull(repo, { how: 'rebase' }), /conflicts\. Conflict replaying .* "mine" in: f\. Resolving.*without uncommitted changes.*Nothing was changed/s);
+  await assert.rejects(pull(repo, { how: 'rebase' }), /conflicts\. .* "mine" conflicts in f\. Resolving.*without uncommitted changes.*Nothing was changed/s);
   assert.equal(git('rev-parse', 'HEAD'), head);
   assert.equal(read('h'), 'dirty\n');
   git('checkout', '-q', '--', 'h');

@@ -60,7 +60,7 @@ test('copying refuses on a conflict, changing nothing', async () => {
   const mine = commit('mine', { f: '1\nmine\n3\n' });
   const other = git('rev-parse', 'other');
   const repo = await Repo.open(t.dir);
-  await assert.rejects(copyTo(repo, { shas: [mine], branch: 'other' }), /would conflict\. Conflict replaying .* "mine" in: f\..*Switch to other/s);
+  await assert.rejects(copyTo(repo, { shas: [mine], branch: 'other' }), /would conflict\. .* "mine" conflicts in f\..*Switch to other/s);
   assert.equal(git('rev-parse', 'other'), other);
 });
 
@@ -98,7 +98,7 @@ test('a conflicting cherry-pick stops for the conflict view, continues, and undo
 
   // Uncommitted changes would make an abort unsafe: refused.
   write('f', 'dirty\n');
-  await assert.rejects(cherryPick(repo, { shas: [x, y] }), /Conflict replaying .* "theirs" .*without uncommitted changes.*Nothing was changed/s);
+  await assert.rejects(cherryPick(repo, { shas: [x, y] }), /"theirs" conflicts in f\. .*without uncommitted changes.*Nothing was changed/s);
   assert.equal(git('rev-parse', 'HEAD'), head);
   git('checkout', '-q', '--', 'f');
 

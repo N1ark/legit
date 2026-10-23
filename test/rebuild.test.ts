@@ -89,7 +89,7 @@ test('a conflicting rebuild stops at each conflict, continues, and undoes in one
   const repo = await Repo.open(t.dir);
 
   write('h', 'dirty\n');
-  await assert.rejects(rebuildBranch(repo, { shas: picks, branch: 'main' }), /Rebuilding feature on main conflicts\. Conflict replaying .* "mine" in: f\..*Nothing was changed/s);
+  await assert.rejects(rebuildBranch(repo, { shas: picks, branch: 'main' }), /Rebuilding feature on main conflicts\. .* "mine" conflicts in f\..*Nothing was changed/s);
   assert.equal(git('rev-parse', 'HEAD'), head);
   git('checkout', '-q', '--', 'h');
 
