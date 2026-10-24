@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0 — 2026-10-24
+
+- The diff of uncommitted changes stays where you were reading as files change, instead of jumping back to the top.
+
 ## 0.10.0 — 2026-10-23
 
 - Right-clicking the branch or repository name in the top bar opens its menu, as do worktrees and recent repositories in the repository list.
