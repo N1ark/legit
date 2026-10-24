@@ -757,6 +757,8 @@ export interface DiffPosition {
   /** The scroller's scrollTop, for when `path` is null. */
   scrollTop: number;
   collapsed: string[];
+  /** Every file: one that wasn't there starts collapsed or not as it would anyway (missing when kept by an older version). */
+  files?: string[];
   shown: string[];
 }
 

@@ -9,7 +9,7 @@
   import type { DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
-  import { app, request, shortSha } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, request, shortSha } from './lib/app.svelte.ts';
   import { discardChanges } from './lib/discard.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
@@ -19,6 +19,9 @@
   let work = $state.raw<WorkState | null>(null);
   let staged = $state<Sel>({});
   let error = $state<string | null>(null);
+  let diffView = $state<DiffView>();
+  // Each new diff (files changing as they're written) opens where the last one was.
+  let at = $state.raw<DiffPosition | null>(null);
 
   const stagedSel = (d: DiffSummary): Sel => Object.fromEntries(d.files.map((f) => [f.path, new SvelteSet<number>(f.staged ?? [])]));
 
@@ -47,7 +50,10 @@
         if (resync || w.changes.sha !== work?.changes.sha) staged = stagedSel(w.changes);
         resync = false;
         // The same answer again (most refreshes change nothing here) has nothing to redraw.
-        if (text !== shown) [work, shown] = [w, text];
+        if (text !== shown) {
+          if (w.content !== work?.content) at = diffView?.position() ?? null;
+          [work, shown] = [w, text];
+        }
       } else again = true;
     } finally {
       loading = false;
@@ -268,7 +274,9 @@
       {#if files.length}
         {#key work.content}
           <DiffView
+            bind:this={diffView}
             summary={work.changes}
+            initial={at}
             sel={staged}
             readonly={false}
             hint="Checked lines are staged"

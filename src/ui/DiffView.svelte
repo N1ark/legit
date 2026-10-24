@@ -158,7 +158,9 @@
   let collapsed = $state<Record<number, boolean>>(
     untrack(() =>
       Object.fromEntries(
-        summary.files.flatMap((f, i) => ((initial ? initial.collapsed.includes(f.path) : f.generated) ? [[i, true]] : [])),
+        summary.files.flatMap((f, i) =>
+          (initial?.files?.includes(f.path) ? initial.collapsed.includes(f.path) : f.generated) ? [[i, true]] : [],
+        ),
       ),
     ),
   );
@@ -694,6 +696,7 @@
       offset: at >= 0 ? view.top - tops[at] : 0,
       scrollTop: scroller?.scrollTop ?? 0,
       collapsed: files.filter((_, i) => collapsed[i]).map((f) => f.path),
+      files: files.map((f) => f.path),
       shown: visible.map((i) => files[i].path),
     };
   }
