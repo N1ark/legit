@@ -24,17 +24,22 @@ export function matchKeys(a: string[], b: string[]): [number, number][] {
     }
     return out;
   }
-  // len[i * (n + 1) + j]: the longest common subsequence of a[i..] and b[j..].
-  const w = n + 1;
-  const len = new Uint32Array((m + 1) * w);
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      len[i * w + j] = a[i] === b[j] ? len[(i + 1) * w + j + 1] + 1 : Math.max(len[(i + 1) * w + j], len[i * w + j + 1]);
+  // A common start pairs up as the walk below would take it, without a table (a reindented block is all start).
+  let s = 0;
+  for (; s < m && s < n && a[s] === b[s]; s++) out.push([s, s]);
+  // len[(i - s) * w + j - s]: the longest common subsequence of a[i..] and b[j..].
+  const w = n - s + 1;
+  const len = new Uint32Array(s < m && s < n ? (m - s + 1) * w : 0);
+  for (let i = m - 1; i >= s; i--) {
+    for (let j = n - 1; j >= s; j--) {
+      const k = (i - s) * w + j - s;
+      len[k] = a[i] === b[j] ? len[k + w + 1] + 1 : Math.max(len[k + w], len[k + 1]);
     }
   }
-  for (let i = 0, j = 0; i < m && j < n; ) {
+  for (let i = s, j = s; i < m && j < n; ) {
+    const k = (i - s) * w + j - s;
     if (a[i] === b[j]) out.push([i++, j++]);
-    else if (len[(i + 1) * w + j] >= len[i * w + j + 1]) i++;
+    else if (len[k + w] >= len[k + 1]) i++;
     else j++;
   }
   return out;

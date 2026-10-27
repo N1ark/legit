@@ -56,47 +56,56 @@ export function parseDiff(data: string, sha: string): CommitDiff {
     pos = pathEnd + 1;
   }
   if (data[pos] === '\0') pos++;
-  const chunks = data.slice(pos).split(/\n(?=diff --git )/);
+  // Each patch starts a line with "diff --git ": chunk k is data[starts[k], starts[k + 1] - 1), read in
+  // place (no copy of the patch, nor an array of its lines, which for a huge commit is most of the work).
+  const starts = [pos];
+  for (let k = data.indexOf('\ndiff --git ', pos); k >= 0; k = data.indexOf('\ndiff --git ', k + 1)) starts.push(k + 1);
+  starts.push(data.length + 1);
+  const chunks = starts.length - 1;
 
   // Patches come in the same order as the raw records; a type change produces two.
   let ci = 0;
   for (const f of files) {
     // A working-tree file listed (stat-dirty) but no different has a record and no patch.
-    const next = chunks[ci] ?? '';
-    if (!next.startsWith('diff --git "') && !next.startsWith(`diff --git a/${f.oldPath ?? f.path} b/`)) {
+    const at = starts[ci];
+    const begins = (s: string) => ci < chunks && s.length < starts[ci + 1] - at && data.startsWith(s, at);
+    if (!begins('diff --git "') && !begins(`diff --git a/${f.oldPath ?? f.path} b/`)) {
       f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).digest('hex');
       continue;
     }
-    const mine = f.status === 'T' ? chunks.slice(ci, ci + 2) : chunks.slice(ci, ci + 1);
-    ci += mine.length;
-    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(mine.join('\n'), 'latin1').digest('hex');
+    const upto = Math.min(ci + (f.status === 'T' ? 2 : 1), chunks);
+    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(data.slice(at, starts[upto] - 1), 'latin1').digest('hex');
     let idx = 0;
-    for (const chunk of mine) {
-      const lines = chunk.split('\n');
+    for (; ci < upto; ci++) {
+      const stop = starts[ci + 1] - 1;
       let hunk: Hunk | null = null;
       let o = 0;
       let n = 0;
-      for (const l of lines) {
-        const m = l[0] === '@' ? HUNK.exec(l) : null;
+      for (let p = starts[ci]; p < stop; ) {
+        let e = data.indexOf('\n', p);
+        if (e < 0 || e > stop) e = stop;
+        const c = data[p];
+        const m = c === '@' ? HUNK.exec(data.slice(p, e)) : null;
         if (m) {
-          hunk = { header: l, oldStart: +m[1], oldCount: m[2] === undefined ? 1 : +m[2], newStart: +m[3], lines: [] };
+          hunk = { header: m.input, oldStart: +m[1], oldCount: m[2] === undefined ? 1 : +m[2], newStart: +m[3], lines: [] };
           o = +m[1];
           n = +m[3];
           f.hunks.push(hunk);
         } else if (!hunk) {
-          if (l.startsWith('Binary files ')) f.binary = true;
-        } else if (l[0] === '\\') {
+          if (e - p >= 13 && data.startsWith('Binary files ', p)) f.binary = true;
+        } else if (c === '\\') {
           const last = hunk.lines[hunk.lines.length - 1];
           if (last) last.eof = true;
-        } else if (l[0] === '+') {
-          hunk.lines.push({ t: '+', s: l.slice(1), i: idx++, n: n++ });
+        } else if (c === '+') {
+          hunk.lines.push({ t: '+', s: data.slice(p + 1, e), i: idx++, n: n++ });
           f.added++;
-        } else if (l[0] === '-') {
-          hunk.lines.push({ t: '-', s: l.slice(1), i: idx++, o: o++ });
+        } else if (c === '-') {
+          hunk.lines.push({ t: '-', s: data.slice(p + 1, e), i: idx++, o: o++ });
           f.removed++;
-        } else if (l[0] === ' ') {
-          hunk.lines.push({ t: ' ', s: l.slice(1), o: o++, n: n++ });
+        } else if (c === ' ') {
+          hunk.lines.push({ t: ' ', s: data.slice(p + 1, e), o: o++, n: n++ });
         }
+        p = e + 1;
       }
     }
     f.partial = !f.binary && f.status !== 'T' && TEXT_MODES.has(f.oldMode) && TEXT_MODES.has(f.newMode);

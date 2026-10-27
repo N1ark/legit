@@ -18,6 +18,33 @@ test('matching keys: the longest run in order, or greedily when the lists are hu
   assert.deepEqual(pairs[0], [0, 1]);
 });
 
+test('matching keys: skipping a common start pairs the same lines as the full table', () => {
+  // The table walk without the shortcut, which the shortcut must agree with.
+  const full = (a: string[], b: string[]) => {
+    const w = b.length + 1;
+    const len = new Uint32Array((a.length + 1) * w);
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) len[i * w + j] = a[i] === b[j] ? len[(i + 1) * w + j + 1] + 1 : Math.max(len[(i + 1) * w + j], len[i * w + j + 1]);
+    }
+    const out: [number, number][] = [];
+    for (let i = 0, j = 0; i < a.length && j < b.length; ) {
+      if (a[i] === b[j]) out.push([i++, j++]);
+      else if (len[(i + 1) * w + j] >= len[i * w + j + 1]) i++;
+      else j++;
+    }
+    return out;
+  };
+  let s = 7;
+  const r = () => ((s = (s * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const list = (n: number) => Array.from({ length: n }, () => 'abc'[Math.floor(r() * 3)]);
+  for (let round = 0; round < 500; round++) {
+    const start = list(Math.floor(r() * 5));
+    const a = [...start, ...list(Math.floor(r() * 8))];
+    const b = [...start, ...list(Math.floor(r() * 8))];
+    assert.deepEqual(matchKeys(a, b), full(a, b), JSON.stringify([a, b]));
+  }
+});
+
 test('whitespace pairs: only within a run of changes, never across a missing newline', () => {
   const types = '--++ -+-+';
   const text = ['  a', 'b', 'a', 'x', 'ctx', 'c', 'c ', 'd', 'd'];
