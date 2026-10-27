@@ -3,8 +3,10 @@
 // deleted branch's tip is first saved under refs/legit/deleted/<branch>/<time> (outside
 // refs/legit/backups, which restores move HEAD to), and every ref change is a compare-and-swap.
 
-import type { CreateBranchRequest, DeleteBranchesResult, DeletedBranch, OpResult, RemoteBranchInfo } from '../shared/types.ts';
-import { GitError } from './git.ts';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { BranchInfo, CreateBranchRequest, DeleteBranchesResult, DeletedBranch, OpResult, RemoteBranchInfo } from '../shared/types.ts';
+import { type Git, GitError } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
 import { stashPush, unstash } from './stash.ts';
@@ -288,6 +290,89 @@ export function unsetUpstream(repo: Repo, req: { branch: string }): Promise<OpRe
     if (!req.branch || !(await localExists(repo, req.branch))) throw new GitError(`No local branch named ${req.branch}.`);
     const r = await repo.git.run(['branch', '--unset-upstream', req.branch], { allowFail: true });
     if (r.code !== 0) throw new GitError(/no upstream/i.test(r.err) ? `${req.branch} doesn't track a branch.` : r.err.trim());
+  });
+}
+
+/** How far branches were from their upstreams (`upstream:track`), by `<history> <sha> <upstream sha>`: it only depends on those. */
+const tracks = new WeakMap<Git, Map<string, string>>();
+const TRACKS_KEPT = 5000;
+
+/** Changes when deepening a shallow clone (or grafts) changes what history a commit has. */
+async function historyStamp(git: Git) {
+  const files = ['shallow', 'info/grafts'].map((f) => stat(join(git.commonDir, f)).then((st) => `${st.size}:${st.mtimeMs}`, () => '-'));
+  return (await Promise.all(files)).join(' ');
+}
+
+/** Every local and remote-tracking branch's tip, by full name, from one `for-each-ref`. */
+async function branchTips(git: Git): Promise<Map<string, string>> {
+  const out = await git.text(['for-each-ref', '--format=%(refname)%00%(objectname)', 'refs/heads', 'refs/remotes']);
+  return new Map(out.split('\n').map((line) => line.split('\0') as [string, string]));
+}
+
+/** `upstream`'s tip, or null when it's gone; one outside refs/heads and refs/remotes (a fetch refspec of its own) is looked up alone. */
+const tipOf = (git: Git, tips: Map<string, string>, upstream: string) =>
+  tips.get(upstream) ?? (/^refs\/(heads|remotes)\//.test(upstream) ? null : git.resolve(upstream));
+
+/**
+ * Local branches, most recently committed first. Counting how far each is from its upstream is
+ * most of the work, so git only counts the pairs of tips it hasn't counted before, all at once.
+ */
+export async function localBranches(repo: Repo): Promise<BranchInfo[]> {
+  const git = repo.git;
+  const [out, all, stamp] = await Promise.all([
+    git.text([
+      'for-each-ref', '--sort=-committerdate',
+      '--format=%(refname)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream)%00%(upstream:short)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(HEAD)',
+      'refs/heads',
+    ]),
+    branchTips(git),
+    historyStamp(git),
+  ]);
+  const rows = await Promise.all(
+    out.split('\n').filter(Boolean).map(async (line) => {
+      const [ref, sha, subject, time, upstream, short, worktree, remote, remoteRef, head] = line.split('\0');
+      const tip = upstream ? await tipOf(git, all, upstream) : null;
+      return { ref, sha, subject, time, upstream, tip, short, worktree, remote, remoteRef, head };
+    }),
+  );
+  let known = tracks.get(git);
+  if (!known) tracks.set(git, (known = new Map()));
+  const key = (sha: string, tip: string) => `${stamp} ${sha} ${tip}`;
+
+  const track = new Map<string, string>();
+  const missing = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const t = r.tip ? known.get(key(r.sha, r.tip)) : undefined;
+    if (t !== undefined) track.set(r.ref, t);
+    else if (r.tip) missing.set(r.ref, r);
+  }
+  if (missing.size) {
+    const counted = await git.text([
+      'for-each-ref', '--format=%(refname)%00%(objectname)%00%(upstream:track,nobracket)',
+      ...(missing.size > rows.length / 2 ? ['refs/heads'] : missing.keys()),
+    ]);
+    // Git reads both tips again to count: a count is kept only if neither moved meanwhile, so it's theirs.
+    const after = await branchTips(git);
+    for (const line of counted.split('\n')) {
+      const [ref, sha, t = ''] = line.split('\0');
+      const r = missing.get(ref);
+      if (!r) continue;
+      track.set(ref, t);
+      if (sha === r.sha && after.get(ref) === r.sha && (await tipOf(git, after, r.upstream)) === r.tip) {
+        known.set(key(r.sha, r.tip!), t);
+        if (known.size > TRACKS_KEPT) known.delete(known.keys().next().value!);
+      }
+    }
+  }
+
+  return rows.map((r) => {
+    const here = r.head === '*';
+    const tracking = r.remote && r.remote !== '.' && r.remoteRef.startsWith('refs/heads/') ? { remote: r.remote, branch: r.remoteRef.slice('refs/heads/'.length) } : null;
+    const t = r.upstream && !r.tip ? 'gone' : track.get(r.ref);
+    return {
+      name: r.ref.slice('refs/heads/'.length), sha: r.sha, subject: r.subject, time: Number(r.time), upstream: r.short || null, tracking,
+      track: t || null, current: here, worktree: !here && r.worktree ? r.worktree : null,
+    };
   });
 }
 

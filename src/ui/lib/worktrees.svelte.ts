@@ -4,8 +4,11 @@ import { IS_TAURI, toast } from 'purr';
 import type { OpResult, WorktreeInfo, WorktreeRequest } from '../../shared/types.ts';
 import { app, request } from './app.svelte.ts';
 import { invoke } from './desktop.ts';
+import { Listed } from './listed.ts';
 
-export const listWorktrees = () => request<WorktreeInfo[]>('/api/worktrees');
+/** The worktrees the repository picker and ⌘K list (see `Listed`). */
+export const worktreeList = new Listed<WorktreeInfo[]>('/api/worktrees');
+export const listWorktrees = () => worktreeList.load();
 
 /** Show the worktree at `path` instead of this one. */
 export async function openWorktree(path: string) {

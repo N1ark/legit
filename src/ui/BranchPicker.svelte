@@ -14,11 +14,12 @@
     ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
     CopySimple, FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, LinkBreak, PencilSimple, Plus, Square, Stack, Trash, X,
   } from 'purr/icons';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
-  import { app, request, shortSha } from './lib/app.svelte.ts';
+  import { app, shortSha } from './lib/app.svelte.ts';
   import {
-    commitsRequest, deleteBranch, deleteBranches, deleteRemoteBranch, deleteRemoteBranches, newBranch, rebuild, renameBranch,
+    commitsRequest, deleteBranch, deleteBranches, deleteRemoteBranch, deleteRemoteBranches, lists, newBranch, rebuild, renameBranch,
     restoreBranch, setUpstream, switchOp, unsetUpstream,
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
@@ -42,9 +43,9 @@
   type Mode = 'switch' | 'merge' | 'rebase' | 'rebuild' | 'copy' | 'commits' | 'upstream';
   let mode = $state<Mode>('switch');
   let open = $state(false);
-  let local = $state<BranchInfo[] | null>(null);
-  let remote = $state<RemoteBranchInfo[]>([]);
-  let deleted = $state<DeletedBranch[]>([]);
+  let local = $state.raw<BranchInfo[] | null>(null);
+  let remote = $state.raw<RemoteBranchInfo[]>([]);
+  let deleted = $state.raw<DeletedBranch[]>([]);
   let filter = $state('');
   let active = $state(0);
   let button = $state<HTMLButtonElement>();
@@ -62,7 +63,7 @@
   let pickedBefore: string[] = [];
   /** The branch whose upstream is being picked (upstream mode), and the remotes, longest name first. */
   let tracker = $state<string | null>(null);
-  let remoteNames = $state<string[]>([]);
+  let remoteNames = $state.raw<string[]>([]);
 
   const disabled = $derived(!!app.repo?.blocked || app.busy);
   const here = $derived(app.repo?.branch ?? null);
@@ -155,11 +156,15 @@
     theirs ? rank(theirs.commits, filter, { keys: [(c) => c.subject, (c) => c.sha.slice(0, 7)] }).map(({ item }) => item) : [],
   );
 
+  /** Bumped by each load, so only the last one shows. */
+  let loads = 0;
+
   async function load() {
-    const get = <T,>(path: string): Promise<T> => fetch(path).then((r) => r.json());
+    const n = ++loads;
     if (mode === 'commits') {
       const r = await fetch(`/api/branches/commits?branch=${encodeURIComponent(browsing ?? '')}`);
       const data = await r.json();
+      if (n !== loads) return;
       if (!r.ok) {
         toast.error(data.error ?? r.statusText);
         return setMode('switch');
@@ -167,15 +172,30 @@
       theirs = data;
       return;
     }
-    [local, remote, deleted, remoteNames] = await Promise.all([
-      get<BranchInfo[]>('/api/branches'),
-      get<RemoteBranchInfo[]>(`/api/branches/remote${mode === 'switch' ? '' : '?all=1'}`),
-      get<DeletedBranch[]>('/api/branches/deleted'),
-      mode === 'upstream' ? get<string[]>('/api/remotes') : remoteNames,
-    ]);
-    const left = new Set([...local.map((b) => `local:${b.name}`), ...remote.map((b) => `remote:${b.ref}`)]);
+    const [l, r, d, names] = [lists.local, mode === 'switch' ? lists.remote : lists.allRemote, lists.deleted, lists.remotes];
+    const named = mode === 'upstream';
+    // What was listed in this same state shows at once, as it's asked for again.
+    if (local === null && l.cached && r.cached && d.cached && (!named || names.cached)) apply(l.cached, r.cached, d.cached, named ? names.cached : null);
+    try {
+      const got = await Promise.all([l.load(), r.load(), d.load(), named ? names.load() : null]);
+      if (n === loads) apply(...got);
+    } catch (e) {
+      if (n === loads) toast.error(e);
+    }
+  }
+
+  function apply(l: BranchInfo[], r: RemoteBranchInfo[], d: DeletedBranch[], names: string[] | null) {
+    [local, remote, deleted] = [l, r, d];
+    if (names) remoteNames = names;
+    const left = new Set([...l.map((b) => `local:${b.name}`), ...r.map((b) => `remote:${b.ref}`)]);
     for (const k of [...chosen]) if (!left.has(k)) chosen.delete(k);
   }
+
+  // While it's open, the list follows what changes in the repository (a fetch, a commit from a terminal…).
+  $effect(() => {
+    void app.repo;
+    untrack(() => open && mode !== 'commits' && local !== null && load());
+  });
 
   /**
    * Open the list to switch branch, or to pick one to merge, rebase or rebuild onto (or to copy
@@ -457,7 +477,7 @@
     if (!here) return;
     const { clientX: x, clientY: y } = e;
     try {
-      const b = (await request<BranchInfo[]>('/api/branches')).find((b) => b.current);
+      const b = (await lists.local.load()).find((b) => b.current);
       if (b) menu.showAt(x, y, localMenu(b), b.name);
     } catch (err) {
       toast.error(err);
@@ -512,6 +532,7 @@
   class="btn btn--ghost branch"
   onclick={() => (open ? (open = false) : show())}
   oncontextmenu={buttonMenu}
+  onpointerenter={() => open || [lists.local, lists.remote, lists.deleted].forEach((l) => l.warm())}
   {disabled}
   aria-expanded={open}
   use:tooltip={'Switch branch (b)'}

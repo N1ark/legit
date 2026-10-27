@@ -9,7 +9,7 @@
   import { invoke } from './lib/desktop.ts';
   import { startCursor } from './lib/picker.ts';
   import { tip } from './lib/tip.ts';
-  import { listWorktrees, newWorktree, openWorktree, removeWorktree, removeWorktreeTip } from './lib/worktrees.svelte.ts';
+  import { listWorktrees, newWorktree, openWorktree, removeWorktree, removeWorktreeTip, worktreeList } from './lib/worktrees.svelte.ts';
 
   interface RecentRepo {
     path: string;
@@ -28,7 +28,7 @@
 
   let open = $state(false);
   let list = $state<RecentRepo[] | null>(null);
-  let trees = $state<WorktreeInfo[] | null>(null);
+  let trees = $state.raw<WorktreeInfo[] | null>(null);
   let filter = $state('');
   /** The row arrowed or hovered to; until then the cursor is on the best match. */
   let picked = $state<number | null>(null);
@@ -77,6 +77,7 @@
     filter = '';
     picked = null;
     pending = false;
+    trees = worktreeList.cached;
     load();
   }
 

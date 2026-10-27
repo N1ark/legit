@@ -262,6 +262,37 @@ test('change what a branch tracks: the push info follows, and pushes go there un
   await assert.rejects(unsetUpstream(repo, { branch: 'nope' }), /No local branch/);
 });
 
+test('the branch list says how far each branch is from its upstream, as git does, following either tip', async () => {
+  commit('base', { f: '1\n' });
+  t.remote();
+  git('push', '-q', '-u', 'origin', 'main');
+  git('branch', '--track', 'feature', 'origin/main');
+  git('branch', '--track', 'local', 'main');
+  const repo = await Repo.open(dir());
+  const tracks = async () => Object.fromEntries((await repo.branches()).map((b) => [b.name, b.track]));
+  const asGit = () =>
+    Object.fromEntries(
+      git('for-each-ref', '--format=%(refname:short)|%(upstream:track,nobracket)', 'refs/heads').split('\n').map((l) => [l.split('|')[0], l.split('|')[1] || null]),
+    );
+  assert.deepEqual(await tracks(), { main: null, feature: null, local: null });
+
+  commit('a', { f: '2\n' });
+  assert.deepEqual(await tracks(), { main: 'ahead 1', feature: null, local: 'behind 1' });
+  git('push', '-q', 'origin', 'main');
+  assert.deepEqual(await tracks(), { main: null, feature: 'behind 1', local: 'behind 1' });
+  git('switch', '-q', 'feature');
+  commit('b', { g: '1\n' });
+  commit('c', { g: '2\n' });
+  assert.deepEqual(await tracks(), { main: null, feature: 'ahead 2, behind 1', local: 'behind 1' });
+  assert.deepEqual(await tracks(), asGit());
+  // Back where it was: counted before, and still right.
+  git('update-ref', 'refs/heads/feature', 'main~1');
+  assert.deepEqual(await tracks(), { main: null, feature: 'behind 1', local: 'behind 1' });
+  git('update-ref', '-d', 'refs/remotes/origin/main');
+  assert.deepEqual(await tracks(), { main: 'gone', feature: 'gone', local: 'behind 1' });
+  assert.deepEqual(await tracks(), asGit());
+});
+
 test('switching with "leave my changes" stashes them, and puts them back if the switch fails', async () => {
   commit('base', { f: '1\n' });
   git('branch', 'other');

@@ -4,8 +4,19 @@
 // being left (stashed) or bring them along (`git switch`, which refuses if they'd be
 // overwritten). The question is asked before the request, so no lock is held while waiting.
 import { confirmAction, dialog, promptText, toast } from 'purr';
-import type { BranchInfo, DeleteBranchesResult, RebuildPlan } from '../../shared/types.ts';
+import type { BranchInfo, DeleteBranchesResult, DeletedBranch, RebuildPlan, RemoteBranchInfo } from '../../shared/types.ts';
 import { app, request, shortSha } from './app.svelte.ts';
+import { Listed } from './listed.ts';
+
+/** The branch lists the branch picker, ⌘K and the new-worktree dialog show (see `Listed`). */
+export const lists = {
+  local: new Listed<BranchInfo[]>('/api/branches'),
+  /** Those no local branch tracks or shares a name with. */
+  remote: new Listed<RemoteBranchInfo[]>('/api/branches/remote'),
+  allRemote: new Listed<RemoteBranchInfo[]>('/api/branches/remote?all=1'),
+  deleted: new Listed<DeletedBranch[]>('/api/branches/deleted'),
+  remotes: new Listed<string[]>('/api/remotes'),
+};
 
 export type Choice = 'leave' | 'bring';
 
