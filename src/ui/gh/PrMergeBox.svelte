@@ -8,8 +8,8 @@
   import { untrack } from 'svelte';
   import type { BranchInfo } from '../../shared/types.ts';
   import type { MergeMethod, PrOverview } from '../../shared/gh-prview.ts';
-  import { app, request } from '../lib/app.svelte.ts';
-  import { deleteBranch, switchOp } from '../lib/branches.svelte.ts';
+  import { app } from '../lib/app.svelte.ts';
+  import { deleteBranch, lists, switchOp } from '../lib/branches.svelte.ts';
   import { METHOD_LABEL, METHOD_NOTE, METHOD_SHORT, checksLabel, mergeStatus } from '../lib/gh-prview.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
@@ -84,13 +84,15 @@
   let branches = $state.raw<BranchInfo[] | null>(null);
   async function loadBranches() {
     try {
-      branches = await request<BranchInfo[]>('/api/branches');
+      branches = lists.local.cached ?? (await lists.local.load());
     } catch {
       branches = null;
     }
   }
+  const ended = $derived(pr.state === 'merged' || pr.state === 'closed');
+  // Not on every reload of the pull request (a new object each time): once ended, and again when the repo's state changes.
   $effect(() => {
-    if (pr.state === 'merged' || pr.state === 'closed') untrack(loadBranches);
+    if (ended && app.repo) untrack(loadBranches);
   });
   const local = $derived(branches?.find((b) => b.name === pr.head) ?? null);
   const baseLocal = $derived(branches?.some((b) => b.name === pr.base) ?? false);
