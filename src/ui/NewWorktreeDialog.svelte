@@ -4,7 +4,8 @@
   // and its folder. Branching from a given commit (a remote branch) lists none.
   import { Button, Checkbox, Highlight, Modal, TextField, formatRelative, rank } from 'purr';
   import type { BranchInfo } from '../shared/types.ts';
-  import { app, request } from './lib/app.svelte.ts';
+  import { app } from './lib/app.svelte.ts';
+  import { lists } from './lib/branches.svelte.ts';
   import { worktreeQuestion } from './lib/worktrees.svelte.ts';
 
   const q = $derived(worktreeQuestion.pending);
@@ -25,9 +26,9 @@
     path = '';
     open = true;
     cursor = -1;
-    branches = null;
+    branches = lists.local.cached;
     let live = true;
-    request<BranchInfo[]>('/api/branches').then(
+    lists.local.load().then(
       (b) => live && (branches = b),
       () => {},
     );

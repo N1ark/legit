@@ -6,10 +6,10 @@
   import { CloudArrowDown, FolderSimple, Folders, GitBranch, GitCommit, MagnifyingGlass } from 'purr/icons';
   import { onMount } from 'svelte';
   import type { BranchInfo, RemoteBranchInfo, WorktreeInfo } from '../shared/types.ts';
-  import { app, request, shortSha } from './lib/app.svelte.ts';
-  import { switchOp } from './lib/branches.svelte.ts';
+  import { app, shortSha } from './lib/app.svelte.ts';
+  import { lists, switchOp } from './lib/branches.svelte.ts';
   import { invoke } from './lib/desktop.ts';
-  import { listWorktrees, openWorktree } from './lib/worktrees.svelte.ts';
+  import { listWorktrees, openWorktree, worktreeList } from './lib/worktrees.svelte.ts';
 
   interface Props {
     onclose: () => void;
@@ -31,10 +31,17 @@
   let loaded = $state(false);
 
   onMount(() => {
-    Promise.allSettled([
-      request<BranchInfo[]>('/api/branches').then((r) => (locals = r), toast.error),
-      request<RemoteBranchInfo[]>('/api/branches/remote').then((r) => (remotes = r), toast.error),
+    // What was listed in this same state shows at once, as it's asked for again.
+    const [kept, keptRemote, keptTrees] = [lists.local.cached, lists.remote.cached, worktreeList.cached];
+    const cached = !!(kept && keptRemote && keptTrees);
+    if (kept && keptRemote && keptTrees) [locals, remotes, trees] = [kept, keptRemote, keptTrees];
+    const fresh = Promise.allSettled([
+      lists.local.load().then((r) => (locals = r), toast.error),
+      lists.remote.load().then((r) => (remotes = r), toast.error),
       listWorktrees().then((r) => (trees = r), () => {}),
+    ]);
+    Promise.allSettled([
+      !cached && fresh,
       IS_TAURI && invoke<RecentRepo[]>('recent_repos').then((r) => (recent = r), () => {}),
     ]).then(() => (loaded = true));
   });
