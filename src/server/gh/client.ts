@@ -325,7 +325,11 @@ const warmed = new Map<string, { at: number; value: Promise<unknown> }>();
 export function warm<T>(key: string, fn: () => Promise<T>): Promise<unknown> {
   const hit = warmed.get(key);
   const value = hit && Date.now() - hit.at < WARM ? hit.value : fn();
-  if (value !== hit?.value) warmed.set(key, { at: Date.now(), value });
+  if (value !== hit?.value) {
+    // One the page never asked for (it moved on to another commit) would stay for good.
+    prune(warmed, WARM);
+    warmed.set(key, { at: Date.now(), value });
+  }
   return value.catch(() => warmed.get(key)?.value === value && warmed.delete(key));
 }
 
@@ -336,11 +340,20 @@ export function takeWarm<T>(key: string): Promise<T> | undefined {
   return hit && Date.now() - hit.at < WARM ? (hit.value as Promise<T>) : undefined;
 }
 
-/** `fn()`'s result for `ms`, per key; failures aren't kept. */
+/** Drop `store`'s entries older than `ms`, once it holds more than a few. */
+export function prune(store: Map<string, { at: number }>, ms: number, over = 100) {
+  if (store.size <= over) return;
+  const now = Date.now();
+  for (const [k, v] of store) if (now - v.at >= ms) store.delete(k);
+}
+
+/** `fn()`'s result for `ms`, per key; failures aren't kept, nor (past a few) those gone stale. */
 export function cached<T>(store: Map<string, { at: number; value: Promise<T> }>, key: string, ms: number, fn: () => Promise<T>): Promise<T> {
   const hit = store.get(key);
   if (hit && Date.now() - hit.at < ms) return hit.value;
   const value = fn();
+  // Keys that are never asked for again (the stack of a branch list since reordered) would pile up.
+  prune(store, ms);
   store.set(key, { at: Date.now(), value });
   value.catch(() => store.get(key)?.value === value && store.delete(key));
   return value;

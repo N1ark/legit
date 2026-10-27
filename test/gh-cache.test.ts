@@ -10,7 +10,7 @@ process.env.LEGIT_GITHUB_MOCK = '1';
 const { Repo } = await import('../src/server/repo.ts');
 await import('../src/server/gh/mock/index.ts');
 const { mockCalls, mockLimits } = await import('../src/server/gh/mock/registry.ts');
-const { graphql, rest } = await import('../src/server/gh/client.ts');
+const { cached, graphql, rest } = await import('../src/server/gh/client.ts');
 const { ghRepos } = await import('../src/server/gh/context.ts');
 const { githubRoute, warmGithub } = await import('../src/server/gh/routes.ts');
 
@@ -162,4 +162,10 @@ test('rate-limited, requests wait it out rather than each asking GitHub again', 
     await new Promise((r) => setTimeout(r, 2100));
     assert.match((await calls(() => rest('GET', '/notifications'))).join(), /^GET \/notifications( 304)?$/);
   }
+});
+
+test('a cache past a hundred keys drops those gone stale, keeping the fresh ones', async () => {
+  const store = new Map(Array.from({ length: 150 }, (_, i) => [`k${i}`, { at: i < 120 ? 0 : Date.now(), value: Promise.resolve(i) }]));
+  assert.equal(await cached(store, 'new', 1000, async () => -1), -1);
+  assert.deepEqual([...store.keys()], [...Array.from({ length: 30 }, (_, i) => `k${120 + i}`), 'new']);
 });
