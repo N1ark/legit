@@ -3,7 +3,7 @@
   // and words, pushes, and everything else as one-line events.
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
   import {
-    ArrowsClockwise, ChatCircle, CheckCircle, Eye, GitBranch, GitCommit, GitMerge, GitPullRequest, GitPullRequestClosed, PencilSimple,
+    ArrowsClockwise, ChatCircle, CheckCircle, Eye, GitBranch, GitCommit, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, PencilSimple,
     Tag as TagIcon, TextT, Trash, UserPlus, XCircle,
   } from 'purr/icons';
   import type { PrComment, PrEventType, PrOverview, ReviewState } from '../../shared/gh-prview.ts';
@@ -24,7 +24,7 @@
     closed: GitPullRequestClosed,
     reopened: GitPullRequest,
     ready: Eye,
-    draft: GitPullRequest,
+    draft: GitPullRequestDraft,
     'force-pushed': ArrowsClockwise,
     'review-requested': UserPlus,
     'review-request-removed': UserPlus,

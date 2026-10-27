@@ -17,7 +17,7 @@
 </script>
 
 {#if ref.isPullRequest}
-  <PrStatus state={ref.state} {size} tip={false} />
+  <span class="ref-icon"><PrStatus state={ref.state} {size} tip={false} /></span>
 {:else}
   <span class="ref-icon {tone}" role="img" aria-label={refStateWords(ref)}><Icon {size} weight="bold" aria-hidden="true" /></span>
 {/if}
