@@ -9,8 +9,8 @@ import { after, test } from 'node:test';
 process.env.LEGIT_GITHUB_MOCK = '1';
 const { Repo } = await import('../src/server/repo.ts');
 await import('../src/server/gh/mock/index.ts');
-const { mockCalls } = await import('../src/server/gh/mock/registry.ts');
-const { graphql, rest } = await import('../src/server/gh/client.ts');
+const { mockCalls, mockLimits } = await import('../src/server/gh/mock/registry.ts');
+const { cached, graphql, rest } = await import('../src/server/gh/client.ts');
 const { ghRepos } = await import('../src/server/gh/context.ts');
 const { githubRoute, warmGithub } = await import('../src/server/gh/routes.ts');
 
@@ -121,4 +121,51 @@ test("the warm-up also has the pull request's stack and review threads ready", a
   assert.deepEqual((await calls(() => warmGithub(repo))).filter((c) => /PrStack|ReviewThreads/.test(c)).sort(), ['GraphQL PrStack', 'GraphQL ReviewThreads']);
   const pr = await get('pr', { branch });
   assert.deepEqual(await calls(() => Promise.all([get('prStack', { branch }), get('reviewThreads', { number: String(pr.number) })])), []);
+});
+
+test("a REST read asked again sends its ETag, and GitHub's 304 is answered with what it had", async () => {
+  const repo = await Repo.open(demo);
+  const checks = (await githubRoute(repo, 'GET', 'checks', new URLSearchParams({ sha: git('rev-parse', 'origin/feature/parser') }))) as any;
+  const path = `/repos/acme/widgets/actions/jobs/${checks.groups[0].jobs[0].jobId}`;
+  let first: any;
+  assert.deepEqual(await calls(async () => (first = await rest('GET', path))), [`GET ${path}`]);
+  let again: any;
+  assert.deepEqual(await calls(async () => (again = await rest('GET', path))), [`GET ${path} 304`]);
+  assert.deepEqual(again, first);
+});
+
+test("a finished job's steps and log are asked for side by side, once; a running one's each time", async () => {
+  const repo = await Repo.open(demo);
+  const get = (name: string, q: Record<string, string> = {}) => githubRoute(repo, 'GET', name, new URLSearchParams(q)) as Promise<any>;
+  const done = (await get('checks', { sha: git('rev-parse', 'origin/feature/parser') })).groups[0].jobs[1].jobId;
+  const jobs = `/repos/acme/widgets/actions/jobs/${done}`;
+  let log: any;
+  assert.deepEqual((await calls(async () => (log = await get('checksLog', { job: String(done) })))).sort(), [`GET ${jobs}`, `GET ${jobs}/logs`]);
+  assert.ok(log.steps.some((s: any) => s.lines.length));
+  assert.deepEqual(await calls(async () => assert.deepEqual(await get('checksLog', { job: String(done) }), log)), []);
+  assert.deepEqual(await calls(() => get('checksJob', { job: String(done) })), []);
+
+  const queued = (await get('checks', { sha: git('rev-parse', 'origin/feature/pretty-errors') })).groups[0].jobs[0].jobId;
+  await assert.rejects(get('checksLog', { job: String(queued) }), /once the job finishes/);
+  assert.equal((await calls(() => get('checksJob', { job: String(queued) }))).length, 1);
+});
+
+test('rate-limited, requests wait it out rather than each asking GitHub again', async () => {
+  const path = '/repos/acme/widgets/actions/runs/1/rerun';
+  const refused = { code: 'github-limit' };
+  const limits = [() => ({ 'retry-after': '1' }), () => ({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 1) })];
+  for (const headers of limits) {
+    mockLimits.headers = headers();
+    assert.equal((await calls(() => assert.rejects(rest('GET', '/notifications'), refused))).length, 1);
+    mockLimits.headers = {};
+    assert.deepEqual(await calls(() => assert.rejects(rest('POST', path, undefined, { text: true }), refused)), []);
+    await new Promise((r) => setTimeout(r, 2100));
+    assert.match((await calls(() => rest('GET', '/notifications'))).join(), /^GET \/notifications( 304)?$/);
+  }
+});
+
+test('a cache past a hundred keys drops those gone stale, keeping the fresh ones', async () => {
+  const store = new Map(Array.from({ length: 150 }, (_, i) => [`k${i}`, { at: i < 120 ? 0 : Date.now(), value: Promise.resolve(i) }]));
+  assert.equal(await cached(store, 'new', 1000, async () => -1), -1);
+  assert.deepEqual([...store.keys()], [...Array.from({ length: 30 }, (_, i) => `k${120 + i}`), 'new']);
 });

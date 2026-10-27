@@ -1,6 +1,7 @@
 // The fake GitHub behind LEGIT_GITHUB_MOCK: handlers registered by name (GraphQL) or route (REST),
 // over one shared in-memory `db` that mutations change, so the UI sees its own writes.
 
+import { createHash } from 'node:crypto';
 import { GithubError } from '../client.ts';
 
 type GraphqlHandler = (vars: Record<string, any>) => unknown | Promise<unknown>;
@@ -45,6 +46,10 @@ export async function mockRest(method: string, path: string, body: unknown): Pro
   const url = new URL(path, 'https://api.github.com');
   mockCalls.push(`${method} ${url.pathname}`);
   await latency();
+  return answer(method, url, body);
+}
+
+async function answer(method: string, url: URL, body: unknown): Promise<unknown> {
   for (const h of restHandlers) {
     const m = h.method === method ? h.pattern.exec(url.pathname) : null;
     if (!m) continue;
@@ -52,4 +57,38 @@ export async function mockRest(method: string, path: string, body: unknown): Pro
     return structuredClone((await h.fn(params, url.searchParams, body)) ?? null);
   }
   throw new GithubError(`GitHub mock: no handler for ${method} ${url.pathname}.`, 404);
+}
+
+/** Rate-limit headers every answer carries, and `retry-after` on a refusal, as a test sets them; none by default. */
+export const mockLimits: { headers: Record<string, string> } = { headers: {} };
+
+/**
+ * A REST call answered as GitHub's API would over HTTP: JSON (or text) with an ETag, a 304 for a GET
+ * whose `If-None-Match` still holds (counted as `GET /path 304`), a refusal with its status; and a
+ * 403 while `mockLimits` says none are left.
+ */
+export async function mockResponse(path: string, init: { method?: string; headers: Record<string, string>; body?: string }) {
+  const method = init.method ?? 'GET';
+  const url = new URL(path, 'https://api.github.com');
+  const at = mockCalls.push(`${method} ${url.pathname}`) - 1;
+  await latency();
+  const limits = mockLimits.headers;
+  if (limits['x-ratelimit-remaining'] === '0' || limits['retry-after']) {
+    return Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: limits });
+  }
+  let text: string;
+  let status = 200;
+  try {
+    const data = await answer(method, url, init.body === undefined ? undefined : JSON.parse(init.body));
+    text = typeof data === 'string' ? data : JSON.stringify(data);
+  } catch (e) {
+    status = e instanceof GithubError && e.status >= 400 ? e.status : 500;
+    text = JSON.stringify({ message: (e instanceof Error ? e.message : String(e)).replace(/^GitHub: /, '') });
+  }
+  const etag = `W/"${createHash('sha1').update(text).digest('hex')}"`;
+  if (method === 'GET' && status === 200 && init.headers['if-none-match'] === etag) {
+    mockCalls[at] += ' 304';
+    return new Response(null, { status: 304, headers: { ...limits, etag } });
+  }
+  return new Response(text, { status, headers: { ...limits, ...(status === 200 ? { etag } : {}) } });
 }

@@ -4,7 +4,7 @@
 
 import { freshest } from '../base.ts';
 import { githubRepo } from '../github.ts';
-import { GithubError, cached, graphql, rest } from './client.ts';
+import { GithubError, cached, graphql, prune, rest } from './client.ts';
 import { ghRepos, needGhRepos, type GhRepos } from './context.ts';
 import { PR_FIELDS, forgetPrs, headCache, pickPr, toPullRequest } from './pulls.ts';
 import { byHead, missingBase, stackAround } from './stacks.ts';
@@ -152,7 +152,7 @@ async function queryHeads(r: GhRepos, heads: string[], first: number): Promise<{
 function headNodes(r: GhRepos, heads: string[], fresh: boolean): Promise<any[][]> {
   const key = (h: string) => `${r.base}\0${h}`;
   const now = Date.now();
-  if (headCache.size > 5000) for (const [k, v] of headCache) if (now - v.at > 15_000) headCache.delete(k);
+  prune(headCache, 15_000, 5000);
   const missing = heads.filter((h) => {
     const hit = headCache.get(key(h));
     return fresh || !hit || now - hit.at >= 15_000;

@@ -1,7 +1,7 @@
 // Issues: creating one, and what `#123` references point at (resolved in batches, and searched
 // for the message editors' suggestions).
 
-import { GithubError, MOCK, cached, graphql, rest } from './client.ts';
+import { GithubError, MOCK, cached, graphql, prune, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { prState } from './pulls.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
@@ -87,6 +87,7 @@ export async function resolveRefs(refs: string[], changedAt: Record<string, numb
     chunks.map(async (chunk) => {
       const q = refsQuery(chunk);
       const data = await lenient<Record<string, Record<string, unknown> | null>>(q.query, q.variables);
+      prune(refCache, REF_TTL, 2000);
       for (const [ref, repo, field] of q.paths) {
         out[ref] = toIssueRef(data[repo]?.[field]);
         refCache.set(ref, { at: Date.now(), value: out[ref] });
