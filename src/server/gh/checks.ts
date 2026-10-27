@@ -6,7 +6,7 @@ import { needGhRepos } from './context.ts';
 import { toCommitChecks, rollupState, toJobInfo } from './checks-map.ts';
 import { parseJobLog } from './joblog.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
-import type { CommitChecks, JobInfo, JobLog, RollupState } from '../../shared/gh-checks.ts';
+import { type CommitChecks, type JobInfo, type JobLog, type RollupState, FINISHED } from '../../shared/gh-checks.ts';
 import type { PullRequest } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
@@ -74,8 +74,9 @@ export async function warmChecks(repo: Repo, pr: PullRequest | null) {
 export async function rollups(repo: Repo, shas: string[]): Promise<Record<string, RollupState | null>> {
   const r = await needGhRepos(repo);
   const out: Record<string, RollupState | null> = {};
-  for (let i = 0; i < shas.length; i += 50) {
-    const chunk = shas.slice(i, i + 50);
+  const chunks = Array.from({ length: Math.ceil(shas.length / 50) }, (_, i) => shas.slice(i * 50, i * 50 + 50));
+  // Side by side rather than one after another: the list's dots come in one round trip.
+  await Promise.all(chunks.map(async (chunk) => {
     const vars = chunk.map((_, j) => `$s${j}: GitObjectID!`).join(', ');
     const fields = chunk.map((_, j) => `c${j}: object(oid: $s${j}) { ... on Commit { statusCheckRollup { state } } }`).join('\n');
     const d = await graphql(
@@ -83,34 +84,58 @@ export async function rollups(repo: Repo, shas: string[]): Promise<Record<string
       { owner: r.owner, name: r.name, ...Object.fromEntries(chunk.map((s, j) => [`s${j}`, s])) },
     );
     chunk.forEach((s, j) => (out[s] = rollupState(d.repository?.[`c${j}`]?.statusCheckRollup?.state)));
-  }
+  }));
   return out;
+}
+
+// A finished job never changes (re-running one makes a new job), so its steps and log are kept:
+// opening its log again shows at once, rather than downloading the whole of it again.
+const doneJobs = new Map<string, JobInfo>();
+const doneLogs = new Map<string, JobLog>();
+
+/** Keep `value` in `map` (most recently used last), dropping the oldest past `max`. */
+function keep<T>(map: Map<string, T>, key: string, value: T, max: number) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > max) map.delete(map.keys().next().value!);
 }
 
 async function job(repo: Repo, jobId: number): Promise<JobInfo> {
   const r = await needGhRepos(repo);
-  return toJobInfo(await rest('GET', `/repos/${r.base}/actions/jobs/${jobId}`));
+  const key = `${r.base}#${jobId}`;
+  const info = doneJobs.get(key) ?? toJobInfo(await rest('GET', `/repos/${r.base}/actions/jobs/${jobId}`));
+  if (FINISHED.has(info.state)) keep(doneJobs, key, info, 200);
+  return info;
 }
 
 /** The job's log, split into its steps; GitHub only has it once the job is over. */
 async function jobLog(repo: Repo, jobId: number): Promise<JobLog> {
   const r = await needGhRepos(repo);
-  const info = await job(repo, jobId);
-  let text: string;
-  try {
-    text = await rest<string>('GET', `/repos/${r.base}/actions/jobs/${jobId}/logs`, undefined, { text: true });
-  } catch (e) {
-    if (e instanceof GithubError && (e.status === 404 || e.status === 410)) {
+  const key = `${r.base}#${jobId}`;
+  const hit = doneLogs.get(key);
+  if (hit) {
+    keep(doneLogs, key, hit, 8);
+    return hit;
+  }
+  // Both at once: the steps only matter for splitting the log, and for saying why there's none.
+  const [info, text] = await Promise.all([
+    job(repo, jobId),
+    rest<string>('GET', `/repos/${r.base}/actions/jobs/${jobId}/logs`, undefined, { text: true }).catch((e: unknown) => e),
+  ]);
+  if (typeof text !== 'string') {
+    if (text instanceof GithubError && (text.status === 404 || text.status === 410)) {
       throw new GithubError(
         info.state === 'running' || info.state === 'pending'
           ? 'GitHub has the log once the job finishes; until then, see it on GitHub.'
           : "GitHub doesn't have this job's log any more (logs expire).",
-        e.status,
+        text.status,
       );
     }
-    throw e;
+    throw text;
   }
-  return parseJobLog(text, info);
+  const log = parseJobLog(text, info);
+  if (FINISHED.has(info.state)) keep(doneLogs, key, log, 8);
+  return log;
 }
 
 /** Re-run or cancel: GitHub answers 201/202 with an empty object, read as text and dropped. */

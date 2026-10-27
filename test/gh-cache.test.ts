@@ -122,3 +122,20 @@ test("the warm-up also has the pull request's stack and review threads ready", a
   const pr = await get('pr', { branch });
   assert.deepEqual(await calls(() => Promise.all([get('prStack', { branch }), get('reviewThreads', { number: String(pr.number) })])), []);
 });
+
+test("a finished job's steps and log are asked for side by side, once; a running one's each time", async () => {
+  const repo = await Repo.open(demo);
+  const get = (name: string, q: Record<string, string> = {}) => githubRoute(repo, 'GET', name, new URLSearchParams(q)) as Promise<any>;
+  const done = (await get('checks', { sha: git('rev-parse', 'origin/feature/parser') })).groups[0].jobs[1].jobId;
+  const jobs = `/repos/acme/widgets/actions/jobs/${done}`;
+  let log: any;
+  assert.deepEqual((await calls(async () => (log = await get('checksLog', { job: String(done) })))).sort(), [`GET ${jobs}`, `GET ${jobs}/logs`]);
+  assert.ok(log.steps.some((s: any) => s.lines.length));
+  assert.deepEqual(await calls(async () => assert.deepEqual(await get('checksLog', { job: String(done) }), log)), []);
+  assert.deepEqual(await calls(() => get('checksJob', { job: String(done) })), []);
+
+  const queued = (await get('checks', { sha: git('rev-parse', 'origin/feature/pretty-errors') })).groups[0].jobs[0].jobId;
+  await assert.rejects(get('checksLog', { job: String(queued) }), /once the job finishes/);
+  assert.equal((await calls(() => get('checksJob', { job: String(queued) }))).length, 1);
+});
+
