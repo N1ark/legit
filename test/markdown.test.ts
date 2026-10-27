@@ -13,6 +13,7 @@ test('issue references, but not inside words, entities or URLs', () => {
 
 test('titles stay inline; messages get blocks', () => {
   assert.deepEqual(kinds('1. Use `x`'), ['text:1. Use ', 'codespan:`x`']);
+  assert.equal(lexInline('1. Use `x`'), lexInline('1. Use `x`'), 'a title seen lately is lexed once');
   assert.deepEqual(
     lexBlocks('Wrapped\nline.\n\n- a\n- b').filter((t) => t.type !== 'space').map((t) => t.type),
     ['paragraph', 'list'],

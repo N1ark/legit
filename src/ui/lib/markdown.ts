@@ -3,6 +3,7 @@
 // injected, it shows as text.
 
 import { Lexer, Marked, type Token, type Tokens, type TokenizerExtension } from 'marked';
+import { Lru } from './cache.ts';
 
 export interface RefToken {
   type: 'ref';
@@ -34,8 +35,15 @@ const marked = new Marked({ gfm: true, breaks: false, extensions: [ref] });
 /** A whole message: paragraphs, lists, code blocks... */
 export const lexBlocks = (text: string): Token[] => marked.lexer(text);
 
-/** A title: inline markdown only, so "1. Fix it" or "# Notes" stays text. */
-export const lexInline = (text: string): Token[] => Lexer.lexInline(text, marked.defaults);
+/** Titles lexed lately: a list row lexes its commit's title again each time it scrolls into view. */
+const inline = new Lru<string, Token[]>(2000);
+
+/** A title: inline markdown only, so "1. Fix it" or "# Notes" stays text. The tokens are shared: read them, don't change them. */
+export function lexInline(text: string): Token[] {
+  let t = inline.get(text);
+  if (!t) inline.set(text, (t = Lexer.lexInline(text, marked.defaults)));
+  return t;
+}
 
 /** The issue URL a reference points at; null when the repository isn't known. */
 export function refUrl(t: RefToken, github: string | null | undefined): string | null {
