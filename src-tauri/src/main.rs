@@ -365,7 +365,8 @@ fn focus_any(app: &AppHandle) {
 }
 
 /// Show `path` in the window: start a server for it, then open the window on it, or switch the
-/// window to it once the page agrees (see `page_allows_leaving`).
+/// window to it once the page agrees (see `page_allows_leaving`). The server gets ready while the
+/// page is asked, so a switch waits for the slower of the two, not both.
 fn open_repo(app: &AppHandle, path: PathBuf) {
     let path = path.canonicalize().unwrap_or(path);
     let window = app.get_webview_window(WINDOW);
@@ -379,10 +380,24 @@ fn open_repo(app: &AppHandle, path: PathBuf) {
 
     let app = app.clone();
     thread::spawn(move || {
-        if window.is_some_and(|w| !page_allows_leaving(&app, &w)) {
+        let ready = {
+            let (app, path) = (app.clone(), path.clone());
+            thread::spawn(move || server_for(&app, &path))
+        };
+        let allowed = window.is_none_or(|w| page_allows_leaving(&app, &w));
+        let server = ready.join().unwrap_or_else(|_| Err("The legit server failed to start.".into()));
+        if !allowed {
+            // Staying: a server kept from before is kept again, one started for this stops.
+            match server {
+                Ok((server, true)) => keep_warm(&app, server),
+                Ok((server, false)) => {
+                    thread::spawn(move || stop(vec![server.child]));
+                }
+                Err(_) => {}
+            }
             return;
         }
-        if let Err(err) = start(&app, &path) {
+        if let Err(err) = server.and_then(|(server, _)| show(&app, &path, server)) {
             eprintln!("legit: couldn't open {}: {err}", path.display());
             app.dialog()
                 .message(err)
@@ -541,14 +556,17 @@ fn take_all(app: &AppHandle) -> Vec<Child> {
     all
 }
 
-fn start(app: &AppHandle, repo: &Path) -> Result<(), String> {
-    let server = match take_warm(app, repo) {
-        Some(server) => server,
-        None => {
-            let (child, url) = spawn_server(app, repo)?;
-            Server { repo: repo.to_path_buf(), child, url }
-        }
-    };
+/// A server for `repo`: the one kept from showing it before (and true), or a new one.
+fn server_for(app: &AppHandle, repo: &Path) -> Result<(Server, bool), String> {
+    if let Some(server) = take_warm(app, repo) {
+        return Ok((server, true));
+    }
+    let (child, url) = spawn_server(app, repo)?;
+    Ok((Server { repo: repo.to_path_buf(), child, url }, false))
+}
+
+/// Point the window at `server` (opening it the first time), keeping the one it leaves running.
+fn show(app: &AppHandle, repo: &Path, server: Server) -> Result<(), String> {
     app.state::<Views>().origins.lock().unwrap().insert(server.origin(), repo.to_path_buf());
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
