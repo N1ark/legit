@@ -3,7 +3,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Git } from '../src/server/git.ts';
+import { Repo } from '../src/server/repo.ts';
+import { serve } from '../src/server/server.ts';
 import { displaySettings, effectiveSettings, globalSettingsFile, readSettings, repoSettingsFile, saveSettings } from '../src/server/settings.ts';
+import type { DiffSummary, WorkState } from '../src/shared/types.ts';
 import { env, setup } from './util.ts';
 
 const t = setup();
@@ -79,5 +82,40 @@ test("display settings: the repo's win where set, else all repos", async () => {
     await saveSettings(git, { scope: 'repo', settings: { wrap: 'nope', guides: [] } });
     s = await readSettings(git);
     assert.deepEqual(displaySettings(s), { wrap: 'column', wrapColumn: 80, guides: [] });
+  });
+});
+
+test('a commit diff is tagged for the page to keep: its summary until the settings change (even by hand), its contents always', async () => {
+  await withHome(async () => {
+    t.commit('base', { 'a.txt': '1\n' });
+    const sha = t.commit('one', { 'a.txt': '2\n', 'b.lock2': '1\n' });
+    const repo = await Repo.open(t.dir);
+    const s = await serve(repo, { port: 0, dist: t.tmp() });
+    const get = (path: string, etag?: string | null) => fetch(new URL(path, s.url), { headers: etag ? { 'if-none-match': etag } : {} });
+    const lock = async (r: Response) => ((await r.json()) as DiffSummary).files.find((f) => f.path === 'b.lock2')!.generated;
+    try {
+      const first = await get(`/api/diff/${sha}`);
+      assert.equal(first.headers.get('cache-control'), 'private, no-cache');
+      const etag = first.headers.get('etag');
+      assert.equal(await lock(first), false);
+      assert.equal((await get(`/api/diff/${sha}`, etag)).status, 304);
+      // Collapsing it in the settings file by hand shows (as it does from another repo's server).
+      writeFileSync(repoSettingsFile(repo.git), JSON.stringify({ collapse: ['*.lock2'], syntax: [] }));
+      const again = await get(`/api/diff/${sha}`, etag);
+      assert.equal(again.status, 200);
+      assert.equal(await lock(again), true);
+
+      const files = await get(`/api/diff/${sha}/files?i=0`);
+      assert.equal((await get(`/api/diff/${sha}/files?i=0`, files.headers.get('etag'))).status, 304);
+      assert.equal((await get(`/api/diff/${sha}/old?i=0`, files.headers.get('etag'))).status, 304);
+      // Uncommitted changes are never kept.
+      t.write('a.txt', '3\n');
+      const work: WorkState = await (await get('/api/work')).json();
+      const changed = await get(`/api/diff/${work.changes.sha}/files?i=0`);
+      assert.equal(changed.headers.get('cache-control'), 'no-store');
+      assert.equal(changed.headers.get('etag'), null);
+    } finally {
+      s.close();
+    }
   });
 });

@@ -31,6 +31,16 @@ const PAST_MERGE = 20;
 const PAGE = 200;
 const MERGED = 500;
 const BACKUPS = 'refs/legit/backups';
+/** Parsed diffs kept, and about how much memory they may take together. */
+const MAX_DIFFS = 200;
+const MAX_DIFF_BYTES = 128 * 1024 * 1024;
+
+/** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
+const diffBytes = (d: CommitDiff) => {
+  let n = 0;
+  for (const f of d.files) for (const h of f.hunks) for (const l of h.lines) n += l.s.length + 64;
+  return n;
+};
 
 /** A commit being replayed conflicts with what it's replayed onto, in `files` (UTF-8). */
 export class ReplayConflict extends GitError {
@@ -97,7 +107,9 @@ export class Repo {
   readonly git: Git;
   /** Undo/redo history per branch (or detached HEAD). */
   history = new Map<string, { undo: Move[]; redo: Move[] }>();
-  private diffs = new Map<string, CommitDiff>();
+  /** Parsed diffs by key (they never change), least recently used first; sizes as `diffBytes` guesses them. */
+  private diffs = new Map<string, { diff: Promise<CommitDiff>; bytes: number }>();
+  private diffsBytes = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
   /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
@@ -296,18 +308,33 @@ export class Repo {
       if (!snap) throw new GitError('Those changes are out of date; refresh.');
       return snap;
     }
-    let d = this.diffs.get(sha);
-    if (!d) {
-      // `s<sha>`: a stash's changes, untracked files included.
-      d = sha.startsWith('s')
-        ? await stashDiff(this.git, sha.slice(1), sha)
-        : sha.startsWith('q')
-          ? await this.squashDiff(sha)
-          : await commitDiff(this.git, sha);
-      if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
-      this.diffs.set(sha, d);
+    const cached = this.diffs.get(sha);
+    if (cached) {
+      // Used last, so the diff on screen outlives the ones prefetched around it.
+      this.diffs.delete(sha);
+      this.diffs.set(sha, cached);
+      return cached.diff;
     }
-    return d;
+    // `s<sha>`: a stash's changes, untracked files included. Cached while it's worked out, so it's worked out once.
+    const diff = sha.startsWith('s') ? stashDiff(this.git, sha.slice(1), sha) : sha.startsWith('q') ? this.squashDiff(sha) : commitDiff(this.git, sha);
+    const entry = { diff, bytes: 0 };
+    this.diffs.set(sha, entry);
+    diff.then(
+      (d) => {
+        if (this.diffs.get(sha) !== entry) return;
+        entry.bytes = diffBytes(d);
+        this.diffsBytes += entry.bytes;
+        // A huge commit's parsed diff takes a few times its patch: keep this one, and as many others as fit.
+        for (const [k, e] of this.diffs) {
+          if (this.diffs.size <= MAX_DIFFS && this.diffsBytes <= MAX_DIFF_BYTES) break;
+          if (e === entry) continue;
+          this.diffs.delete(k);
+          this.diffsBytes -= e.bytes;
+        }
+      },
+      () => this.diffs.get(sha) === entry && this.diffs.delete(sha),
+    );
+    return diff;
   }
 
   /**

@@ -1,6 +1,6 @@
 // Local HTTP server: JSON API, change notifications (SSE), and the UI.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -39,6 +39,8 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
+  // web-tree-sitter compiles its runtime while it downloads only when served as this; otherwise it fetches it again.
+  '.wasm': 'application/wasm',
 };
 
 type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
@@ -68,10 +70,19 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function send(res: ServerResponse, status: number, body: unknown) {
+/** `etag`: the body never changes under it, so the page may keep it and ask again with the tag (see `unchanged`). */
+function send(res: ServerResponse, status: number, body: unknown, etag?: string) {
   const data = typeof body === 'string' ? body : JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.writeHead(status, { 'content-type': 'application/json', ...(etag ? { 'cache-control': 'private, no-cache', etag } : { 'cache-control': 'no-store' }) });
   res.end(data);
+}
+
+/** The page already has the response tagged `etag`: tell it so (304), and it shows its own copy. */
+function unchanged(req: IncomingMessage, res: ServerResponse, etag: string | undefined): boolean {
+  if (!etag || req.headers['if-none-match'] !== etag) return false;
+  res.writeHead(304, { 'cache-control': 'private, no-cache', etag });
+  res.end();
+  return true;
 }
 
 /** Diff keys (see `Repo.diff`): a commit, a stash, a working-tree snapshot, or a squash's result. */
@@ -80,8 +91,13 @@ const DIFF = new RegExp(`^/api/diff/${KEY}$`);
 const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
 const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
+/** A diff key whose content never changes (a commit's, a stash's or a squash's), unlike a working-tree snapshot's. */
+const fixedKey = (key: string) => !/^w\d+$/.test(key);
 /** Images bigger than this aren't shown. */
 const MAX_IMAGE = 50 * 1024 * 1024;
+/** Summaries kept, and how much of their JSON in all. */
+const MAX_SUMMARIES = 100;
+const MAX_SUMMARY_BYTES = 16 * 1024 * 1024;
 
 /** Most changed paths checked for being ignored at once; past that, a change is just assumed to count. */
 const MAX_CHECKED = 2000;
@@ -100,7 +116,12 @@ async function allIgnored(git: Git, paths: string[]): Promise<boolean> {
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   warmGithub(repo);
   const clients = new Set<ServerResponse>();
+  /** Summaries' JSON by settings and key, least recently used first. */
   const summaries = new Map<string, string>();
+  let summaryBytes = 0;
+  // Tags what never changes on this server (its diffs, under the same settings), so a page reloaded on it, as
+  // the app's is on coming back to its repo, keeps what it loaded. Another server, or version, has another.
+  const boot = randomBytes(8).toString('hex');
 
   // Tell the UI when refs or in-progress operations change (commits from a terminal, etc),
   // and, separately, when files or the index change (uncommitted changes).
@@ -206,29 +227,50 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     saveSettings: async (b) => {
       const s = await saveSettings(repo.git, b);
       summaries.clear();
+      summaryBytes = 0;
       return s;
     },
   };
 
   let origin = '';
 
-  /** A diff's summary as JSON, cached by key (commit SHAs and snapshot keys never change content). */
-  async function summary(d: CommitDiff): Promise<string> {
-    let json = summaries.get(d.sha);
-    if (!json) {
-      const work = /^w\d+$/.test(d.sha);
-      const paths = d.files.map((f) => f.path);
-      const settings = await effectiveSettings(repo.git);
-      // A squash's attributes are its newest commit's.
-      const source = work ? null : d.sha.replace(/^[sq]/, '').split(/[-.]/)[0];
-      const generated = await generatedPaths(repo.git, source, paths, settings.collapse);
-      const s = summarize(d, generated, syntaxes(settings.syntax, paths));
-      for (const [k, sizes] of await fileSizes(repo.git, d)) Object.assign(s.files[k], sizes);
-      // A snapshot's key changes with any file: the UI keeps what it loaded of the others by their tokens.
-      if (work) s.files.forEach((f, k) => (f.token = d.files[k].token));
-      json = JSON.stringify(s);
-      if (summaries.size > 100) summaries.delete(summaries.keys().next().value!);
-      summaries.set(d.sha, json);
+  /**
+   * The settings summaries depend on, and a tag for them. Read each time (it's quick), so settings
+   * changed elsewhere (by hand, or on another repo's server for all repos) apply here too.
+   */
+  async function summarySettings() {
+    const settings = await effectiveSettings(repo.git);
+    return { settings, tag: createHash('sha1').update(JSON.stringify(settings)).digest('hex').slice(0, 16) };
+  }
+
+  /** A diff's summary as JSON, cached by key and settings (commit SHAs and snapshot keys never change content). */
+  async function summary(d: CommitDiff, current?: Awaited<ReturnType<typeof summarySettings>>): Promise<string> {
+    const { settings, tag } = current ?? (await summarySettings());
+    const key = `${tag}:${d.sha}`;
+    let json = summaries.get(key);
+    if (json) {
+      summaries.delete(key);
+      summaries.set(key, json);
+      return json;
+    }
+    const work = /^w\d+$/.test(d.sha);
+    const paths = d.files.map((f) => f.path);
+    // A squash's attributes are its newest commit's.
+    const source = work ? null : d.sha.replace(/^[sq]/, '').split(/[-.]/)[0];
+    const [generated, sizes] = await Promise.all([generatedPaths(repo.git, source, paths, settings.collapse), fileSizes(repo.git, d)]);
+    const s = summarize(d, generated, syntaxes(settings.syntax, paths));
+    for (const [k, size] of sizes) Object.assign(s.files[k], size);
+    // A snapshot's key changes with any file: the UI keeps what it loaded of the others by their tokens.
+    if (work) s.files.forEach((f, k) => (f.token = d.files[k].token));
+    json = JSON.stringify(s);
+    if (summaries.has(key)) return json;
+    summaries.set(key, json);
+    summaryBytes += json.length;
+    for (const [k, v] of summaries) {
+      if (summaries.size <= MAX_SUMMARIES && summaryBytes <= MAX_SUMMARY_BYTES) break;
+      if (k === key) continue;
+      summaries.delete(k);
+      summaryBytes -= v.length;
     }
     return json;
   }
@@ -280,23 +322,33 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);
     if (merged) return send(res, 200, await repo.merged(merged[1]));
     const diff = DIFF.exec(path);
-    if (diff) return send(res, 200, await summary(await repo.diff(diff[1])));
+    if (diff) {
+      const current = await summarySettings();
+      // Then the summary changes only with the settings.
+      const etag = fixedKey(diff[1]) ? `"${boot}.${current.tag}"` : undefined;
+      if (unchanged(req, res, etag)) return;
+      return send(res, 200, await summary(await repo.diff(diff[1]), current), etag);
+    }
     // /api/diff/<sha>/files?i=0,1,2: contents of some files, loaded as they scroll into view.
     const files = DIFF_FILES.exec(path);
     if (files) {
+      const etag = fixedKey(files[1]) ? `"${boot}"` : undefined;
+      if (unchanged(req, res, etag)) return;
       const d = await repo.diff(files[1]);
       const out: FileContents = {};
       for (const i of (query.get('i') ?? '').split(',').map(Number)) {
         if (Number.isInteger(i) && d.files[i]) out[i] = fileContent(d.files[i]);
       }
-      return send(res, 200, out);
+      return send(res, 200, out, etag);
     }
     // /api/diff/<sha>/old?i=3: a modified file's old version, to show the lines between its hunks.
     const old = DIFF_OLD.exec(path);
     if (old) {
+      const etag = fixedKey(old[1]) ? `"${boot}"` : undefined;
+      if (unchanged(req, res, etag)) return;
       const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
       if (!f) return send(res, 404, { error: 'Not found' });
-      return send(res, 200, await oldLines(repo.git, f));
+      return send(res, 200, await oldLines(repo.git, f), etag);
     }
     // /api/diff/<sha>/image?i=3&side=old: an image file as it was or is, for an <img> of this page only.
     const image = DIFF_IMAGE.exec(path);
