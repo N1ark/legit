@@ -42,13 +42,16 @@ export const ghPost = <T,>(name: string, body: unknown = {}) => ghRequest<T>(nam
 
 const PREFETCHED = 10_000;
 const prviews = new Map<number, { at: number; value: Promise<PrOverview> }>();
+/** An open overview is reloaded about this often anyway, so one this old shows at once when opened again. */
+const KEPT = 60_000;
+const kept = new Map<number, { at: number; pr: PrOverview }>();
 
 /** Start loading pull request `number`'s overview, about to be opened (its card is shown). */
 export function prefetchPrview(number: number) {
   const hit = prviews.get(number);
   if (hit && Date.now() - hit.at < PREFETCHED) return;
   const value = ghRequest<PrOverview>('prview', { number });
-  value.catch(() => {});
+  value.then(keepPrview, () => {});
   prviews.set(number, { at: Date.now(), value });
 }
 
@@ -59,11 +62,29 @@ export function loadPrview(number: number): Promise<PrOverview> {
   return hit && Date.now() - hit.at < PREFETCHED ? hit.value : ghRequest<PrOverview>('prview', { number });
 }
 
+/** An overview as GitHub just gave it, to show at once next time; the last few are kept. */
+export function keepPrview(pr: PrOverview) {
+  kept.delete(pr.number);
+  kept.set(pr.number, { at: Date.now(), pr });
+  if (kept.size > 8) kept.delete(kept.keys().next().value!);
+}
+
+/** Pull request `number`'s overview loaded in the last minute, and when; null when there's none. */
+export function keptPrview(number: number): { at: number; pr: PrOverview } | null {
+  const k = kept.get(number);
+  return k && Date.now() - k.at < KEPT ? k : null;
+}
+
 /** What the main area shows instead of a commit, when not null. */
 export type GhView = { kind: 'pr'; number: number };
 
 /** How often a refresh that found the same pull request still has the views reload theirs. */
 const TICK_EVERY = 30_000;
+/** How often the poll refreshes while the window is in the background: focusing it refreshes anyway. */
+const UNFOCUSED_EVERY = 5 * 60_000;
+
+/** What `follow()` follows: the branch, its tip and what was fetched of it. */
+const followKey = () => `${app.repo?.branch}\0${app.repo?.head}\0${app.repo?.push?.tip}`;
 
 class Github {
   status = $state<GithubStatus | null>(null);
@@ -83,7 +104,8 @@ class Github {
   private statusLoad: Promise<{ status: GithubStatus; n: number; branch: string | null }> | null = null;
   private statusN = 0;
   private gen = 0;
-  private followed: string | null = null;
+  private refreshing = $state(false);
+  private followed = $state<string | null>(null);
   /** Each branch's pull request as last looked up. */
   private seen = new Map<string, PullRequest | null>();
 
@@ -94,6 +116,9 @@ class Github {
    */
   async refresh(opts: { fresh?: boolean; retry?: boolean } = {}) {
     const gen = ++this.gen;
+    this.refreshing = true;
+    // Something changed on GitHub from here: an overview kept from before may not show it.
+    if (opts.fresh) kept.clear();
     const branch = app.repo?.branch ?? null;
     // Back on a branch: its pull request as last seen, until GitHub's answer replaces it.
     if (branch !== this.branch) this.pr = branch ? (this.seen.get(branch) ?? undefined) : undefined;
@@ -134,7 +159,14 @@ class Github {
       }
     } catch (e) {
       if (gen === this.gen && opts.fresh) toast.error(e);
+    } finally {
+      if (gen === this.gen) this.refreshing = false;
     }
+  }
+
+  /** The pull request is being looked up again, or about to be (the repo moved since): what it says may change. */
+  get pending() {
+    return this.refreshing || this.followed !== followKey();
   }
 
   /** Ask who's signed in; refreshes meanwhile wait for the same answer, and only the last one asked is kept. */
@@ -153,15 +185,15 @@ class Github {
 
   /** After the repo's state reloads: refresh if the branch, its tip or what was fetched of it moved. */
   follow() {
-    const r = app.repo;
-    const key = `${r?.branch}\0${r?.head}\0${r?.push?.tip}`;
+    const key = followKey();
     if (key === this.followed) return;
     this.followed = key;
     this.refresh();
   }
 
-  /** Refresh unless that happened in the last `ms`. */
+  /** Refresh unless that happened in the last `ms` (or, while the window isn't focused, the last few minutes). */
   refreshIfOlder(ms: number) {
+    if (!document.hasFocus()) ms = Math.max(ms, UNFOCUSED_EVERY);
     if (Date.now() - this.lastAt > ms || (app.repo?.branch ?? null) !== this.branch) this.refresh();
   }
 

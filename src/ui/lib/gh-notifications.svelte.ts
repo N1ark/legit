@@ -44,6 +44,11 @@ class Notifications {
     }
   }
 
+  /** On opening the list, which shows what was loaded meanwhile: again, unless that was just now. */
+  revalidate() {
+    if (Date.now() - this.lastAt > 10_000) this.load();
+  }
+
   /** Poll while signed in and focused; returns the cleanup, for onMount. */
   start(): () => void {
     const tick = () => {

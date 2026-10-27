@@ -2,6 +2,7 @@
   // A pull request in place of a commit, as GitHub's Conversation tab: its description, commits,
   // timeline and merge box, with who reviews it and its labels beside them. One query loads it
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
+  // Opened again within a minute, it shows the overview it had at once, while it loads again.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
   import { ArrowSquareOut, CheckCircle, Circle, GitPullRequestClosed, X, XCircle } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
@@ -11,7 +12,7 @@
   import { app } from '../lib/app.svelte.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
-  import { gh, ghPost, ghRequest, loadPrview } from '../lib/github.svelte.ts';
+  import { gh, ghPost, ghRequest, keepPrview, keptPrview, loadPrview } from '../lib/github.svelte.ts';
   import PrMergeBox from './PrMergeBox.svelte';
   import PrStatus from './PrStatus.svelte';
   import PrReview from './PrReview.svelte';
@@ -24,10 +25,12 @@
   }
   let { number }: Props = $props();
 
-  let pr = $state.raw<PrOverview | null>(null);
+  // One kept from the last minute (an open one is no fresher) shows at once, and loads again unless it's from just now.
+  const kept = untrack(() => keptPrview(number));
+  let pr = $state.raw<PrOverview | null>(kept?.pr ?? null);
   let error = $state<string | null>(null);
   let working = $state(false);
-  let loadedAt = 0;
+  let loadedAt = kept?.at ?? 0;
   let gen = 0;
   let unknownTries = 0;
 
@@ -39,6 +42,7 @@
       const got = await loadPrview(number);
       if (g !== gen) return;
       pr = got;
+      keepPrview(got);
       error = null;
     } catch (e) {
       if (g !== gen) return;
@@ -73,6 +77,7 @@
     working = true;
     try {
       pr = await ghPost<PrOverview>(name, { number, ...body });
+      keepPrview(pr);
       loadedAt = Date.now();
       if (done) toast(done);
       return true;
