@@ -46,7 +46,7 @@ export async function prForBranch(repo: Repo, branch: string, fresh = false): Pr
     const d = await graphql(
       `query PrForBranch($owner: String!, $name: String!, $head: String!) {
         repository(owner: $owner, name: $name) {
-          pullRequests(headRefName: $head, first: 10, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }
+          pullRequests(headRefName: $head, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }
         }
       }`,
       { owner: r.owner, name: r.name, head: branch },
@@ -65,8 +65,12 @@ export async function knownPr(repo: Repo, branch: string, stale = false): Promis
   return hit && (stale || Date.now() - hit.at < TTL) ? hit.pr : undefined;
 }
 
+/** GitHub's pull request nodes by head branch name (every fork's, most recently updated first), for the branch list. */
+export const headCache = new Map<string, { at: number; value: Promise<any[]> }>();
+
 /** Forget cached lookups, after something changed a pull request. */
 export function forgetPrs() {
   prs.clear();
   known.clear();
+  headCache.clear();
 }

@@ -32,10 +32,14 @@ onGraphql('PrStack', (v) => {
   return { repository };
 });
 
-// `hN`: the pull requests with that head, for the remote branches.
-onGraphql('RemotePrs', (v) => {
+// `hN`: the first `first` pull requests with that head, for the branch list.
+onGraphql('BranchPrs', (v) => {
   const repository: Record<string, unknown> = {};
-  for (const [k, name] of Object.entries(v)) if (/^h\d+$/.test(k)) repository[k] = { nodes: db.pulls.filter((p: any) => p.headRefName === name).reverse().map(prNode) };
+  for (const [k, name] of Object.entries(v)) {
+    if (!/^h\d+$/.test(k)) continue;
+    const all = db.pulls.filter((p: any) => p.headRefName === name).reverse();
+    repository[k] = { totalCount: all.length, nodes: all.slice(0, v.first).map(prNode) };
+  }
   return { repository };
 });
 

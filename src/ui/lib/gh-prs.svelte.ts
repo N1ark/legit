@@ -9,28 +9,63 @@ import { openWorktree } from './worktrees.svelte.ts';
 import type { CreatePrRequest, PrStack, RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
 import type { PullRequest } from '../../shared/github.ts';
 
+type Kind = 'local' | 'remote';
+/** Branch names sent in one request. */
+const PER_REQUEST = 100;
+
 class Prs {
-  /** Each local branch's pull request, by branch name (once the branch list asked). */
+  /** Local branches' pull requests, by branch name, once their rows have shown. */
   byBranch = $state.raw<Record<string, PullRequest>>({});
-  /** Each remote-tracking branch's, by `remote/branch`. */
+  /** Remote-tracking branches', by `remote/branch`. */
   byRemote = $state.raw<Record<string, PullRequest>>({});
   /** The stack the current branch's pull request is in; null when there's none. */
   stack = $state.raw<PrStack | null>(null);
   /** The "Create pull request" dialog is open. */
   creating = $state(false);
 
-  private branchesAsked = false;
+  /** Branches whose rows have shown, asked about again on each refresh; those not asked about yet. */
+  private asked: Record<Kind, Set<string>> = { local: new Set(), remote: new Set() };
+  private pending: Record<Kind, Set<string>> = { local: new Set(), remote: new Set() };
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private stackFor: string | null = null;
   private gen = 0;
 
+  /** Look up a branch's pull request once its row shows (a local branch, or a remote one as `remote/branch`); rows that show together are asked about together. */
+  want(kind: Kind, name: string) {
+    if (this.asked[kind].has(name)) return;
+    this.asked[kind].add(name);
+    this.pending[kind].add(name);
+    this.timer ??= setTimeout(() => {
+      this.timer = null;
+      this.ask(this.pending, false);
+    }, 30);
+  }
+
+  /** Ask again about every branch whose row has shown. */
   async loadBranches(fresh = false) {
-    this.branchesAsked = true;
+    await this.ask(this.asked, fresh);
+  }
+
+  private async ask(which: Record<Kind, Set<string>>, fresh: boolean) {
+    const names = { local: [...which.local], remote: [...which.remote] };
+    if (which === this.pending) [this.pending.local, this.pending.remote] = [new Set(), new Set()];
     if (!gh.ready) return void ([this.byBranch, this.byRemote] = [{}, {}]);
-    const q = { fresh: fresh ? 1 : null };
-    await Promise.all([
-      ghRequest<Record<string, PullRequest>>('prBranches', q).then((r) => (this.byBranch = r), () => {}),
-      ghRequest<Record<string, PullRequest>>('prRemoteBranches', q).then((r) => (this.byRemote = r), () => {}),
-    ]);
+    const get = async (kind: Kind, list: string[]) => {
+      for (let i = 0; i < list.length; i += PER_REQUEST) {
+        const chunk = list.slice(i, i + PER_REQUEST);
+        const r = await ghRequest<Record<string, PullRequest>>(kind === 'local' ? 'prBranches' : 'prRemoteBranches', {
+          names: chunk.join('\n'),
+          fresh: fresh ? 1 : null,
+        }).catch(() => null);
+        if (!r) continue;
+        const next = { ...(kind === 'local' ? this.byBranch : this.byRemote) };
+        for (const n of chunk) delete next[n];
+        Object.assign(next, r);
+        if (kind === 'local') this.byBranch = next;
+        else this.byRemote = next;
+      }
+    };
+    await Promise.all([get('local', names.local), get('remote', names.remote)]);
   }
 
   async loadStack(fresh = false) {
@@ -47,10 +82,10 @@ class Prs {
     }
   }
 
-  /** After `gh.refresh()`: the stack, and the badges if the branch list showed them. */
+  /** After `gh.refresh()`: the stack, and the badges the branch list has shown. */
   refreshed() {
     this.loadStack();
-    if (this.branchesAsked) this.loadBranches();
+    this.loadBranches();
   }
 }
 

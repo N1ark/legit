@@ -32,7 +32,7 @@ export const prNode = (p: any) => ({
   headRefOid: db.tips[p.headRefName] ?? p.headRefOid,
   url: `https://github.com/acme/widgets/pull/${p.number}`,
   repository: { nameWithOwner: 'acme/widgets' },
-  headRepositoryOwner: { login: 'acme' },
+  headRepositoryOwner: p.headRepositoryOwner ?? { login: 'acme' },
 });
 
 onGraphql('Viewer', () => ({ viewer: { login: db.viewer } }));

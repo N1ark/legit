@@ -77,7 +77,8 @@ test('the stack, restacking after the parent moved or was merged, opening and re
   const get = (name: string, q: Record<string, string>) => githubRoute(repo, 'GET', name, new URLSearchParams({ ...q, fresh: '1' })) as Promise<any>;
   const git = (...args: string[]) => execFileSync('git', args, { cwd: demo, encoding: 'utf8' }).trim();
 
-  const byBranch = await get('prBranches', {});
+  const locals = git('for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').join('\n');
+  const byBranch = await get('prBranches', { names: locals });
   assert.deepEqual(Object.fromEntries(Object.entries(byBranch).map(([b, p]: [string, any]) => [b, p.number])), {
     'feature/parser': 12, 'feature/parser-errors': 13, 'feature/pretty-errors': 14,
   });
@@ -127,7 +128,7 @@ test('the stack, restacking after the parent moved or was merged, opening and re
   const number = db.nextNumber;
   const made = (await githubRoute(repo, 'POST', 'prCreate', { title: 'Cache', body: 'b', base: 'main', head: 'feature/cache', draft: true })) as any;
   assert.deepEqual([made.number, made.state, made.base, made.head], [number, 'draft', 'main', 'feature/cache']);
-  assert.equal((await get('prBranches', {}))['feature/cache'].number, number);
+  assert.equal((await get('prBranches', { names: 'feature/cache' }))['feature/cache'].number, number);
 
   // A branch started from one with an open pull request is offered to stack on it.
   git('switch', '-q', '-c', 'feature/more-errors', 'feature/pretty-errors');
@@ -135,4 +136,38 @@ test('the stack, restacking after the parent moved or was merged, opening and re
   assert.deepEqual(stacked.suggested, { base: 'feature/pretty-errors', number: 14 });
   assert.equal(stacked.bases[0], 'main');
   assert.equal(stacked.base, 'feature/pretty-errors');
+});
+
+test("the branch list's pull requests: every branch shown, however many, and a name forks share", async () => {
+  process.env.LEGIT_GITHUB_MOCK = '1';
+  const demo = join(dir, 'many');
+  execFileSync('node', ['scripts/gh-demo.ts', demo], { stdio: 'ignore' });
+  const { Repo } = await import('../src/server/repo.ts');
+  await import('../src/server/gh/mock/index.ts');
+  const { db } = await import('../src/server/gh/mock/registry.ts');
+  const { githubRoute } = await import('../src/server/gh/routes.ts');
+  const repo = await Repo.open(demo);
+  const get = (name: string, names: string[]) => githubRoute(repo, 'GET', name, new URLSearchParams({ names: names.join('\n'), fresh: '1' })) as Promise<any>;
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: demo, encoding: 'utf8' }).trim();
+  const user = { login: 'octocat', avatarUrl: '' };
+  const pull = (number: number, head: string, more: object = {}) =>
+    db.pulls.push({ number, title: head, state: 'OPEN', isDraft: false, baseRefName: 'main', headRefName: head, headRefOid: '0'.repeat(40), author: user, ...more });
+
+  const names = Array.from({ length: 70 }, (_, i) => `many/${i}`);
+  names.forEach((b, i) => {
+    git('branch', b, 'main');
+    git('update-ref', `refs/remotes/origin/${b}`, 'main');
+    pull(1000 + i, b);
+  });
+  // Forks' newer pull requests from a branch of the same name.
+  git('branch', 'patch-1', 'main');
+  pull(2000, 'patch-1');
+  for (let i = 0; i < 12; i++) pull(2001 + i, 'patch-1', { headRepositoryOwner: { login: `fork${i}` } });
+
+  const local = await get('prBranches', [...names, 'patch-1']);
+  assert.deepEqual(names.map((b) => local[b]?.number), names.map((_, i) => 1000 + i));
+  assert.equal(local['patch-1'].number, 2000);
+  const remote = await get('prRemoteBranches', names.map((b) => `origin/${b}`));
+  assert.equal(Object.keys(remote).length, 70);
+  assert.equal(remote['origin/many/69'].number, 1069);
 });

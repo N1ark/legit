@@ -6,7 +6,7 @@ import { freshest } from '../base.ts';
 import { githubRepo } from '../github.ts';
 import { GithubError, cached, graphql, rest } from './client.ts';
 import { ghRepos, needGhRepos, type GhRepos } from './context.ts';
-import { PR_FIELDS, forgetPrs, pickPr, toPullRequest } from './pulls.ts';
+import { PR_FIELDS, forgetPrs, headCache, pickPr, toPullRequest } from './pulls.ts';
 import { byHead, missingBase, stackAround } from './stacks.ts';
 import type { CreatePrRequest, PrCreateInfo, PrStack, RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
 import type { PullRequest } from '../../shared/github.ts';
@@ -14,7 +14,7 @@ import type { Git } from '../git.ts';
 import type { Repo } from '../repo.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
 
-/** Most local branches looked up at once (the most recently committed to). */
+/** Most local branches a stack is looked for among (the most recently committed to). */
 const MAX_BRANCHES = 60;
 
 const live = (p: PullRequest | undefined) => p?.state === 'open' || p?.state === 'draft';
@@ -128,52 +128,85 @@ async function batch(c: Context, fresh: boolean): Promise<Found> {
   return lookup(c.r, heads, heads.filter((h) => !trunks.has(h)), fresh);
 }
 
-/** Each local branch's pull request, by branch name. */
-async function branchPrs(repo: Repo, fresh: boolean): Promise<Record<string, PullRequest>> {
-  const r = await ghRepos(repo);
-  if (!r) return {};
-  const c = await context(repo, r);
-  const heads = byHead((await batch(c, fresh)).prs);
-  return Object.fromEntries(c.locals.flatMap((l) => (heads.has(l.head) ? [[l.name, heads.get(l.head)!]] : [])));
+/** Branch names looked up in one query. */
+const CHUNK = 50;
+/** Pull requests asked for per branch name; a name with more is asked again for up to `MANY`. */
+const FEW = 10;
+const MANY = 100;
+
+async function queryHeads(r: GhRepos, heads: string[], first: number): Promise<{ nodes: any[]; more: boolean }[]> {
+  const vars: Record<string, string | number> = { owner: r.owner, name: r.name, first };
+  const fields = heads.map((h, i) => {
+    vars[`h${i}`] = h;
+    return `h${i}: pullRequests(headRefName: $h${i}, first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PR_FIELDS} } }`;
+  });
+  const decl = heads.map((_, i) => `$h${i}: String!`).join(', ');
+  const d = await graphql(`query BranchPrs($owner: String!, $name: String!, $first: Int!, ${decl}) { repository(owner: $owner, name: $name) { ${fields.join('\n')} } }`, vars);
+  return heads.map((_, i) => {
+    const c = d.repository?.[`h${i}`];
+    return { nodes: c?.nodes ?? [], more: (c?.totalCount ?? 0) > (c?.nodes?.length ?? 0) };
+  });
 }
 
-/** GitHub's pull request nodes of each branch name asked about. */
-const remoteFound = new Map<string, { at: number; value: Promise<Record<string, any[]>> }>();
+/** The pull request nodes of each of `heads` (branch names on GitHub), asked for in chunks of the names not cached. */
+function headNodes(r: GhRepos, heads: string[], fresh: boolean): Promise<any[][]> {
+  const key = (h: string) => `${r.base}\0${h}`;
+  const now = Date.now();
+  if (headCache.size > 5000) for (const [k, v] of headCache) if (now - v.at > 15_000) headCache.delete(k);
+  const missing = heads.filter((h) => {
+    const hit = headCache.get(key(h));
+    return fresh || !hit || now - hit.at >= 15_000;
+  });
+  for (let i = 0; i < missing.length; i += CHUNK) {
+    const chunk = missing.slice(i, i + CHUNK);
+    // A name used by many forks can have newer pull requests than this repo's own: those are asked again for more.
+    const all = queryHeads(r, chunk, FEW).then(async (res) => {
+      const more = chunk.filter((_, k) => res[k].more);
+      if (more.length) (await queryHeads(r, more, MANY)).forEach((x, k) => (res[chunk.indexOf(more[k])] = x));
+      return res.map((x) => x.nodes);
+    });
+    chunk.forEach((h, k) => {
+      const value = all.then((res) => res[k]);
+      headCache.set(key(h), { at: now, value });
+      value.catch(() => headCache.get(key(h))?.value === value && headCache.delete(key(h)));
+    });
+  }
+  return Promise.all(heads.map((h) => headCache.get(key(h))!.value));
+}
+
+/** The pull requests of local branches `names`, by name. */
+async function branchPrs(repo: Repo, names: string[], fresh: boolean): Promise<Record<string, PullRequest>> {
+  const r = await ghRepos(repo);
+  if (!r || !names.length) return {};
+  const c = await context(repo, r);
+  const wanted = new Set(names);
+  const locals = c.locals.filter((l) => wanted.has(l.name));
+  const heads = [...new Set(locals.map((l) => l.head))];
+  const nodes = new Map((await headNodes(r, heads, fresh)).map((n, i) => [heads[i], n]));
+  return Object.fromEntries(locals.flatMap((l) => {
+    const pr = pickPr(nodes.get(l.head) ?? [], r.headOwner);
+    return pr ? [[l.name, pr]] : [];
+  }));
+}
 
 /**
- * The remote-tracking branches' pull requests, by `remote/branch`: the most recently committed-to
- * of every remote on GitHub, each matched to pull requests from that remote's owner.
+ * The pull requests of remote-tracking branches `keys` (`remote/branch`), by key: each matched to
+ * pull requests from that remote's owner.
  */
-async function remoteBranchPrs(repo: Repo, fresh: boolean): Promise<Record<string, PullRequest>> {
+async function remoteBranchPrs(repo: Repo, keys: string[], fresh: boolean): Promise<Record<string, PullRequest>> {
   const r = await ghRepos(repo);
-  if (!r) return {};
+  if (!r || !keys.length) return {};
   const c = await context(repo, r);
-  const out = await c.git.text(['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/remotes']);
-  const wanted: { key: string; owner: string; name: string }[] = [];
-  for (const ref of out.split('\n')) {
+  const wanted = keys.flatMap((key) => {
     // The longest remote name that fits, as a remote's name may hold a slash.
-    const remote = c.remotes.filter((x) => ref.startsWith(`refs/remotes/${x.name}/`)).sort((a, b) => b.name.length - a.name.length)[0];
-    const name = remote ? ref.slice(`refs/remotes/${remote.name}/`.length) : 'HEAD';
-    if (name !== 'HEAD') wanted.push({ key: `${remote.name}/${name}`, owner: remote.repo.split('/')[0], name });
-    if (wanted.length === MAX_BRANCHES) break;
-  }
-  const names = [...new Set(wanted.map((w) => w.name))];
-  if (!names.length) return {};
-  const key = `${r.base}\0${names.join('\0')}`;
-  if (fresh) remoteFound.delete(key);
-  const nodes = await cached(remoteFound, key, 15_000, async () => {
-    const vars: Record<string, string> = { owner: r.owner, name: r.name };
-    const fields = names.map((h, i) => {
-      vars[`h${i}`] = h;
-      return `h${i}: pullRequests(headRefName: $h${i}, first: 10, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }`;
-    });
-    const decl = Object.keys(vars).map((k) => `$${k}: String!`).join(', ');
-    const d = await graphql(`query RemotePrs(${decl}) { repository(owner: $owner, name: $name) { ${fields.join('\n')} } }`, vars);
-    // Kept as GitHub's nodes: which is a branch's depends on whose remote it's on.
-    return Object.fromEntries(names.map((h, i) => [h, d.repository?.[`h${i}`]?.nodes ?? []]));
+    const remote = c.remotes.filter((x) => key.startsWith(`${x.name}/`)).sort((a, b) => b.name.length - a.name.length)[0];
+    const name = remote ? key.slice(remote.name.length + 1) : '';
+    return remote && name && name !== 'HEAD' ? [{ key, owner: remote.repo.split('/')[0], name }] : [];
   });
+  const names = [...new Set(wanted.map((w) => w.name))];
+  const nodes = new Map((await headNodes(r, names, fresh)).map((n, i) => [names[i], n]));
   return Object.fromEntries(wanted.flatMap((w) => {
-    const pr = pickPr(nodes[w.name] ?? [], w.owner);
+    const pr = pickPr(nodes.get(w.name) ?? [], w.owner);
     return pr ? [[w.key, pr]] : [];
   }));
 }
@@ -351,9 +384,11 @@ async function retarget(repo: Repo, req: { number: unknown; base: unknown }): Pr
   return fromRest(p, r.base);
 }
 
+const lines = (v: string | null) => (v ?? '').split('\n').filter(Boolean);
+
 export const stackGet: Record<string, GetRoute> = {
-  prBranches: (repo, q) => branchPrs(repo, q.get('fresh') === '1'),
-  prRemoteBranches: (repo, q) => remoteBranchPrs(repo, q.get('fresh') === '1'),
+  prBranches: (repo, q) => branchPrs(repo, lines(q.get('names')), q.get('fresh') === '1'),
+  prRemoteBranches: (repo, q) => remoteBranchPrs(repo, lines(q.get('names')), q.get('fresh') === '1'),
   prStack: (repo, q) => prStack(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
   prCreateInfo: (repo, q) => createInfo(repo, q.get('branch') ?? '', q.get('base')),
 };

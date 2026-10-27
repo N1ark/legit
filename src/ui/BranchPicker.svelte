@@ -188,7 +188,7 @@
     open = true;
     filter = '';
     const loaded = setMode(m);
-    // Asked after the branches, which show without waiting for it; the badges follow.
+    // The badges of rows shown before are brought up to date; the others are asked for as their rows show.
     prs.loadBranches();
     await loaded;
   }
@@ -648,7 +648,7 @@
                     {:else if r.kind === 'local'}
                       {@const b = r.b}
                       <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
-                      <span class="name mono"><Highlight text={b.name} indices={r.indices} /></span>
+                      <span class="name mono" {@attach () => prs.want('local', b.name)}><Highlight text={b.name} indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                       {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
                       {#if b.worktree}
@@ -665,7 +665,7 @@
                     {:else if r.kind === 'remote'}
                       {@const b = r.b}
                       <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
-                      <span class="name mono"><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
+                      <span class="name mono" {@attach () => prs.want('remote', `${b.remote}/${b.name}`)}><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                       {#if prs.byRemote[`${b.remote}/${b.name}`]}<PrBadge pr={prs.byRemote[`${b.remote}/${b.name}`]} />{/if}
                       {#if promoted && k === 0}<span class="default">default branch</span>{/if}
