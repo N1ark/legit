@@ -64,9 +64,11 @@
     }
   }
 
+  // Derived, so a refresh that brings a new state but the same HEAD doesn't load the changes again.
+  const headSha = $derived(app.repo?.head);
   $effect(() => {
     void app.workTick;
-    void app.repo?.head;
+    void headSha;
     load();
   });
 

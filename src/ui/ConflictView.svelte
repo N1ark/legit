@@ -44,11 +44,13 @@
     }
   }
 
+  // Derived, so a refresh that brings a new state but the same HEAD and conflicts doesn't load the diff again.
+  const head = $derived(app.repo?.head);
+  const conflicted = $derived(c ? c.files.length : null);
   $effect(() => {
     void app.workTick;
-    void app.repo?.head;
-    void c?.files.length;
-    if (c) load();
+    void head;
+    if (conflicted !== null) load();
   });
 
   const sel = $derived(diff ? Object.fromEntries(diff.files.map((f) => [f.path, new SvelteSet<number>()])) : {});

@@ -33,8 +33,8 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 class App {
   /** Replaced, never changed in place: a refresh brings a whole new one. */
   repo = $state.raw<RepoState | null>(null);
-  /** Selected commit SHAs, in click order. */
-  selected = $state<string[]>([]);
+  /** Selected commit SHAs, in click order. Replaced, never changed in place. */
+  selected = $state.raw<string[]>([]);
   anchor: string | null = null;
   busy = $state(false);
   /** The operation running while `busy` (its API name). */
@@ -73,7 +73,14 @@ class App {
   editable = $derived(this.commits.filter((c) => c.editable));
   bySha = $derived(new Map(this.commits.map((c) => [c.sha, c])));
   /** Selected commits, newest first. */
-  selection = $derived(this.commits.filter((c) => this.selected.includes(c.sha)));
+  selection = $derived.by(() => {
+    if (this.selected.length === 1) {
+      const c = this.bySha.get(this.selected[0]);
+      return c ? [c] : NONE;
+    }
+    const picked = new Set(this.selected);
+    return this.commits.filter((c) => picked.has(c.sha));
+  });
   people = $derived.by(() => {
     const seen = new Map<string, { name: string; email: string }>();
     for (const c of this.commits) {
@@ -149,7 +156,29 @@ class App {
     };
   }
 
-  async refresh() {
+  /**
+   * Load the state again. Asked while a load is on its way, one more follows it, however often it's
+   * asked meanwhile; asked during an operation, it waits for it to end (it may still be changing things).
+   */
+  refresh(): Promise<void> {
+    if (this.busy) {
+      this.stale = true;
+      return Promise.resolve();
+    }
+    this.stale = false;
+    if (!this.refreshing) return (this.refreshing = this.refreshNow().finally(() => (this.refreshing = null)));
+    return (this.refreshAgain ??= this.refreshing.then(() => {
+      this.refreshAgain = null;
+      return this.refresh();
+    }));
+  }
+
+  private refreshing: Promise<void> | null = null;
+  private refreshAgain: Promise<void> | null = null;
+  /** A refresh was asked for during an operation: it runs when the operation ends. */
+  private stale = false;
+
+  private async refreshNow() {
     const gen = ++this.gen;
     const sent = early['/api/state'];
     delete early['/api/state'];
@@ -166,8 +195,15 @@ class App {
     }
   }
 
-  /** The state `refresh` last applied, as the server sent it. */
+  /** The state last applied (by `refresh`, or from an operation's result), as the server sent it. */
   private fetched: { text: string; repo: RepoState } | null = null;
+
+  /** Show the state an operation brought back; the refresh its changes set off then has nothing to redo if it finds the same. */
+  private applyResult(r: OpResult) {
+    const text = JSON.stringify(r.state);
+    this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+    this.fetched = { text, repo: this.repo! };
+  }
 
   private setRepo(repo: RepoState, focus?: string[]) {
     const first = !this.repo;
@@ -180,7 +216,8 @@ class App {
     if (this.hasWork) shas.add(WORK);
     let sel = (conflictStarted ? [WORK] : (focus ?? this.selected)).filter((s) => shas.has(s));
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
-    this.selected = sel;
+    // The same selection stays the same array, so what shows it doesn't redraw.
+    if (sel.length !== this.selected.length || sel.some((s, i) => s !== this.selected[i])) this.selected = sel;
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
     // The first commit shown: its diff is asked for now, not once the list and the view have rendered.
     if (first && sel.length === 1 && sel[0] !== WORK) this.prefetch(sel[0]);
@@ -378,15 +415,16 @@ class App {
       const r = await request<OpResult>(`/api/${name}`, body);
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
-      this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+      this.applyResult(r);
       return true;
     } catch (e) {
       if (optimistic) this.repo = before;
       if (!(e instanceof Error && fail?.(e))) toast.error(e);
-      this.refresh();
+      this.stale = true;
       return false;
     } finally {
       this.busy = false;
+      if (this.stale) this.refresh();
     }
   }
 
@@ -696,17 +734,18 @@ class App {
       const r = await request<SyncResult>(`/api/${name}`, body);
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
-      this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+      this.applyResult(r);
       // The toast's Undo only once it's finished (not stopped on a conflict).
       const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : undefined;
       if (r.message) toast(r.message, { timeout: r.message.length > 80 || undo ? 10_000 : undefined, action: undo });
       return r;
     } catch (e) {
       toast.error(e);
-      this.refresh();
+      this.stale = true;
       return null;
     } finally {
       this.busy = false;
+      if (this.stale) this.refresh();
     }
   }
 
