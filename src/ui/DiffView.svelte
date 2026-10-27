@@ -36,7 +36,7 @@
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
   import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
-  import { type Tokens, highlight, segments } from './lib/highlighter.ts';
+  import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -414,6 +414,8 @@
       else scroller.scrollTop = initial.scrollTop;
       measure();
     }
+    // Grammars load while the first contents do.
+    prepare(files.slice(near[0], near[1]).map((f) => f.path));
     return () => {
       alive = false;
       scroller.removeEventListener('scroll', measure);

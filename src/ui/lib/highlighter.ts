@@ -22,10 +22,10 @@ interface Job {
   done: (t: Tokens | null | undefined) => void;
 }
 
-/** Results by key, least recently used first, kept to a few dozen MB however big the files. */
+/** Results by key, least recently used first, kept to a few MB however big the files. */
 const cache = new Map<string, Tokens | null>();
 const MAX_CACHED = 1000;
-const MAX_BYTES = 32 << 20;
+const MAX_BYTES = 16 << 20;
 let cachedBytes = 0;
 const bytes = (t: Tokens | null | undefined) => (t ? t.offsets.byteLength + t.data.byteLength : 0);
 
@@ -73,6 +73,20 @@ function start() {
   };
   return w;
 }
+
+const prepared = new Set<string>();
+
+/** Start the worker, with Prism and the grammars `paths` take, ahead of the first job wanting them. */
+export function prepare(paths: string[] = []) {
+  const langs = [...new Set(paths.map(language))].filter((l): l is string => !!l && !prepared.has(l));
+  if (worker && !langs.length) return;
+  for (const l of langs) prepared.add(l);
+  worker ??= start();
+  worker.postMessage({ prepare: langs });
+}
+
+// With the page, in its own thread: the first diff then doesn't wait for the worker and Prism to load.
+if (typeof Worker !== 'undefined') prepare();
 
 /** File `path`'s tokens (null when it isn't highlighted), or undefined when the job was dropped before it ran, unwanted. */
 export function highlight(

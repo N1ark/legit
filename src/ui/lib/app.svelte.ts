@@ -1,6 +1,6 @@
 import { IS_TAURI, copyText, persisted, toast } from 'purr';
 import { expandable } from '../../shared/context.ts';
-import { highlight } from './highlighter.ts';
+import { highlight, prepare } from './highlighter.ts';
 import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { recall } from './desktop.ts';
@@ -344,6 +344,7 @@ class App {
           y += f.generated ? 44 : 40 + f.rows * 19;
         }
         if (!first.length) return;
+        prepare(first.map((i) => d.files[i].path));
         const res = await this.fileContents(d, first);
         for (const i of first) {
           const f = d.files[i];
