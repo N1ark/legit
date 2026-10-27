@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Switching back to the window, or several changes at once, reload the repository once instead of several times over, and an operation's own changes no longer reload what it just showed.
+- Uncommitted changes refresh much faster, and use far less memory, with many or large untracked files or a big partly staged file.
+- Huge commits open about twice as fast, and scrolling fast through one with thousands of files stays smooth: files you only fly past are no longer fetched or highlighted. Wrapped diffs of very long files scroll smoothly too.
+- Code is highlighted as soon as a diff first shows, and the file you're reading comes before the ones around it, even in the middle of a long file.
+- Looking through many commits with huge diffs uses about half the memory, and long sessions in deep history stay light: what's kept for going back is bounded by size.
+- The branch list and ⌘K open at once when opened again, and the branch list follows a fetch or a terminal commit while it's open. Repos with many branches list them faster.
+- Coming back to a repo in the app shows the diffs you'd opened without working them out again, and switching repos readies the new one while the current window is still keeping its view.
+- `legit <path>` opens the repository in the app about twice as fast.
+- In dark mode, the window no longer flashes white while a repository loads.
+- GitHub is asked less: every 5 minutes while the window is in the background (focusing it still updates at once), CI once per branch switch and not again when files are saved, and unchanged CI steps cost no rate limit.
+- A pull request's overview, the checks popover and notifications show at once when opened again, and update in the background. A finished job's log opens at once the second time, and logs of thousands of lines open and scroll without a stall.
+- When GitHub's rate limit runs out, legit waits for it to reset and says how long that is, rather than asking again.
+- On Linux, opening a big repository no longer takes seconds or crashes when the system runs out of file watches; if watching stops, legit looks again whenever the window is focused.
+- Collapsed-file and syntax rules edited by hand in the settings file apply to diffs already viewed.
+- A branch with the same name as a tag is listed under its own name, not `heads/<name>`.
+
 ## 0.12.0 — 2026-10-27
 
 - **⌘K** goes anywhere from one field: a branch, a worktree, a recent repository or a commit, by its title, its SHA or `HEAD~3`.
