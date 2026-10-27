@@ -37,14 +37,24 @@
   let height = $state(0);
   const shown = $derived(fixedRange(rows.length, ROW, scrollTop - OVERSCAN, height + 2 * OVERSCAN));
 
+  // The list's padding above the rows, read again only when it's resized: reading layout as the
+  // current file changes (each frame of a fast scroll) would force a layout every time.
+  let pad = 0;
+  $effect(() => {
+    void height;
+    pad = above.offsetTop;
+  });
+
   $effect(() => {
     const at = current;
     const k = untrack(() => rows.findIndex((r) => r.kind === 'file' && r.index === at));
     if (k < 0 || !list) return;
-    const top = above.offsetTop + k * ROW;
+    const top = pad + k * ROW;
     const bottom = top + ROW;
-    if (top < list.scrollTop) list.scrollTop = top - ROW;
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + ROW;
+    const [y, h, n] = untrack(() => [scrollTop, height, rows.length]);
+    const to = top < y ? top - ROW : bottom > y + h ? bottom - h + ROW : y;
+    // Where the list will be, kept at once so the rows there mount in this frame.
+    if (to !== y) list.scrollTop = scrollTop = Math.max(0, Math.min(to, n * ROW + 2 * pad - h));
   });
 
   const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
