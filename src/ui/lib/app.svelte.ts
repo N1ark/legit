@@ -3,6 +3,7 @@ import { expandable } from '../../shared/context.ts';
 import { highlight } from './highlighter.ts';
 import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
+import { Lru } from './cache.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
@@ -39,9 +40,10 @@ class App {
   /** The operation running while `busy` (its API name). */
   running: string | null = null;
 
-  private diffs = new Map<string, Promise<DiffSummary>>();
-  private contents = new Map<string, Promise<HunkData[]>>();
-  private olds = new Map<string, Promise<FileLines>>();
+  // Bounded by what they hold too (files, rows, lines), so a few huge diffs can't take all the memory.
+  private diffs = new Lru<string, Promise<DiffSummary>>(200, 20_000);
+  private contents = new Lru<string, Promise<HunkData[]>>(4000, 200_000);
+  private olds = new Lru<string, Promise<FileLines>>(50, 200_000);
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
@@ -279,13 +281,11 @@ class App {
 
   /** A commit's file list (no content). Cached: commits are immutable. */
   diff(sha: string): Promise<DiffSummary> {
-    let d = this.diffs.get(sha);
-    if (!d) {
-      d = request<DiffSummary>(`/api/diff/${sha}`);
-      d.catch(() => this.diffs.delete(sha));
-      if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
-      this.diffs.set(sha, d);
-    }
+    const had = this.diffs.get(sha);
+    if (had) return had;
+    const d = request<DiffSummary>(`/api/diff/${sha}`);
+    d.then((r) => this.diffs.weigh(sha, d, r.files.length), () => this.diffs.delete(sha, d));
+    this.diffs.set(sha, d);
     return d;
   }
 
@@ -297,31 +297,31 @@ class App {
   /** Contents of some of a diff's files; misses are fetched in one request. */
   async fileContents(d: DiffSummary, files: number[]): Promise<Record<number, HunkData[]>> {
     const key = (i: number) => fileKey(d, i);
-    const missing = files.filter((i) => !this.contents.has(key(i)));
+    // Taken now: filling the cache can push out others of these.
+    const got = new Map(files.map((i) => [i, this.contents.get(key(i))]));
+    const missing = files.filter((i) => !got.get(i));
     if (missing.length) {
       const batch = request<FileContents>(`/api/diff/${d.sha}/files?i=${missing.join(',')}`);
       for (const i of missing) {
         const p = batch.then((r) => r[i] ?? []);
-        p.catch(() => this.contents.delete(key(i)));
-        this.contents.set(key(i), p);
+        p.catch(() => this.contents.delete(key(i), p));
+        this.contents.set(key(i), p, Math.max(1, d.files[i].rows));
+        got.set(i, p);
       }
-      while (this.contents.size > 4000) this.contents.delete(this.contents.keys().next().value!);
     }
     const out: Record<number, HunkData[]> = {};
-    for (const i of files) out[i] = await this.contents.get(key(i))!;
+    for (const i of files) out[i] = await got.get(i)!;
     return out;
   }
 
   /** File i's old version, to show the unchanged lines between its hunks. */
   oldLines(sha: string, i: number): Promise<FileLines> {
     const key = `${sha}:${i}`;
-    let p = this.olds.get(key);
-    if (!p) {
-      p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
-      p.catch(() => this.olds.delete(key));
-      if (this.olds.size > 50) this.olds.delete(this.olds.keys().next().value!);
-      this.olds.set(key, p);
-    }
+    const had = this.olds.get(key);
+    if (had) return had;
+    const p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
+    p.then((r) => this.olds.weigh(key, p, r.lines.length), () => this.olds.delete(key, p));
+    this.olds.set(key, p);
     return p;
   }
 
