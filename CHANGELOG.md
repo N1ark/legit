@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0 — 2026-10-27
+
+- **⌘K** goes anywhere from one field: a branch, a worktree, a recent repository or a commit, by its title, its SHA or `HEAD~3`.
+- Every branch in the branch list shows its pull request, however many there are.
+- Draft pull requests and ones waiting in a merge queue look different from open ones, everywhere a pull request shows.
+- Switching repos is quicker.
+- The commit list no longer gets stuck on "Loading…" after switching branch or pulling, or at the end of a shallow clone.
+
 ## 0.11.0 — 2026-10-24
 
 - The diff of uncommitted changes stays where you were reading as files change, instead of jumping back to the top.
