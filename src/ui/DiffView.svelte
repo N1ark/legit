@@ -57,6 +57,7 @@
     rowHunks,
     rowMap,
     rowOfChange,
+    rowsIn,
   } from './lib/rows.ts';
 
   let {
@@ -336,8 +337,9 @@
     const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
     return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
   }
-  /** Height of what comes before file i's lines: its images. */
-  const lead = (i: number) => (imageType(files[i].path) && files[i].oldSha !== files[i].newSha ? IMG : 0);
+  /** Height of what comes before each file's lines: its images. */
+  const leads = $derived(files.map((f) => (imageType(f.path) && f.oldSha !== f.newSha ? IMG : 0)));
+  const lead = (i: number) => leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
@@ -351,11 +353,10 @@
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
-    const at = wrapped(i);
-    const [a, b] = blockLayout[i]
-      ? variableRange(Array.from({ length: rowCount(i) + 1 }, (_, r) => rowY(i, r)), view.top - y, view.bottom - view.top, OVERSCAN)
-      : at
-        ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
+    // Rows of varying height are searched for, not listed: this runs for every frame of scrolling.
+    const [a, b] =
+      blockLayout[i] || wrapped(i)
+        ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - OVERSCAN - y, view.bottom + OVERSCAN - y)
         : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);

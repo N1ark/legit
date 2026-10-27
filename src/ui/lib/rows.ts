@@ -226,6 +226,20 @@ export function rowOfChange(rows: FileRows, c: number): number {
   return -1;
 }
 
+/** [first, end) of the rows overlapping [top, bottom), where row r starts at y(r), never decreasing, and y(count) is the end. */
+export function rowsIn(count: number, y: (r: number) => number, top: number, bottom: number): [number, number] {
+  let lo = 0;
+  let hi = count;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (y(m + 1) <= top) lo = m + 1;
+    else hi = m;
+  }
+  let end = lo;
+  while (end < count && y(end) < bottom) end++;
+  return [lo, end];
+}
+
 /** The rows as hunks (a header row, then lines) for the highlighter, which works row for row. */
 export function rowHunks(rows: FileRows): HunkData[] {
   const out: HunkData[] = [];
