@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -70,6 +70,34 @@ test('rebuilding from all/none/a subset of changed lines', async () => {
     const midCount = mid === '' ? 0 : midLines.length - (mid.endsWith('\n') ? 1 : 0);
     assert.equal(midCount, oldCount + kept - removed, ctx);
   }
+});
+
+test("parsing: a type change's two patches, binary files, quoted paths, missing newlines, and a record without a patch", async () => {
+  const repo = await Git.open(dir);
+  for (const f of ['t', 'bin', 'nl', 'q "x"', 'é']) writeFileSync(join(dir, f), Buffer.from('one\ntwo\n'));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  rmSync(join(dir, 't'));
+  symlinkSync('nl', join(dir, 't'));
+  writeFileSync(join(dir, 'bin'), Buffer.from([0, 1, 2]));
+  writeFileSync(join(dir, 'nl'), 'one\ntwo\nthree');
+  for (const f of ['q "x"', 'é']) writeFileSync(join(dir, f), 'one\n2\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'change');
+  const d = await commitDiff(repo, git('rev-parse', 'HEAD'));
+  const by = Object.fromEntries(d.files.map((f) => [Buffer.from(f.path, 'latin1').toString('utf8'), f]));
+  assert.equal(by.t.status, 'T');
+  assert.deepEqual(by.t.hunks.map((h) => h.lines.map((l) => l.t + l.s)), [['-one', '-two'], ['+nl']]);
+  assert.deepEqual([by.t.added, by.t.removed, by.t.partial], [1, 2, false]);
+  assert.deepEqual([by.bin.binary, by.bin.hunks.length], [true, 0]);
+  assert.deepEqual(by.nl.hunks[0].lines.map((l) => [l.t + l.s, !!l.eof]), [[' one', false], [' two', false], ['+three', true]]);
+  for (const f of ['q "x"', 'é']) assert.deepEqual(by[f].hunks[0].lines.map((l) => l.t + l.s), [' one', '-two', '+2'], f);
+  assert.equal(new Set(d.files.map((f) => f.token)).size, 5);
+  // A file listed but no different (stat-dirty, in the working tree) has no patch: the next one keeps its own.
+  const z = '0'.repeat(40);
+  const patch = `:100644 100644 ${z} ${z} M\0a\0:100644 100644 ${z} ${z} M\0b\0\0diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-x\n+y\n`;
+  const [a, b] = parseDiff(patch, 'x').files;
+  assert.deepEqual([a.hunks, b.hunks[0].lines.map((l) => l.t + l.s)], [[], ['-x', '+y']]);
 });
 
 test('a kept old line stays in the place of the line it was edited into', () => {

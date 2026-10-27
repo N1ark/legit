@@ -188,9 +188,9 @@ export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { 
 
 /** A modified file's old version (utf8 for display), for the lines between its hunks. */
 export async function oldLines(git: Git, f: FileDiff): Promise<FileLines> {
-  if (!expandable(f) || /^0+$/.test(f.oldSha)) throw new GitError("That file's other lines can't be shown.");
-  const { out } = await git.run(['cat-file', 'blob', f.oldSha]);
-  const lines = out.toString('utf8').split('\n');
+  const blob = expandable(f) && !/^0+$/.test(f.oldSha) ? (await git.readObjects([f.oldSha])).get(f.oldSha) : undefined;
+  if (blob?.type !== 'blob') throw new GitError("That file's other lines can't be shown.");
+  const lines = blob.data.toString('utf8').split('\n');
   const noNewline = lines[lines.length - 1] !== '';
   if (!noNewline) lines.pop();
   return { lines, noNewline };
