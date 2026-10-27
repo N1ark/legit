@@ -12,7 +12,7 @@ import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, LocatedCommit, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { baseBranch } from './base.ts';
-import { switchBranch } from './branches.ts';
+import { localBranches, switchBranch } from './branches.ts';
 import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
@@ -1206,24 +1206,8 @@ export class Repo {
   }
 
   /** Local branches, most recently committed first. */
-  async branches(): Promise<BranchInfo[]> {
-    const out = await this.git.text([
-      'for-each-ref', '--sort=-committerdate',
-      '--format=%(refname:short)%00%(objectname)%00%(subject)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(HEAD)',
-      'refs/heads',
-    ]);
-    return out
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const [name, sha, subject, time, upstream, track, worktree, remote, remoteRef, head] = line.split('\0');
-        const here = head === '*';
-        const tracking = remote && remote !== '.' && remoteRef.startsWith('refs/heads/') ? { remote, branch: remoteRef.slice('refs/heads/'.length) } : null;
-        return {
-          name, sha, subject, time: Number(time), upstream: upstream || null, tracking, track: track || null, current: here,
-          worktree: !here && worktree ? worktree : null,
-        };
-      });
+  branches(): Promise<BranchInfo[]> {
+    return localBranches(this);
   }
 
   /**
