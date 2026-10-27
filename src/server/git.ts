@@ -125,6 +125,8 @@ function serializeCommit(c: Omit<RawCommit, 'sha'>): Buffer {
 }
 
 const HEX = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** Parsed commits kept (a long history scrolled through would otherwise stay in memory); others are read again. */
+const MAX_COMMITS = 10_000;
 /** Refs kept in the common dir (shared by worktrees), which `readRef` reads from their files. */
 const SHARED_REF = /^refs\/(?:heads|remotes|tags)\/|^refs\/stash$/;
 /** A ref name `readRef` can look up as a file: one of those, and nothing git would read as more than a name. */
@@ -194,8 +196,8 @@ export class Git {
   }
 
   /**
-   * `fn()`'s result, kept under `key`, which must only name things that never change (object SHAs),
-   * so it can never go stale. A failure isn't kept. `list`: the result is a long list, of which fewer are kept.
+   * `fn()`'s result, kept under `key`, which must only name things that never change (object SHAs)
+   * or stamps of what changes (see `reflogStamp`), so it can never go stale. A failure isn't kept. `list`: the result is a long list, of which fewer are kept.
    */
   async memo<T>(key: string, fn: () => Promise<T>, list = false): Promise<T> {
     const memos = list ? this.lists : this.memos;
@@ -272,6 +274,18 @@ export class Git {
     }
   }
 
+  /** Changes whenever `ref`'s reflog does (appending changes its size; rewriting, its inode); null when only git can say. */
+  async reflogStamp(ref: string): Promise<string | null> {
+    if (this.reftable || !fileRef(ref)) return null;
+    try {
+      const st = await stat(join(this.commonDir, 'logs', ref));
+      return `${st.ino} ${st.size} ${st.mtimeMs} ${st.ctimeMs}`;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' || code === 'ENOTDIR' ? 'none' : null;
+    }
+  }
+
   /** Where a symbolic ref such as `refs/remotes/origin/HEAD` points (null if it isn't one); undefined when only git can say. */
   async readSymref(ref: string): Promise<string | null | undefined> {
     if (this.reftable || !fileRef(ref)) return undefined;
@@ -340,7 +354,7 @@ export class Git {
     return { branch: branch || null, head: head.code === 0 ? head.out.toString('latin1').trim() : null };
   }
 
-  /** Load commits (cached: commits are immutable). */
+  /** Load commits (cached: commits are immutable; the least recently used go past `MAX_COMMITS`). */
   async loadCommits(shas: string[]): Promise<RawCommit[]> {
     const missing = shas.filter((s) => !this.commits.has(s));
     if (missing.length) {
@@ -349,11 +363,19 @@ export class Git {
         if (o.type === 'commit') this.commits.set(sha, parseCommit(sha, o.data.toString('latin1')));
       }
     }
-    return shas.map((s) => {
+    const out = shas.map((s) => {
       const c = this.commits.get(s);
       if (!c) throw new GitError(`Unknown commit ${s}`);
+      this.commits.delete(s);
+      this.commits.set(s, c);
       return c;
     });
+    // Commits written here stay: git may not have them yet, and they're few.
+    for (const sha of this.commits.keys()) {
+      if (this.commits.size <= MAX_COMMITS) break;
+      if (!this.written.has(sha)) this.commits.delete(sha);
+    }
+    return out;
   }
 
   async commit(sha: string): Promise<RawCommit> {

@@ -1,7 +1,6 @@
 // Local HTTP server: JSON API, change notifications (SSE), and the UI.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
@@ -25,6 +24,7 @@ import { type Git, GitError } from './git.ts';
 import { log, logText } from './log.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
+import { watchTree } from './watch.ts';
 import {
   abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
@@ -153,22 +153,37 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (root !== repo.git.root) return;
     for (const c of clients) c.write(`event: progress\ndata: ${JSON.stringify(p)}\n\n`);
   });
+  // Out of watches (too many folders for the system's limit): the page is told to look again whenever it's focused.
+  let blind = false;
+  const lost = (e: Error) => {
+    if (!blind) log(`Changes made outside legit won't show until the window is focused: ${e.message}`);
+    blind = true;
+    for (const c of clients) c.write('data: blind\n\n');
+  };
   const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
   const watchers = dirs.map((d) =>
-    watch(d, { recursive: true }, (_, f) => {
-      const name = f?.toString() ?? '';
-      if (name.endsWith('.lock')) return;
-      if (relevant.test(name)) notify();
-      else if (name === 'index') notifyWork(undefined);
-    }),
+    watchTree(
+      d,
+      (rel) => /^(refs|rebase-merge|rebase-apply)(\/|$)/.test(rel),
+      (name = '') => {
+        if (name.endsWith('.lock')) return;
+        if (relevant.test(name)) notify();
+        else if (name === 'index') notifyWork(undefined);
+      },
+      lost,
+    ),
   );
   watchers.push(
-    watch(repo.git.root, { recursive: true }, (_, f) => {
-      const name = f?.toString();
-      if (name === '.git' || name?.startsWith('.git/') || name?.startsWith('.git\\')) return;
-      notifyWork(name && sep === '/' ? name : undefined);
-    }),
+    watchTree(
+      repo.git.root,
+      (rel) => rel !== '.git',
+      (name) => {
+        if (name === '.git' || name?.startsWith('.git/') || name?.startsWith('.git\\')) return;
+        notifyWork(name && sep === '/' ? name : undefined);
+      },
+      lost,
+    ),
   );
 
   const ops: Record<string, (body: any) => Promise<unknown>> = {
@@ -292,7 +307,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
-      res.write(': hi\n\n');
+      res.write(blind ? 'data: blind\n\n' : ': hi\n\n');
       clients.add(res);
       req.on('close', () => clients.delete(res));
       return;
@@ -457,7 +472,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       done({
         url: `http://${origin}/`,
         close: () => {
-          watchers.forEach((w) => w.close());
+          watchers.forEach((stop) => stop());
           stopProgress();
           for (const c of clients) c.end();
           server.close();

@@ -1134,7 +1134,7 @@ export class Repo {
       const [ahead, behind] = await this.git.memo(`ahead-behind ${sha} ${tip}`, async () =>
         (await this.git.text(['rev-list', '--left-right', '--count', `${sha}...${tip}`])).split(/\s+/).map(Number),
       );
-      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, upstream));
+      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, tip));
       return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip };
     }
     // An upstream that isn't on the remote (yet, or any more) is where publishing goes.
@@ -1151,19 +1151,24 @@ export class Repo {
   }
 
   /**
-   * Was `ref`'s commit ever part of `branch` (reachable from an entry of its reflog)? When a
+   * Was commit `tip` ever part of `branch` (reachable from an entry of its reflog)? When a
    * diverged upstream was, the branch was rewritten after pushing; when it wasn't, the remote
-   * has new commits. The same test git's --force-if-includes makes.
+   * has new commits. The same test git's --force-if-includes makes. Kept while the reflog is unchanged.
    */
-  private async hadTip(branch: string, ref: string): Promise<boolean> {
-    const log = await this.git.text(['reflog', 'show', '--format=%H', `refs/heads/${branch}`, '--'], { allowFail: true });
-    const shas = [...new Set(log.split('\n').filter(Boolean))].slice(0, 1000);
-    if (!shas.length) return false;
-    const r = await this.git.run(['rev-list', '-1', '--stdin'], {
-      input: `${ref}\n${shas.map((s) => `^${s}`).join('\n')}\n`,
-      allowFail: true,
-    });
-    return r.code === 0 && r.out.toString('latin1').trim() === '';
+  private async hadTip(branch: string, tip: string): Promise<boolean> {
+    const ref = `refs/heads/${branch}`;
+    const read = async () => {
+      const log = await this.git.text(['reflog', 'show', '--format=%H', ref, '--'], { allowFail: true });
+      const shas = [...new Set(log.split('\n').filter(Boolean))].slice(0, 1000);
+      if (!shas.length) return false;
+      const r = await this.git.run(['rev-list', '-1', '--stdin'], {
+        input: `${tip}\n${shas.map((s) => `^${s}`).join('\n')}\n`,
+        allowFail: true,
+      });
+      return r.code === 0 && r.out.toString('latin1').trim() === '';
+    };
+    const stamp = await this.git.reflogStamp(ref);
+    return stamp ? this.git.memo(`had-tip ${ref} ${stamp} ${tip}`, read) : read();
   }
 
   /**

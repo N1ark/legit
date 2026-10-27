@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CommitDiff, FileDiff } from '../shared/types.ts';
+import type { CommitDiff, FileDiff, Hunk } from '../shared/types.ts';
 import { RENAME_ARGS, parseDiff, sortFiles } from './diff.ts';
 import type { Git } from './git.ts';
 import { type Position, type Staging, analyse, emit, positions } from './staging.ts';
@@ -16,6 +16,8 @@ const NO_LOCKS = { GIT_OPTIONAL_LOCKS: '0' };
 const MAX_UNTRACKED_PREVIEWS = 500;
 /** Untracked files bigger than this aren't previewed (whole-file staging only). */
 const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+/** A file changed more recently than this could change again without its stat showing it (timestamps are coarse). */
+const SETTLED_MS = 2000;
 
 /** Files with staged changes, unstaged changes, and untracked files. */
 export async function workCounts(git: Git): Promise<{ staged: number; unstaged: number; untracked: number }> {
@@ -54,6 +56,25 @@ export interface LineStaging {
 }
 const lineStaging = new WeakMap<FileDiff, LineStaging>();
 
+/** What a listing made of a file, by its token (the same token is the same patch), for the next listing to reuse. */
+interface Known {
+  hunks: Hunk[];
+  /** Its lines against its index entry, and that entry (`<sha> <mode>`). */
+  staging?: { entry: string; line: LineStaging };
+}
+
+/** An untracked file as it was read; `stat` is empty when it changed too recently to be kept. */
+interface Read {
+  stat: string;
+  f: FileDiff;
+}
+
+/**
+ * The last listing's files: one that hasn't changed since isn't read or worked out again, and
+ * the snapshots that have it share its lines.
+ */
+const listed = new WeakMap<Git, { files: Map<string, Known>; untracked: Map<string, Read> }>();
+
 /** Paths in a `--raw -z` listing, with their records; a rename's under its new path, with its old one last. */
 function rawRecords(out: Buffer): Map<string, string[]> {
   const parts = out.toString('latin1').split('\0');
@@ -87,6 +108,13 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   ]);
   const d = parseDiff(tree.out.toString('latin1'), key);
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
+  const last = listed.get(git);
+  const known = new Map<string, Known>();
+  for (const f of d.files) {
+    const k = last?.files.get(f.token!) ?? { hunks: f.hunks };
+    f.hunks = k.hunks;
+    known.set(f.token!, k);
+  }
   const records = rawRecords(cached.out);
   const staged = new Map<string, Staged>();
   for (const [path, [, mode, , sha, status, from]] of records) {
@@ -144,14 +172,21 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
     });
   }
 
-  const blobs = await git.readObjects(partly.flatMap((f) => [f.oldSha, staged.get(f.path)!.sha].filter((x) => !isZero(x))));
+  // A file's lines against its index entry follow from its patch and that entry: worked out again only when either changed.
+  const entry = (f: FileDiff) => `${staged.get(f.path)!.sha} ${staged.get(f.path)!.mode}`;
+  const unknown = partly.filter((f) => known.get(f.token!)!.staging?.entry !== entry(f));
+  const blobs = await git.readObjects(unknown.flatMap((f) => [f.oldSha, staged.get(f.path)!.sha].filter((x) => !isZero(x))));
   const text = (sha: string) => (isZero(sha) ? '' : (blobs.get(sha)?.data.toString('latin1') ?? ''));
   for (const f of partly) {
     const s = staged.get(f.path)!;
-    const pos = positions(text(f.oldSha), f.hunks);
-    const index = text(s.sha);
-    const staging = analyse(pos, index);
-    lineStaging.set(f, { pos, index, staging, mode: s.mode });
+    const k = known.get(f.token!)!;
+    if (k.staging?.entry !== entry(f)) {
+      const pos = positions(text(f.oldSha), f.hunks);
+      const index = text(s.sha);
+      k.staging = { entry: entry(f), line: { pos, index, staging: analyse(pos, index), mode: s.mode } };
+    }
+    const { staging } = k.staging.line;
+    lineStaging.set(f, k.staging.line);
     f.stage = 'some';
     f.staged = [...staging.staged];
     const mixed = staging.regions.flatMap((r) => r.lines);
@@ -162,9 +197,14 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   }
 
   const paths = [...untrackedPaths];
-  const untracked = await Promise.all(paths.map((p, k) => untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS)));
-  for (const f of untracked) f.stage = 'none';
-  d.files.push(...untracked);
+  const reads = await Promise.all(paths.map((p, k) => untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS, last?.untracked.get(p))));
+  const untracked = new Map<string, Read>();
+  reads.forEach((r, k) => r.stat && untracked.set(paths[k], r));
+  listed.set(git, { files: known, untracked });
+  for (const { f } of reads) {
+    f.stage = 'none';
+    d.files.push(f);
+  }
   sortFiles(d.files);
   return { diff: d, index: createHash('sha1').update(cached.out).digest('hex') };
 }
@@ -183,8 +223,11 @@ export function stagingOf(f: FileDiff, head: string): LineStaging {
   return { pos, index, staging, mode: all ? f.newMode : f.untracked ? f.newMode : f.oldMode };
 }
 
-/** An untracked file as a diff that adds all of its lines. `path` is a byte string. */
-async function untrackedFile(root: string, path: string, preview: boolean): Promise<FileDiff> {
+/**
+ * An untracked file as a diff that adds all of its lines. `path` is a byte string. `last`: how
+ * it was read before, taken again (a copy) while its stat is the same.
+ */
+async function untrackedFile(root: string, path: string, preview: boolean, last?: Read): Promise<Read> {
   const file = join(root, Buffer.from(path, 'latin1').toString('utf8'));
   const f: FileDiff = {
     path,
@@ -201,14 +244,19 @@ async function untrackedFile(root: string, path: string, preview: boolean): Prom
     removed: 0,
   };
   const token = createHash('sha1');
+  let stat = '';
   try {
-    const st = await lstat(file);
+    const at = Date.now();
+    const st = await lstat(file, { bigint: true });
     if (st.isSymbolicLink()) {
       f.newMode = '120000';
       token.update('link:' + (await readlink(file)));
     } else {
-      if (st.mode & 0o111) f.newMode = '100755';
-      token.update(`${f.newMode} ${st.size} ${st.mtimeMs}`);
+      stat = `${preview} ${st.ino} ${st.mode} ${st.size} ${st.mtimeNs} ${st.ctimeNs}`;
+      if (last?.stat === stat) return { stat, f: { ...last.f } };
+      if (Number(st.mtimeMs > st.ctimeMs ? st.mtimeMs : st.ctimeMs) > at - SETTLED_MS) stat = '';
+      if (st.mode & 0o111n) f.newMode = '100755';
+      token.update(`${f.newMode} ${st.size} ${st.mtimeNs}`);
       if (preview && st.size <= MAX_PREVIEW_BYTES) {
         const data = await readFile(file);
         token.update(data);
@@ -238,7 +286,8 @@ async function untrackedFile(root: string, path: string, preview: boolean): Prom
     }
   } catch {
     // Vanished while we looked: staging it will fail cleanly.
+    stat = '';
   }
   f.token = token.digest('hex');
-  return f;
+  return { stat, f };
 }

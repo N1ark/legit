@@ -4,6 +4,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
+import type { CommitDiff } from '../src/shared/types.ts';
 import { DIFF_ARGS, applyLines, parseDiff } from '../src/server/diff.ts';
 import { Repo } from '../src/server/repo.ts';
 import { analyse, emit, lcs, positions, restage } from '../src/server/staging.ts';
@@ -124,6 +126,32 @@ test('staging line after line from one snapshot, as quick clicks do; files stage
   all = await repo.work();
   f = all.files.find((x) => x.path === 'f')!;
   assert.deepEqual([f.stage, f.staged], ['all', [0, 1, 2, 3, 4]]);
+});
+
+test("listing again shares what hasn't changed (untracked files once settled) and sees what has", async () => {
+  const { git, write, commit } = t;
+  commit('base', { e: 'e\n', f: HEAD });
+  write('f', WORK);
+  write('u', 'one\ntwo\n');
+  const repo = await Repo.open(t.dir);
+  await repo.stage({ key: (await repo.work()).sha, selection: { f: [1] } });
+  // Only a file that changed a while ago can be told unchanged by its stat.
+  await sleep(2100);
+  const file = (d: CommitDiff, p: string) => d.files.find((x) => x.path === p)!;
+  const a = await repo.work();
+  write('e', 'E\n');
+  const b = await repo.work();
+  assert.notEqual(a.sha, b.sha);
+  assert.equal(file(b, 'u').hunks, file(a, 'u').hunks);
+  assert.equal(file(b, 'f').hunks, file(a, 'f').hunks);
+  assert.deepEqual(file(b, 'f').staged, [1]);
+  write('u', 'uno\ndos\n');
+  await repo.stage({ key: b.sha, selection: { f: [4] } });
+  const c = await repo.work();
+  assert.deepEqual(file(c, 'u').hunks[0].lines.map((l) => l.s), ['uno', 'dos']);
+  assert.equal(file(c, 'f').hunks, file(a, 'f').hunks);
+  assert.deepEqual(file(c, 'f').staged, [1, 4]);
+  assert.equal(git('show', ':f'), 'a\nb\nB\nc\nd\ne\nf\ng\nh\nnew');
 });
 
 test('lines of a long file with many changes align without running out of memory', () => {
