@@ -1,8 +1,8 @@
 // Web worker: syntax-highlights a file's hunks with Prism, off the main thread.
 //
-// In: { id, path, hunks: HunkData[], syntax? }. Out: { id, tokens } where tokens encodes, for
-// every row of the file (hunk headers included, empty), runs of [length, class id] over the
-// text. Each side (old/new) of a hunk is tokenized as one block so multi-line strings and
+// In: { id, path, hunks: HunkData[], syntax? }, or { prepare: languages } to load those grammars
+// ahead (no answer). Out: { id, tokens } where tokens encodes, for every row of the file (hunk
+// headers included, empty), runs of [length, class id] over the text. Each side (old/new) of a hunk is tokenized as one block so multi-line strings and
 // comments come out right. A file with a tree-sitter grammar (`syntax`) uses that instead of
 // Prism, falling back to Prism if it can't load. Buffers are transferred, not copied.
 
@@ -132,7 +132,12 @@ async function highlight(path: string, hunks: HunkData[], syntax?: string) {
   return { classes, offsets, data: Uint32Array.from(data) };
 }
 
-self.onmessage = async (e: MessageEvent<{ id: number; path: string; hunks: HunkData[]; syntax?: string }>) => {
+self.onmessage = async (e: MessageEvent<{ id: number; path: string; hunks: HunkData[]; syntax?: string } | { prepare: string[] }>) => {
+  // Loading ahead of need: no answer.
+  if ('prepare' in e.data) {
+    await Promise.all([core(), ...e.data.prepare.map(load)]).catch(() => {});
+    return;
+  }
   const { id, path, hunks, syntax } = e.data;
   let tokens = null;
   try {

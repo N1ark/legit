@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** The code font's character width, as the last view measured it: the next one starts with it. */
+  let knownCharWidth = 0;
+</script>
+
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
@@ -36,7 +41,7 @@
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
   import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
-  import { type Tokens, highlight, segments } from './lib/highlighter.ts';
+  import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -57,6 +62,7 @@
     rowHunks,
     rowMap,
     rowOfChange,
+    rowsIn,
   } from './lib/rows.ts';
 
   let {
@@ -301,7 +307,7 @@
   }
 
   // Wrapping long lines (settings): at the columns that fit the diff, or at most at a given one.
-  let charWidth = $state(0);
+  let charWidth = $state(knownCharWidth);
   let paneWidth = $state(0);
   const cols = $derived.by(() => {
     const { wrap, wrapColumn } = app.display;
@@ -336,26 +342,30 @@
     const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
     return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
   }
-  /** Height of what comes before file i's lines: its images. */
-  const lead = (i: number) => (imageType(files[i].path) && files[i].oldSha !== files[i].newSha ? IMG : 0);
+  /** Height of what comes before each file's lines: its images. */
+  const leads = $derived(files.map((f) => (imageType(f.path) && f.oldSha !== f.newSha ? IMG : 0)));
+  const lead = (i: number) => leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
 
-  /** [first, end) of the files overlapping the viewport plus overscan. */
-  const range = $derived(variableRange(tops, view.top, view.bottom - view.top, OVERSCAN));
+  /** [first, end) of the files overlapping the viewport plus overscan; the same array while they stay the same, as they do for most frames of scrolling. */
+  let lastRange: [number, number] = [0, 0];
+  const range = $derived.by(() => {
+    const [a, b] = variableRange(tops, view.top, view.bottom - view.top, OVERSCAN);
+    return a === lastRange[0] && b === lastRange[1] ? lastRange : (lastRange = [a, b]);
+  });
   const visible = $derived(Array.from({ length: range[1] - range[0] }, (_, k) => range[0] + k));
 
   /** File i's rows near the viewport. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
-    const at = wrapped(i);
-    const [a, b] = blockLayout[i]
-      ? variableRange(Array.from({ length: rowCount(i) + 1 }, (_, r) => rowY(i, r)), view.top - y, view.bottom - view.top, OVERSCAN)
-      : at
-        ? variableRange(Array.from(at, (n) => n * ROW), view.top - y, view.bottom - view.top, OVERSCAN)
+    // Rows of varying height are searched for, not listed: this runs for every frame of scrolling.
+    const [a, b] =
+      blockLayout[i] || wrapped(i)
+        ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - OVERSCAN - y, view.bottom + OVERSCAN - y)
         : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
@@ -364,12 +374,15 @@
 
   // Scroll position -> view, measured synchronously in the scroll event so the new rows
   // are in the DOM before the frame paints.
+  /** The view's been measured: until then (the first layout, unless it opens at a place) it's only a guess, not worth loading. */
+  let measured = $state(false);
   function measure() {
     if (!filesEl || !scroller) return;
     const top = scroller.getBoundingClientRect().top - filesEl.getBoundingClientRect().top;
     if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
       view = { top, bottom: top + scroller.clientHeight };
     }
+    measured = true;
     if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
     const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
     held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
@@ -389,10 +402,13 @@
     }
   });
 
+  // Read once laid out (and again when the font loads) rather than forcing a layout as the view mounts.
   function measureChars(el: HTMLElement) {
-    const read = () => (charWidth = el.getBoundingClientRect().width / 100);
-    read();
-    document.fonts?.ready.then(() => alive && read());
+    const ro = new ResizeObserver(([e]) => {
+      if (e.contentRect.width) charWidth = knownCharWidth = e.contentRect.width / 100;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }
 
   onMount(() => {
@@ -402,13 +418,19 @@
     ro.observe(scroller);
     ro.observe(filesEl);
     ro.observe(scroller.firstElementChild ?? filesEl);
-    measure();
-    if (initial) {
+    // The observer's first call measures once laid out, after whatever moves the view as it mounts
+    // (the commit view scrolling to the top): reading it now would force a layout of the new view.
+    // (It doesn't call while the view isn't shown.)
+    if (!initial) setTimeout(() => alive && !measured && measure(), 100);
+    else {
+      measure();
       const k = initial.path === null ? -1 : files.findIndex((f) => f.path === initial.path);
       if (k >= 0) scroller.scrollTop += tops[k] + Math.min(initial.offset, fileHeight(k)) - view.top;
       else scroller.scrollTop = initial.scrollTop;
       measure();
     }
+    // Grammars load while the first contents do.
+    prepare(files.slice(near[0], near[1]).map((f) => f.path));
     return () => {
       alive = false;
       scroller.removeEventListener('scroll', measure);
@@ -416,30 +438,47 @@
     };
   });
 
-  // Fetch the contents of files as they come near the viewport, in one batch per change.
+  /** [first, end) of the files worth loading and highlighting: those near the viewport, and a few past it. */
+  const near = $derived([range[0], Math.min(files.length, range[1] + PREFETCH)]);
+
+  // Fetch the contents of files as they come near the viewport, one batch at a time: the next is
+  // what's near when the last lands, so scrolling fast doesn't fetch every file it goes past.
   const requested = new Set<number>();
+  let fetching = false;
+  /** Files came near while a batch was on its way: look again once it's in. */
+  let skipped = false;
+  let behind = $state(0);
   $effect(() => {
+    void behind;
+    if (!measured) return;
     const want: number[] = [];
-    for (let i = range[0]; i < Math.min(files.length, range[1] + PREFETCH); i++) {
+    for (let i = near[0]; i < near[1]; i++) {
       if (files[i].rows && !collapsed[i] && !requested.has(i)) want.push(i);
     }
     if (!want.length) return;
-    for (const i of want) requested.add(i);
     // What's already loaded (prefetched, or unchanged in a new snapshot) shows without waiting for the rest.
     const have = want.filter((i) => app.hasContents(summary, i));
+    for (const i of have) requested.add(i);
     if (have.length) load(have);
-    if (have.length < want.length) load(want.filter((i) => !have.includes(i)));
+    if (have.length === want.length) return;
+    if (fetching) return void (skipped = true);
+    const rest = want.filter((i) => !have.includes(i));
+    for (const i of rest) requested.add(i);
+    fetching = true;
+    load(rest).finally(() => {
+      fetching = false;
+      if (skipped && alive) behind++;
+      skipped = false;
+    });
   });
 
   function load(want: number[]) {
-    app.fileContents(summary, want).then(
+    return app.fileContents(summary, want).then(
       (res) => {
         if (!alive) return;
         const next = { ...contents };
         for (const i of want) next[i] = build(i, res[i]);
-        // In place before highlighting is queued: a job is dropped once its rows aren't the file's.
         contents = next;
-        for (const i of want) queueHighlight(i, next[i]);
       },
       (e) => {
         for (const i of want) requested.delete(i);
@@ -452,15 +491,31 @@
   const build = (i: number, hunks: HunkData[]) =>
     buildRows(hunks, expandable(files[i]), expansions[i] ?? noExpansion(), hideWhitespace.value);
 
+  /** The highlighting asked for of each file's rows (its key), until it's in or dropped. */
+  const asked = new WeakMap<FileRows, string>();
+
   function queueHighlight(i: number, rows: FileRows) {
-    const distance = () => Math.abs(tops[i] - view.top);
-    const x = expansions[i];
-    const key = highlightKey(summary, i, files[i].syntax, x, rows.ws);
-    const want = () => alive && contents[i] === rows;
+    const key = highlightKey(summary, i, files[i].syntax, expansions[i], rows.ws);
+    if (asked.get(rows) === key) return;
+    asked.set(rows, key);
+    // How far it is from the view: none when any of it is in view, however far up it starts.
+    const distance = () => Math.max(0, tops[i] - view.bottom, view.top - tops[i + 1]);
+    // A file scrolled past before its turn is dropped, and asked for again when it's back.
+    const want = () => alive && contents[i] === rows && i >= near[0] && i < near[1];
     highlight(key, files[i].path, rowHunks(rows), distance, want, files[i].syntax).then((t) => {
-      if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
+      if (t === undefined) {
+        if (asked.get(rows) === key) asked.delete(rows);
+      } else if (t && alive && contents[i] === rows) tokens = { ...tokens, [i]: t };
     });
   }
+
+  // Highlighting for the files near the view, as their contents come in.
+  $effect(() => {
+    for (let i = near[0]; i < near[1]; i++) {
+      const rows = contents[i];
+      if (rows && !collapsed[i]) untrack(() => queueHighlight(i, rows));
+    }
+  });
 
   // Unchanged lines between hunks: arrows on a hunk's header show more of the gap above it, from
   // its bottom (up) or its top (down, continuing the hunk before). The old file is loaded the
@@ -640,7 +695,6 @@
         const next = { ...contents };
         for (const i of want) if (!next[i]) next[i] = build(i, res[i]);
         contents = next;
-        for (const i of want) queueHighlight(i, next[i]);
       },
       (e) => {
         for (const i of want) requested.delete(i);
