@@ -187,20 +187,20 @@
   let scrolledAt = 0;
   function onscroll() {
     scrolledAt = performance.now();
-    loadIfNearEnd();
+    loadIfNearEnd(true);
   }
   function hovered(sha: string) {
     if (performance.now() - scrolledAt > 150) app.prefetch(sha);
   }
 
   // Older history loads as the list nears its end, and again after each page if it still does.
-  function loadIfNearEnd() {
-    if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 600) app.loadOlder();
+  function loadIfNearEnd(retry = false) {
+    if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 600) app.loadOlder(retry);
   }
 
   $effect(() => {
     void app.commits.length;
-    if (!app.loadingOlder) tick().then(loadIfNearEnd);
+    if (!app.loadingOlder) tick().then(() => loadIfNearEnd());
   });
 
   function ondragstart(e: DragEvent, sha: string) {

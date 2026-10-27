@@ -225,14 +225,14 @@ export class Repo {
 
   /**
    * First-parent history older than `sha` (the oldest commit shown so far), newest first.
-   * It's never editable: it's past what `state()` lists.
+   * It's never editable: it's past what `state()` lists. `pushed`: `sha` is on a remote, so all of it is.
    */
-  async older(sha: string): Promise<OlderCommits> {
+  async older(sha: string, pushed = false): Promise<OlderCommits> {
     const parent = (await this.git.commit(sha)).parents[0];
     if (!parent) return { commits: [], more: false };
     const [list, unpushed] = await Promise.all([
       this.git.firstParent(parent, PAGE + 1),
-      this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent, '--not', '--remotes']),
+      pushed ? '' : this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent, '--not', '--remotes']),
     ]);
     const local = new Set(unpushed.split('\n'));
     const commits = await this.git.loadCommits(list);

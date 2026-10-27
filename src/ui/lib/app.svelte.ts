@@ -183,23 +183,35 @@ class App {
   }
 
   /** Load the next page of older history (the list calls this when scrolled near its end). */
-  async loadOlder() {
+  async loadOlder(retry = false) {
     const from = this.repo?.commits.at(-1)?.sha;
-    if (!from || this.loadingOlder || this.atEnd) return;
+    if (!from || this.atEnd) return;
     const cur = this.older?.from === from ? this.older : null;
+    const last = cur?.commits.at(-1) ?? this.repo!.commits.at(-1)!;
+    // One page at a time per history; a page asked for an older one doesn't hold this one up.
+    if (this.olderFor === last.sha || (this.olderFailed === last.sha && !retry)) return;
+    this.olderFor = last.sha;
     this.loadingOlder = true;
     try {
-      const r = await request<OlderCommits>(`/api/older/${cur?.commits.at(-1)?.sha ?? from}`);
+      const r = await request<OlderCommits>(`/api/older/${last.sha}${last.pushed ? '?pushed=1' : ''}`);
       // History changed meanwhile: the next call starts over from the new oldest commit.
-      if (this.repo?.commits.at(-1)?.sha !== from || this.older !== cur) return;
+      if (this.repo?.commits.at(-1)?.sha !== from || (this.older?.from === from ? this.older : null) !== cur) return;
       this.older = { from, commits: [...(cur?.commits ?? []), ...r.commits], more: r.more };
+      this.olderFailed = null;
       this.loadAvatars(r.commits.map((c) => c.author.email));
     } catch (e) {
+      if (this.olderFor !== last.sha) return;
+      this.olderFailed = last.sha;
       toast.error(e);
     } finally {
-      this.loadingOlder = false;
+      if (this.olderFor === last.sha) this.olderFor = null;
+      this.loadingOlder = this.olderFor !== null;
     }
   }
+
+  /** The oldest commit whose page of older history is on its way, and the last one that couldn't be loaded (retried on scroll). */
+  private olderFor: string | null = null;
+  private olderFailed: string | null = null;
 
   /** List a merge's commits under it, or stop listing them. */
   async toggleMerge(sha: string, open = !(sha in this.expanded)) {

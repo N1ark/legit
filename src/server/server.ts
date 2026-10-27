@@ -275,7 +275,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/conflict') return send(res, 200, await summary(await conflictDiff(repo)));
     if (path === '/api/editing') return send(res, 200, await summary(await editChanges(repo, query.get('whole') === '1')));
     const older = /^\/api\/older\/([0-9a-f]{40,64})$/.exec(path);
-    if (older) return send(res, 200, await repo.older(older[1]));
+    if (older) return send(res, 200, await repo.older(older[1], query.get('pushed') === '1'));
     const merged = /^\/api\/merged\/([0-9a-f]{40,64})$/.exec(path);
     if (merged) return send(res, 200, await repo.merged(merged[1]));
     const diff = DIFF.exec(path);
