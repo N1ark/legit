@@ -3,6 +3,7 @@ import { expandable } from '../../shared/context.ts';
 import { highlight } from './highlighter.ts';
 import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
+import { Lru } from './cache.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
@@ -32,16 +33,17 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 class App {
   /** Replaced, never changed in place: a refresh brings a whole new one. */
   repo = $state.raw<RepoState | null>(null);
-  /** Selected commit SHAs, in click order. */
-  selected = $state<string[]>([]);
+  /** Selected commit SHAs, in click order. Replaced, never changed in place. */
+  selected = $state.raw<string[]>([]);
   anchor: string | null = null;
   busy = $state(false);
   /** The operation running while `busy` (its API name). */
   running: string | null = null;
 
-  private diffs = new Map<string, Promise<DiffSummary>>();
-  private contents = new Map<string, Promise<HunkData[]>>();
-  private olds = new Map<string, Promise<FileLines>>();
+  // Bounded by what they hold too (files, rows, lines), so a few huge diffs can't take all the memory.
+  private diffs = new Lru<string, Promise<DiffSummary>>(200, 20_000);
+  private contents = new Lru<string, Promise<HunkData[]>>(4000, 200_000);
+  private olds = new Lru<string, Promise<FileLines>>(50, 200_000);
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
@@ -71,7 +73,14 @@ class App {
   editable = $derived(this.commits.filter((c) => c.editable));
   bySha = $derived(new Map(this.commits.map((c) => [c.sha, c])));
   /** Selected commits, newest first. */
-  selection = $derived(this.commits.filter((c) => this.selected.includes(c.sha)));
+  selection = $derived.by(() => {
+    if (this.selected.length === 1) {
+      const c = this.bySha.get(this.selected[0]);
+      return c ? [c] : NONE;
+    }
+    const picked = new Set(this.selected);
+    return this.commits.filter((c) => picked.has(c.sha));
+  });
   people = $derived.by(() => {
     const seen = new Map<string, { name: string; email: string }>();
     for (const c of this.commits) {
@@ -86,6 +95,11 @@ class App {
   /** First load: the state, and the view this window left the repo in, if it's been here before. */
   async start() {
     this.loadDisplay();
+    // Capturing, so it runs before the views' own scroll handlers have changed anything to lay out.
+    const onScroll = (e: Event) => {
+      if (e.target instanceof HTMLElement && e.target.hasAttribute('data-scroller')) this.scrolledDown = e.target.scrollTop > 0;
+    };
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
     try {
       await this.load();
     } finally {
@@ -95,6 +109,16 @@ class App {
 
   /** Set once `start` is done. */
   started = $state(false);
+
+  /** The views' scroller is scrolled down, as its last scroll event left it (known without laying the page out). */
+  private scrolledDown = false;
+
+  /** Start a new view at the top. Setting scrollTop lays out the page there and then, so only when it's needed. */
+  scrollToTop() {
+    const s = this.scrolledDown && document.querySelector('[data-scroller]');
+    if (s) s.scrollTop = 0;
+    this.scrolledDown = false;
+  }
 
   private async load() {
     const kept = await recall<View>();
@@ -147,7 +171,29 @@ class App {
     };
   }
 
-  async refresh() {
+  /**
+   * Load the state again. Asked while a load is on its way, one more follows it, however often it's
+   * asked meanwhile; asked during an operation, it waits for it to end (it may still be changing things).
+   */
+  refresh(): Promise<void> {
+    if (this.busy) {
+      this.stale = true;
+      return Promise.resolve();
+    }
+    this.stale = false;
+    if (!this.refreshing) return (this.refreshing = this.refreshNow().finally(() => (this.refreshing = null)));
+    return (this.refreshAgain ??= this.refreshing.then(() => {
+      this.refreshAgain = null;
+      return this.refresh();
+    }));
+  }
+
+  private refreshing: Promise<void> | null = null;
+  private refreshAgain: Promise<void> | null = null;
+  /** A refresh was asked for during an operation: it runs when the operation ends. */
+  private stale = false;
+
+  private async refreshNow() {
     const gen = ++this.gen;
     const sent = early['/api/state'];
     delete early['/api/state'];
@@ -164,8 +210,15 @@ class App {
     }
   }
 
-  /** The state `refresh` last applied, as the server sent it. */
+  /** The state last applied (by `refresh`, or from an operation's result), as the server sent it. */
   private fetched: { text: string; repo: RepoState } | null = null;
+
+  /** Show the state an operation brought back; the refresh its changes set off then has nothing to redo if it finds the same. */
+  private applyResult(r: OpResult) {
+    const text = JSON.stringify(r.state);
+    this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+    this.fetched = { text, repo: this.repo! };
+  }
 
   private setRepo(repo: RepoState, focus?: string[]) {
     const first = !this.repo;
@@ -178,7 +231,8 @@ class App {
     if (this.hasWork) shas.add(WORK);
     let sel = (conflictStarted ? [WORK] : (focus ?? this.selected)).filter((s) => shas.has(s));
     if (!sel.length && repo.commits.length) sel = [repo.commits[0].sha];
-    this.selected = sel;
+    // The same selection stays the same array, so what shows it doesn't redraw.
+    if (sel.length !== this.selected.length || sel.some((s, i) => s !== this.selected[i])) this.selected = sel;
     if (this.anchor && !shas.has(this.anchor)) this.anchor = sel[0] ?? null;
     // The first commit shown: its diff is asked for now, not once the list and the view have rendered.
     if (first && sel.length === 1 && sel[0] !== WORK) this.prefetch(sel[0]);
@@ -279,13 +333,11 @@ class App {
 
   /** A commit's file list (no content). Cached: commits are immutable. */
   diff(sha: string): Promise<DiffSummary> {
-    let d = this.diffs.get(sha);
-    if (!d) {
-      d = request<DiffSummary>(`/api/diff/${sha}`);
-      d.catch(() => this.diffs.delete(sha));
-      if (this.diffs.size > 200) this.diffs.delete(this.diffs.keys().next().value!);
-      this.diffs.set(sha, d);
-    }
+    const had = this.diffs.get(sha);
+    if (had) return had;
+    const d = request<DiffSummary>(`/api/diff/${sha}`);
+    d.then((r) => this.diffs.weigh(sha, d, r.files.length), () => this.diffs.delete(sha, d));
+    this.diffs.set(sha, d);
     return d;
   }
 
@@ -297,31 +349,31 @@ class App {
   /** Contents of some of a diff's files; misses are fetched in one request. */
   async fileContents(d: DiffSummary, files: number[]): Promise<Record<number, HunkData[]>> {
     const key = (i: number) => fileKey(d, i);
-    const missing = files.filter((i) => !this.contents.has(key(i)));
+    // Taken now: filling the cache can push out others of these.
+    const got = new Map(files.map((i) => [i, this.contents.get(key(i))]));
+    const missing = files.filter((i) => !got.get(i));
     if (missing.length) {
       const batch = request<FileContents>(`/api/diff/${d.sha}/files?i=${missing.join(',')}`);
       for (const i of missing) {
         const p = batch.then((r) => r[i] ?? []);
-        p.catch(() => this.contents.delete(key(i)));
-        this.contents.set(key(i), p);
+        p.catch(() => this.contents.delete(key(i), p));
+        this.contents.set(key(i), p, Math.max(1, d.files[i].rows));
+        got.set(i, p);
       }
-      while (this.contents.size > 4000) this.contents.delete(this.contents.keys().next().value!);
     }
     const out: Record<number, HunkData[]> = {};
-    for (const i of files) out[i] = await this.contents.get(key(i))!;
+    for (const i of files) out[i] = await got.get(i)!;
     return out;
   }
 
   /** File i's old version, to show the unchanged lines between its hunks. */
   oldLines(sha: string, i: number): Promise<FileLines> {
     const key = `${sha}:${i}`;
-    let p = this.olds.get(key);
-    if (!p) {
-      p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
-      p.catch(() => this.olds.delete(key));
-      if (this.olds.size > 50) this.olds.delete(this.olds.keys().next().value!);
-      this.olds.set(key, p);
-    }
+    const had = this.olds.get(key);
+    if (had) return had;
+    const p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
+    p.then((r) => this.olds.weigh(key, p, r.lines.length), () => this.olds.delete(key, p));
+    this.olds.set(key, p);
     return p;
   }
 
@@ -378,15 +430,16 @@ class App {
       const r = await request<OpResult>(`/api/${name}`, body);
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
-      this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+      this.applyResult(r);
       return true;
     } catch (e) {
       if (optimistic) this.repo = before;
       if (!(e instanceof Error && fail?.(e))) toast.error(e);
-      this.refresh();
+      this.stale = true;
       return false;
     } finally {
       this.busy = false;
+      if (this.stale) this.refresh();
     }
   }
 
@@ -696,17 +749,18 @@ class App {
       const r = await request<SyncResult>(`/api/${name}`, body);
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
-      this.setRepo(r.state, r.focus.length ? r.focus : this.selected.map((s) => r.renamed[s] ?? s));
+      this.applyResult(r);
       // The toast's Undo only once it's finished (not stopped on a conflict).
       const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : undefined;
       if (r.message) toast(r.message, { timeout: r.message.length > 80 || undo ? 10_000 : undefined, action: undo });
       return r;
     } catch (e) {
       toast.error(e);
-      this.refresh();
+      this.stale = true;
       return null;
     } finally {
       this.busy = false;
+      if (this.stale) this.refresh();
     }
   }
 

@@ -86,8 +86,7 @@
   let diffView = $state<DiffView>();
   const review = new DiffReview(init.sha, [init.sha]);
   onMount(() => {
-    const scroller = document.querySelector('[data-scroller]');
-    if (scroller && !position) scroller.scrollTop = 0;
+    if (!position) app.scrollToTop();
   });
 
   app.diff(init.sha).then(

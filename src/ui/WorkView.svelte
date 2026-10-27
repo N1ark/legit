@@ -64,16 +64,15 @@
     }
   }
 
+  // Derived, so a refresh that brings a new state but the same HEAD doesn't load the changes again.
+  const headSha = $derived(app.repo?.head);
   $effect(() => {
     void app.workTick;
-    void app.repo?.head;
+    void headSha;
     load();
   });
 
-  onMount(() => {
-    const scroller = document.querySelector('[data-scroller]');
-    if (scroller) scroller.scrollTop = 0;
-  });
+  onMount(() => app.scrollToTop());
 
   // Picks are sent one after the other, each as soon as it's made, against the snapshot they
   // were made on (the server refuses a file that changed since; what's staged may have).

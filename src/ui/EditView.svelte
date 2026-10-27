@@ -55,10 +55,13 @@
     show = v;
   }
 
+  // Derived, so a refresh that brings a new state but the same HEAD doesn't load the diffs again.
+  const head = $derived(app.repo?.head);
+  const editing = $derived(!!edit);
   $effect(() => {
     void app.workTick;
-    void app.repo?.head;
-    if (edit) load();
+    void head;
+    if (editing) load();
   });
 
   const sel = $derived(diff ? Object.fromEntries(diff.files.map((f) => [f.path, new SvelteSet<number>()])) : {});

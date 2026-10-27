@@ -65,7 +65,7 @@
       {#each [['Before', before], ['After', after]] as [label, src] (label)}
         {#if src}
           <figure>
-            <div class="stage"><img {src} alt="{label}" draggable="false" /></div>
+            <div class="stage"><img {src} alt="{label}" draggable="false" decoding="async" /></div>
             {#if both}<figcaption class="muted">{label}</figcaption>{/if}
           </figure>
         {/if}
@@ -73,13 +73,13 @@
     </div>
   {:else}
     <div class="stage over">
-      <img src={before} alt="Before" draggable="false" />
+      <img src={before} alt="Before" draggable="false" decoding="async" />
       <div
         class="layer"
         style:clip-path={shown === 'slider' ? `inset(0 0 0 ${at}%)` : undefined}
         style:opacity={shown === 'onion' ? at / 100 : undefined}
       >
-        <img src={after} alt="After" draggable="false" />
+        <img src={after} alt="After" draggable="false" decoding="async" />
       </div>
       {#if shown === 'slider'}<span class="handle" style:left="{at}%"></span>{/if}
     </div>
