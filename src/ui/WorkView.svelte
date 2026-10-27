@@ -72,10 +72,7 @@
     load();
   });
 
-  onMount(() => {
-    const scroller = document.querySelector('[data-scroller]');
-    if (scroller) scroller.scrollTop = 0;
-  });
+  onMount(() => app.scrollToTop());
 
   // Picks are sent one after the other, each as soon as it's made, against the snapshot they
   // were made on (the server refuses a file that changed since; what's staged may have).

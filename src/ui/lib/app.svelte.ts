@@ -95,6 +95,11 @@ class App {
   /** First load: the state, and the view this window left the repo in, if it's been here before. */
   async start() {
     this.loadDisplay();
+    // Capturing, so it runs before the views' own scroll handlers have changed anything to lay out.
+    const onScroll = (e: Event) => {
+      if (e.target instanceof HTMLElement && e.target.hasAttribute('data-scroller')) this.scrolledDown = e.target.scrollTop > 0;
+    };
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
     try {
       await this.load();
     } finally {
@@ -104,6 +109,16 @@ class App {
 
   /** Set once `start` is done. */
   started = $state(false);
+
+  /** The views' scroller is scrolled down, as its last scroll event left it (known without laying the page out). */
+  private scrolledDown = false;
+
+  /** Start a new view at the top. Setting scrollTop lays out the page there and then, so only when it's needed. */
+  scrollToTop() {
+    const s = this.scrolledDown && document.querySelector('[data-scroller]');
+    if (s) s.scrollTop = 0;
+    this.scrolledDown = false;
+  }
 
   private async load() {
     const kept = await recall<View>();
