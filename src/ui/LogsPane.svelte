@@ -23,7 +23,8 @@
 
   $effect(() => {
     load();
-    const poll = setInterval(load, 2000);
+    // Only while the window is seen: what was missed shows on the next tick.
+    const poll = setInterval(() => document.hidden || load(), 2000);
     return () => clearInterval(poll);
   });
 
