@@ -144,3 +144,21 @@ test("a stash's diff: staged and unstaged changes, then its untracked files", as
   ]);
   await assert.rejects(repo.diff(`s${git('rev-parse', 'HEAD')}`), /not a stash/);
 });
+
+test('the stash list follows stashes made, dropped and cleared from a terminal', async () => {
+  commit('base', { f: '1\n' });
+  const repo = await Repo.open(t.dir);
+  const listed = async () => (await stashes(repo.git)).entries.map((e) => e.sha);
+  assert.deepEqual(await listed(), []);
+  for (const v of ['a', 'b', 'c']) {
+    write('f', `${v}\n`);
+    git('stash', 'push', '-q', '-m', v);
+    assert.deepEqual(await listed(), stashList());
+  }
+  // The middle one: refs/stash stays the same, only its reflog is rewritten.
+  git('stash', 'drop', '-q', 'stash@{1}');
+  assert.deepEqual(await listed(), stashList());
+  assert.equal(stashList().length, 2);
+  git('stash', 'clear');
+  assert.deepEqual(await listed(), []);
+});

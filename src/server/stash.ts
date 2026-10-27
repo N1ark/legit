@@ -19,14 +19,17 @@ const uniqueTime = () => (lastTime = Math.max(Date.now(), lastTime + 1));
 
 /** The stash list, newest first. */
 async function list(git: Git): Promise<{ sha: string; message: string; time: number }[]> {
-  const out = await git.text(['stash', 'list', '--format=%H%x00%gs%x00%ct'], { allowFail: true });
-  return out
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [sha, message, time] = line.split('\0');
-      return { sha, message, time: Number(time) * 1000 };
-    });
+  const read = async () =>
+    (await git.text(['stash', 'list', '--format=%H%x00%gs%x00%ct'], { allowFail: true }))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, message, time] = line.split('\0');
+        return { sha, message, time: Number(time) * 1000 };
+      });
+  // The list is refs/stash's reflog: the state asks for it on every refresh, and it's read again only once that changes.
+  const [stamp, top] = await Promise.all([git.reflogStamp('refs/stash'), git.readRef('refs/stash')]);
+  return stamp && top !== undefined ? git.memo(`stash-list ${stamp} ${top}`, read, true) : read();
 }
 
 /** Paths a stash touches (byte strings): tracked changes from its base, and its untracked files. */
