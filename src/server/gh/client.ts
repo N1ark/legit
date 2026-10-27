@@ -1,12 +1,13 @@
 // GitHub's REST and GraphQL APIs, with the user's token. With LEGIT_GITHUB_MOCK set, every call
-// goes to the in-memory fake in mock/ instead, so the UI can be worked on without GitHub.
+// goes to the in-memory fake in mock/ instead, so the UI can be worked on without GitHub (REST
+// ones as HTTP answers, through the same ETags and rate-limit handling).
 
 import { execFile } from 'node:child_process';
 import https from 'node:https';
 import zlib from 'node:zlib';
 import { GitError } from '../git.ts';
 import { log } from '../log.ts';
-import { mockGraphql, mockRest } from './mock/registry.ts';
+import { mockGraphql, mockResponse, mockRest } from './mock/registry.ts';
 
 export const MOCK = !!process.env.LEGIT_GITHUB_MOCK;
 
@@ -58,7 +59,7 @@ export function resetToken() {
 const NO_TOKEN = 'Sign in to GitHub first: run `gh auth login`, or set GITHUB_TOKEN.';
 
 async function headers(extra?: Record<string, string>): Promise<Record<string, string>> {
-  const t = await githubToken();
+  const t = MOCK ? 'mock' : await githubToken();
   if (!t) throw new GithubError(NO_TOKEN, 401, 'github-auth');
   return {
     accept: 'application/vnd.github+json',
@@ -69,7 +70,7 @@ async function headers(extra?: Record<string, string>): Promise<Record<string, s
   };
 }
 
-async function failure(res: Response): Promise<GithubError> {
+async function failure(res: Response, path: string): Promise<GithubError> {
   let message = res.statusText;
   try {
     const body = (await res.json()) as { message?: string; errors?: ({ message?: string } | string)[] };
@@ -77,10 +78,42 @@ async function failure(res: Response): Promise<GithubError> {
     message = [body.message, ...details].filter(Boolean).join(': ') || message;
   } catch {}
   if (res.status === 401) return new GithubError(`GitHub refused the token (${message}). ${NO_TOKEN}`, 401, 'github-auth');
-  if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
-    return new GithubError('GitHub rate-limited this token; try again in a few minutes.', res.status, 'github-limit');
+  const says = res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after');
+  if ((res.status === 403 || res.status === 429) && (says || /rate limit/i.test(message))) {
+    // A secondary limit that doesn't say for how long: GitHub asks for at least a minute.
+    if (!says) pause('*', Date.now() + 60_000);
+    return limitError(pausedUntil(path), res.status);
   }
   return new GithubError(`GitHub: ${message}`, res.status);
+}
+
+/** When each rate limit (`core`, `graphql`…, and `*` for a secondary one) lets requests through again. */
+const paused = new Map<string, number>();
+const resourceOf = (path: string) => (path === '/graphql' ? 'graphql' : path.startsWith('/search/') ? 'search' : 'core');
+const pause = (resource: string, until: number) => paused.set(resource, Math.max(until, paused.get(resource) ?? 0));
+const pausedUntil = (path: string) => Math.max(paused.get('*') ?? 0, paused.get(resourceOf(path)) ?? 0);
+
+function limitError(until: number, status = 429): GithubError {
+  const min = Math.max(1, Math.ceil((until - Date.now()) / 60_000));
+  return new GithubError(`GitHub rate-limited this token; try again in ${min > 1 ? `${min} minutes` : 'a minute'}.`, status, 'github-limit');
+}
+
+/** Each limit's warning was logged for the window ending then. */
+const warned = new Map<string, number>();
+
+/** Note what a response says of the rate limits: one used up, or a `retry-after`, holds the requests it covers until then. */
+function noteLimits(path: string, res: Response) {
+  const h = res.headers;
+  const resource = h.get('x-ratelimit-resource') ?? resourceOf(path);
+  const reset = Number(h.get('x-ratelimit-reset')) * 1000 || Date.now() + 60_000;
+  const [left, limit] = [Number(h.get('x-ratelimit-remaining') ?? NaN), Number(h.get('x-ratelimit-limit') ?? NaN)];
+  const after = Number(h.get('retry-after'));
+  if (res.status >= 400 && after > 0) pause('*', Date.now() + after * 1000);
+  if (left === 0) pause(resource, reset);
+  else if (left < limit / 20 && warned.get(resource) !== reset) {
+    warned.set(resource, reset);
+    log(`GitHub rate limit (${resource}): ${left} of ${limit} left until ${new Date(reset).toLocaleTimeString()}`);
+  }
 }
 
 /** Why a request failed, short: the error's code (ECONNRESET, ENOTFOUND…) where it has one. */
@@ -161,11 +194,15 @@ const queryName = (body?: string) => /\b(?:query|mutation)\s+(\w+)/.exec(body ??
  *  closed, a blip after the Mac wakes) is sent once more when that can't do anything twice. */
 async function send(path: string, init: Init, safe: boolean): Promise<Response> {
   const what = `GitHub ${init.method ?? 'GET'} ${path}${path === '/graphql' ? ` ${queryName(init.body)}` : ''}`;
+  // Asking while rate-limited only fails again, and GitHub may ban a token that keeps at it.
+  const until = pausedUntil(path);
+  if (Date.now() < until) throw limitError(until);
   for (let attempt = 0; ; attempt++) {
     dropIdle(Date.now() - IDLE);
     const start = Date.now();
     try {
-      const res = await request(new URL(`https://api.github.com${path}`), init);
+      const res = MOCK ? await mockResponse(path, init) : await request(new URL(`https://api.github.com${path}`), init);
+      noteLimits(path, res);
       const ms = Date.now() - start;
       if (res.status >= 400) log(`${what}: ${res.status} after ${ms}ms`);
       else if (ms > SLOW) log(`${what}: took ${ms}ms`);
@@ -209,19 +246,41 @@ export function rest<T = any>(method: string, path: string, body?: unknown, opts
   return once(`GET ${path}\0${opts.accept ?? ''}\0${!!opts.text}`, () => restCall<T>(method, path, body, opts));
 }
 
+/** REST GETs' last answers with their ETags, asked for again with `If-None-Match`: a 304 costs no rate limit. */
+const etags = new Map<string, { etag: string; body: string }>();
+const ETAGS = 200;
+/** Bigger answers aren't kept. */
+const ETAG_BODY = 256 * 1024;
+
 async function restCall<T>(method: string, path: string, body: unknown, opts: RestOpts): Promise<T> {
-  if (MOCK) return mockRest(method, path, body) as T;
+  const key = method === 'GET' && !opts.text ? `${path}\0${opts.accept ?? ''}` : null;
+  const hit = key ? etags.get(key) : undefined;
   const res = await send(path, {
     method,
     headers: await headers({
       ...(opts.accept ? { accept: opts.accept } : {}),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(hit ? { 'if-none-match': hit.etag } : {}),
     }),
     body: body === undefined ? undefined : JSON.stringify(body),
   }, method === 'GET' || !!opts.safe);
-  if (!res.ok) throw await failure(res);
+  if (key && hit && res.status === 304) {
+    // Most recently used last, so the oldest is the one dropped.
+    etags.delete(key);
+    etags.set(key, hit);
+    return JSON.parse(hit.body) as T;
+  }
+  if (!res.ok) throw await failure(res, path);
   if (res.status === 204) return null as T;
-  return (opts.text ? await res.text() : await res.json()) as T;
+  if (opts.text) return (await res.text()) as T;
+  const text = await res.text();
+  if (key) {
+    etags.delete(key);
+    const etag = res.headers.get('etag');
+    if (etag && text.length <= ETAG_BODY) etags.set(key, { etag, body: text });
+    if (etags.size > ETAGS) etags.delete(etags.keys().next().value!);
+  }
+  return JSON.parse(text) as T;
 }
 
 /** A GET sent with `If-Modified-Since`: null when nothing changed (a 304, which costs no rate limit). */
@@ -229,7 +288,7 @@ export async function restSince<T = any>(path: string, since: string | null): Pr
   if (MOCK) return { data: (await mockRest('GET', path, undefined)) as T, modified: null, poll: 60 };
   const res = await send(path, { headers: await headers(since ? { 'if-modified-since': since } : {}) }, true);
   if (res.status === 304) return null;
-  if (!res.ok) throw await failure(res);
+  if (!res.ok) throw await failure(res, path);
   return { data: (await res.json()) as T, modified: res.headers.get('last-modified'), poll: Number(res.headers.get('x-poll-interval')) || 60 };
 }
 
