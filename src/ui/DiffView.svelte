@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** The code font's character width, as the last view measured it: the next one starts with it. */
+  let knownCharWidth = 0;
+</script>
+
 <script lang="ts">
   // Virtualized diff. Rows have a fixed height and never wrap, so every file's height is
   // known from the summary alone: the full layout (and scrollbar) exists before any content
@@ -302,7 +307,7 @@
   }
 
   // Wrapping long lines (settings): at the columns that fit the diff, or at most at a given one.
-  let charWidth = $state(0);
+  let charWidth = $state(knownCharWidth);
   let paneWidth = $state(0);
   const cols = $derived.by(() => {
     const { wrap, wrapColumn } = app.display;
@@ -369,12 +374,15 @@
 
   // Scroll position -> view, measured synchronously in the scroll event so the new rows
   // are in the DOM before the frame paints.
+  /** The view's been measured: until then (the first layout, unless it opens at a place) it's only a guess, not worth loading. */
+  let measured = $state(false);
   function measure() {
     if (!filesEl || !scroller) return;
     const top = scroller.getBoundingClientRect().top - filesEl.getBoundingClientRect().top;
     if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
       view = { top, bottom: top + scroller.clientHeight };
     }
+    measured = true;
     if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
     const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
     held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
@@ -394,10 +402,13 @@
     }
   });
 
+  // Read once laid out (and again when the font loads) rather than forcing a layout as the view mounts.
   function measureChars(el: HTMLElement) {
-    const read = () => (charWidth = el.getBoundingClientRect().width / 100);
-    read();
-    document.fonts?.ready.then(() => alive && read());
+    const ro = new ResizeObserver(([e]) => {
+      if (e.contentRect.width) charWidth = knownCharWidth = e.contentRect.width / 100;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }
 
   onMount(() => {
@@ -407,8 +418,12 @@
     ro.observe(scroller);
     ro.observe(filesEl);
     ro.observe(scroller.firstElementChild ?? filesEl);
-    measure();
-    if (initial) {
+    // The observer's first call measures once laid out, after whatever moves the view as it mounts
+    // (the commit view scrolling to the top): reading it now would force a layout of the new view.
+    // (It doesn't call while the view isn't shown.)
+    if (!initial) setTimeout(() => alive && !measured && measure(), 100);
+    else {
+      measure();
       const k = initial.path === null ? -1 : files.findIndex((f) => f.path === initial.path);
       if (k >= 0) scroller.scrollTop += tops[k] + Math.min(initial.offset, fileHeight(k)) - view.top;
       else scroller.scrollTop = initial.scrollTop;
@@ -435,6 +450,7 @@
   let behind = $state(0);
   $effect(() => {
     void behind;
+    if (!measured) return;
     const want: number[] = [];
     for (let i = near[0]; i < near[1]; i++) {
       if (files[i].rows && !collapsed[i] && !requested.has(i)) want.push(i);
