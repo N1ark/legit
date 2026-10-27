@@ -32,10 +32,6 @@
   import CommitView from './CommitView.svelte';
   import WorkView from './WorkView.svelte';
   import Brand from './Brand.svelte';
-  import Notifications from './gh/Notifications.svelte';
-  import PrChip from './gh/PrChip.svelte';
-  import GithubMenu from './gh/GithubMenu.svelte';
-  import ChecksChip from './gh/ChecksChip.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
@@ -53,6 +49,11 @@
   const StashView = lazy(() => import('./StashView.svelte'));
   const PrView = lazy(() => import('./gh/PrView.svelte'));
   const QuickSwitcher = lazy(() => import('./QuickSwitcher.svelte'));
+  // Shown once `github` is set, after the first screen: loaded then, not with it.
+  const PrChip = lazy(() => import('./gh/PrChip.svelte'));
+  const ChecksChip = lazy(() => import('./gh/ChecksChip.svelte'));
+  const Notifications = lazy(() => import('./gh/Notifications.svelte'));
+  const GithubMenu = lazy(() => import('./gh/GithubMenu.svelte'));
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
@@ -202,8 +203,8 @@
       <RepoPicker bind:this={repoPicker} />
       <BranchPicker bind:this={branchPicker} />
       {#if github}
-        <PrChip />
-        <ChecksChip />
+        <PrChip.component />
+        <ChecksChip.component />
       {/if}
     {/if}
     <span class="spacer" data-tauri-drag-region></span>
@@ -216,10 +217,10 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRight />
     </IconButton>
-    {#if github}<Notifications />{/if}
+    {#if github}<Notifications.component />{/if}
     <StashPanel />
     <Backups />
-    {#if github}<GithubMenu />{/if}
+    {#if github}<GithubMenu.component />{/if}
     <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><Gear /></IconButton>
   </header>
 

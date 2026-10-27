@@ -28,5 +28,11 @@ export default defineConfig({
   plugins: [purr({ weights: ['regular', 'bold', 'fill'] }), svelte(), bootLoads()],
   // The highlight worker lazy-loads grammars, which needs code splitting.
   worker: { format: 'es' },
-  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1000 },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 1000,
+    // What the first screen loads is one file (and one stylesheet), not split up by what lazy views share with it.
+    rolldownOptions: { output: { codeSplitting: { groups: [{ name: 'index', tags: ['$initial'] }] } } },
+  },
 });
