@@ -7,8 +7,8 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { Repo } from '../src/server/repo.ts';
-import { serve, type ServeOpts } from '../src/server/server.ts';
+import { Git } from '../src/server/git.ts';
+import type { ServeOpts } from '../src/server/server.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const { values, positionals } = parseArgs({
@@ -31,19 +31,23 @@ Opens a UI to edit, split, squash and reorder the commits of the repository at
   process.exit(0);
 }
 
-let repo: Repo;
-try {
-  repo = await Repo.open(resolve(positionals[0] ?? '.'));
-  const app = ['/Applications', join(homedir(), 'Applications')].map((d) => join(d, 'Legit.app')).find(existsSync);
-  if (app && !values.browser && !values.dev) {
-    // -n starts a fresh process; the running app (if any) takes over its argument and it exits.
-    spawn('open', ['-n', '-a', app, '--args', repo.git.root], { stdio: 'ignore' }).on('exit', (code) => process.exit(code ?? 0));
-    await new Promise(() => {});
-  }
-} catch (e) {
+const fail = (e: unknown): never => {
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
+};
+
+const path = resolve(positionals[0] ?? '.');
+const app = ['/Applications', join(homedir(), 'Applications')].map((d) => join(d, 'Legit.app')).find(existsSync);
+if (app && !values.browser && !values.dev) {
+  const git = await Git.open(path).catch(fail);
+  // -n starts a fresh process; the running app (if any) takes over its argument and it exits.
+  spawn('open', ['-n', '-a', app, '--args', git.root], { stdio: 'ignore' }).on('exit', (code) => process.exit(code ?? 0));
+  await new Promise(() => {});
 }
+
+// Only for serving here: handing the repo to the app (above) needs none of the engine, so it doesn't wait for it.
+const [{ Repo }, { serve }] = await Promise.all([import('../src/server/repo.ts'), import('../src/server/server.ts')]);
+const repo = await Repo.open(path).catch(fail);
 
 const root = join(here, '..');
 if (!values.dev && !existsSync(join(root, 'dist', 'index.html'))) {

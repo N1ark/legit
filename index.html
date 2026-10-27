@@ -15,6 +15,8 @@
           return [path, res];
         }),
       );
+      // Dark from the first frame, rather than once the bundle has run (main.ts's applyTheme follows the system from there).
+      if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
     </script>
   </head>
   <body>
