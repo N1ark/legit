@@ -149,8 +149,10 @@ class App {
 
   async refresh() {
     const gen = ++this.gen;
+    const sent = early['/api/state'];
+    delete early['/api/state'];
     try {
-      const res = await fetch('/api/state');
+      const res = await (sent ?? fetch('/api/state'));
       const text = await res.text();
       if (!res.ok) throw new Error((JSON.parse(text) as { error?: string }).error ?? res.statusText);
       // Window focus and file events refresh far more often than anything changes.
