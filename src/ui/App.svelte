@@ -94,10 +94,17 @@
       preload();
     });
     const events = new EventSource('/api/events');
-    events.onmessage = (e) => (e.data === 'work' ? app.workChanged() : app.refresh());
+    // `blind`: the server can't watch for changes any more, so anything may have changed whenever the window is focused.
+    let blind = false;
+    events.onmessage = (e) => {
+      if (e.data === 'blind') blind = true;
+      if (e.data === 'work' || e.data === 'blind') app.workChanged();
+      else app.refresh();
+    };
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
     const focus = () => {
-      app.refresh();
+      if (blind) app.workChanged();
+      else app.refresh();
       gh.refreshIfOlder(30_000);
     };
     const poll = setInterval(() => document.hidden || gh.refreshIfOlder(60_000), 60_000);
