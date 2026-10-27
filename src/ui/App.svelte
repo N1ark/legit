@@ -52,12 +52,14 @@
   const SquashView = lazy(() => import('./SquashView.svelte'));
   const StashView = lazy(() => import('./StashView.svelte'));
   const PrView = lazy(() => import('./gh/PrView.svelte'));
+  const QuickSwitcher = lazy(() => import('./QuickSwitcher.svelte'));
 
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
   /** The settings' section shown, while they're open. */
   let settings = $state<string | null>(null);
+  let switcher = $state(false);
   /** GitHub waits for the first screen to be painted, so its requests and renders don't hold that up. */
   let github = $state(false);
 
@@ -118,7 +120,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -138,6 +140,7 @@
     // In a field, ⌘Z is the field's own undo.
     { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
     { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
+    { keys: '⌘K', action: 'goto', label: 'Go to a branch, commit or repository' },
     { keys: 'b', action: 'branch', label: 'Switch branch' },
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
@@ -169,6 +172,7 @@
     else if (action === 'branch') branchPicker?.show();
     else if (action === 'merge' || action === 'rebase') branchPicker?.show(action);
     else if (action === 'repo') repoPicker?.show();
+    else if (action === 'goto') switcher = !switcher;
     else if (action === 'help') help = true;
     else if (action === 'pr') gh.togglePr();
     else if (action === 'settings') settings = 'syntax';
@@ -299,6 +303,9 @@
 <ToastHost position="bottom-end" />
 {#if settings}
   <Settings.component {shortcuts} bind:section={settings} onclose={() => (settings = null)} />
+{/if}
+{#if switcher && QuickSwitcher.component}
+  <QuickSwitcher.component onclose={() => (switcher = false)} />
 {/if}
 {#if help}
   <ShortcutsOverlay groups={shortcuts} onclose={() => (help = false)} />

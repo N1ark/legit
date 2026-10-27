@@ -7,7 +7,7 @@ import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
 import type {
-  CommitInfo, DiffSummary, DisplaySettings, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
+  CommitInfo, DiffSummary, DisplaySettings, LocatedCommit, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
   Stashes, SyncResult,
 } from '../../shared/types.ts';
 
@@ -190,10 +190,17 @@ class App {
     if (!from || this.atEnd) return;
     const cur = this.older?.from === from ? this.older : null;
     const last = cur?.commits.at(-1) ?? this.repo!.commits.at(-1)!;
-    // One page at a time per history; a page asked for an older one doesn't hold this one up.
-    if (this.olderFor === last.sha || (this.olderFailed === last.sha && !retry)) return;
+    // One page at a time per history; one still on its way for another history doesn't hold this one up.
+    if (this.olderFor === last.sha) return this.olderPage ?? undefined;
+    if (this.olderFailed === last.sha && !retry) return;
     this.olderFor = last.sha;
     this.loadingOlder = true;
+    const page = this.fetchOlder(from, cur, last);
+    this.olderPage = page;
+    return page;
+  }
+
+  private async fetchOlder(from: string, cur: typeof this.older, last: CommitInfo) {
     try {
       const r = await request<OlderCommits>(`/api/older/${last.sha}${last.pushed ? '?pushed=1' : ''}`);
       // History changed meanwhile: the next call starts over from the new oldest commit.
@@ -211,9 +218,36 @@ class App {
     }
   }
 
-  /** The oldest commit whose page of older history is on its way, and the last one that couldn't be loaded (retried on scroll). */
+  /** The oldest commit whose page of older history is on its way (`olderPage`), and the last one that couldn't be loaded (retried on scroll). */
   private olderFor: string | null = null;
+  private olderPage: Promise<void> | null = null;
   private olderFailed: string | null = null;
+
+  /** Select commit `rev` (a SHA, a tag, `HEAD~3`…), loading older history until the list has it. */
+  async goTo(rev: string): Promise<boolean> {
+    let at: LocatedCommit;
+    try {
+      at = await request<LocatedCommit>(`/api/locate?rev=${encodeURIComponent(rev)}`);
+    } catch (e) {
+      toast.error(e);
+      return false;
+    }
+    const what = `${shortSha(at.sha)} isn't in ${this.repo?.branch ?? 'HEAD'}'s history`;
+    if (at.index === null) {
+      toast.error(at.merged ? `${what} itself: a merge brought it in.` : `${what}.`);
+      return false;
+    }
+    for (let pages = Math.ceil(at.index / OLDER_PAGE) + 2; !this.bySha.has(at.sha) && !this.atEnd && pages > 0; pages--) {
+      await this.loadOlder(true);
+    }
+    if (!this.bySha.has(at.sha)) {
+      toast.error(`Couldn't load the history down to ${shortSha(at.sha)}.`);
+      return false;
+    }
+    this.select(at.sha);
+    this.reveal?.(at.sha);
+    return true;
+  }
 
   /** List a merge's commits under it, or stop listing them. */
   async toggleMerge(sha: string, open = !(sha in this.expanded)) {
@@ -816,6 +850,8 @@ export const EDITING = 'editing';
 export const app = new App();
 
 const NONE: CommitInfo[] = [];
+/** Commits in a page of older history (`PAGE` in server/repo.ts). */
+const OLDER_PAGE = 200;
 
 /**
  * `next`, keeping the commits `prev` already had unchanged (a commit's SHA fixes all but whether

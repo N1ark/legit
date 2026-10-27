@@ -551,3 +551,26 @@ test('old safety refs are pruned, recent and unrelated ones are kept', async () 
     'refs/legit/backups/main/mine',
   ]);
 });
+
+test("locate a commit by name: its place in HEAD's first-parent history, or why it isn't there", async () => {
+  const a = commit('a', { 'f.txt': '1\n' });
+  const b = commit('b', { 'f.txt': '2\n' });
+  git('switch', '-qc', 'side');
+  const s = commit('s', { 'g.txt': 's\n' });
+  git('switch', '-q', 'main');
+  commit('c', { 'f.txt': '3\n' });
+  git('merge', '-q', '--no-ff', '-m', 'merge side', 'side');
+  git('switch', '-qc', 'elsewhere', a);
+  const e = commit('e', { 'h.txt': 'e\n' });
+  git('switch', '-q', 'main');
+  git('tag', 'v1', b);
+  const repo = await Repo.open(dir);
+  assert.deepEqual(await repo.locate('HEAD'), { sha: git('rev-parse', 'HEAD'), index: 0, merged: false });
+  assert.deepEqual(await repo.locate(b.slice(0, 7)), { sha: b, index: 2, merged: false });
+  assert.deepEqual(await repo.locate('v1'), { sha: b, index: 2, merged: false });
+  assert.deepEqual(await repo.locate('HEAD~3'), { sha: a, index: 3, merged: false });
+  assert.deepEqual(await repo.locate(s), { sha: s, index: null, merged: true });
+  assert.deepEqual(await repo.locate(e), { sha: e, index: null, merged: false });
+  await assert.rejects(repo.locate('nope'), /There's no commit nope/);
+  await assert.rejects(repo.locate('--all'), /There's no commit --all/);
+});

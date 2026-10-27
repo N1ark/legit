@@ -9,7 +9,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
-  Backup, BranchInfo, CommitDiff, CommitInfo, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
+  Backup, BranchInfo, CommitDiff, CommitInfo, LocatedCommit, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
 import { baseBranch } from './base.ts';
 import { switchBranch } from './branches.ts';
@@ -237,6 +237,20 @@ export class Repo {
     const local = new Set(unpushed.split('\n'));
     const commits = await this.git.loadCommits(list);
     return { commits: commits.slice(0, PAGE).map((c) => info(c, local, false)), more: commits.length > PAGE };
+  }
+
+  /** Commit `rev` (a SHA, a tag, `HEAD~3`…), and where it is in HEAD's first-parent history, if it's there. */
+  async locate(rev: string): Promise<LocatedCommit> {
+    const r = rev.startsWith('-') ? null : await this.git.run(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], { allowFail: true });
+    if (r?.code !== 0) throw new GitError(`There's no commit ${rev}.`);
+    const sha = r.out.toString('latin1').trim();
+    const head = await this.head();
+    if (!head || (await this.git.run(['merge-base', '--is-ancestor', sha, head], { allowFail: true })).code !== 0) {
+      return { sha, index: null, merged: false };
+    }
+    const n = Number(await this.git.text(['rev-list', '--first-parent', '--count', `${sha}..${head}`]));
+    const at = await this.git.text(['rev-list', '--first-parent', `--skip=${n}`, '--max-count=1', head]);
+    return at === sha ? { sha, index: n, merged: false } : { sha, index: null, merged: true };
   }
 
   /** The commits a merge brought in: reachable from its other parents but not its first. Newest first. */

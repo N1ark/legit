@@ -27,6 +27,14 @@ export interface OlderCommits {
   more: boolean;
 }
 
+/** Where a commit asked for by name sits: `index` along HEAD's first-parent history (0 is HEAD), or why it isn't listed. */
+export interface LocatedCommit {
+  sha: string;
+  index: number | null;
+  /** When `index` is null: a merge brought it in, or HEAD doesn't have it at all. */
+  merged: boolean;
+}
+
 /** The commits a merge brought in (at most a few hundred of `total`). */
 export interface MergedCommits {
   commits: CommitInfo[];
