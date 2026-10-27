@@ -58,7 +58,7 @@
   function toggle(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
     button = e.currentTarget;
     open = !open;
-    if (open) notifications.load();
+    if (open) notifications.revalidate();
   }
 
   function show(n: GhNotification) {

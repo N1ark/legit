@@ -1,13 +1,13 @@
 <script lang="ts">
   // An Actions job's log, a step at a time: its colours, line numbers, `##[error]` lines marked and
-  // scrolled to, groups as headers. Find (⌘F in it) steps through the lines that match.
-  import { IconButton, Modal, SearchInput, Spinner, copyText, toast, tooltip } from 'purr';
+  // scrolled to, groups as headers. Find (⌘F in it) steps through the lines that match. A step
+  // keeps up to 3000 lines: only those on screen are drawn.
+  import { IconButton, Modal, SearchInput, Spinner, VirtualList, copyText, toast, tooltip } from 'purr';
   import { ArrowSquareOut, CaretDown, CaretRight, CaretUp, Copy } from 'purr/icons';
   import { tick } from 'svelte';
   import CheckIcon from './CheckIcon.svelte';
-  import { ghRequest } from '../lib/github.svelte.ts';
   import { checks, type LogTarget } from '../lib/gh-checks.svelte.ts';
-  import { STATE_LABEL, ansiRuns, stripAnsi } from '../lib/gh-checks.ts';
+  import { STATE_LABEL, ansiRuns } from '../lib/gh-checks.ts';
   import type { JobLog, LogStep } from '../../shared/gh-checks.ts';
 
   interface Props {
@@ -18,6 +18,9 @@
   let log = $state.raw<JobLog | null>(null);
   let current = $state<number | null>(null);
   let scroller = $state<HTMLElement | null>(null);
+  let lines = $state<HTMLElement | null>(null);
+  /** Every line is one row (they never wrap), as high as the log's line height. */
+  let lineHeight = $state(19);
   let query = $state('');
   let cursor = $state(0);
   let findInput = $state<HTMLInputElement | null>(null);
@@ -26,7 +29,7 @@
 
   $effect(() => {
     const jobId = target.jobId;
-    ghRequest<JobLog>('checksLog', { job: jobId }).then(
+    checks.loadLog(jobId).then(
       (l) => {
         log = l;
         show(target.step ?? l.open ?? l.steps[0]?.number ?? null);
@@ -39,7 +42,15 @@
   });
 
   const step = $derived<LogStep | null>(log?.steps.find((s) => s.number === current) ?? null);
-  const plain = $derived(step ? step.lines.map((l) => stripAnsi(l.t)) : []);
+  // Each line's styled runs, worked out once per step; find and copy use their text.
+  const runs = $derived(step ? step.lines.map((l) => ansiRuns(l.t).map((r) => ({ text: r.text, cls: runClass(r) }))) : []);
+  const plain = $derived(runs.map((line) => line.map((r) => r.text).join('')));
+  /** The longest line, in characters: the lines are drawn as wide, so they scroll sideways as one. */
+  const widest = $derived(plain.reduce((n, t) => Math.max(n, t.length), 0));
+
+  $effect(() => {
+    if (scroller) lineHeight = parseFloat(getComputedStyle(scroller).lineHeight) || lineHeight;
+  });
   const matches = $derived.by(() => {
     if (!query) return [];
     // Ignores case unless the text has a capital, as the diff's find does.
@@ -62,8 +73,9 @@
   }
 
   function scrollTo(i: number) {
-    const line = scroller?.querySelector<HTMLElement>(`[data-line="${i}"]`);
-    if (scroller && line) scroller.scrollTop = line.offsetTop - scroller.clientHeight / 3;
+    if (!scroller || !lines) return;
+    const top = lines.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTop = top + i * lineHeight - scroller.clientHeight / 3;
   }
 
   function move(by: number) {
@@ -166,23 +178,25 @@
               {#if stepUrl}<a href={stepUrl} target="_blank" rel="noreferrer">On GitHub</a>{/if}
             </p>
           {/if}
-          {#each step.lines as l, i (i)}
-            <div
-              class="line {l.k ?? ''}"
-              class:match={matched.has(i)}
-              class:is-cursor={i === cursorLine}
-              data-line={i}
-            >
-              <span class="n">{step.skipped + i + 1}</span>
-              <span class="t"
-                >{#if l.k === 'group'}<CaretRight weight="bold" />{/if}{#if LABEL[l.k ?? '']}<b>{LABEL[l.k ?? '']}</b>{/if}{#each ansiRuns(l.t) as r, j (j)}{#if runClass(r)}<span
-                      class={runClass(r)}>{r.text}</span
-                    >{:else}{r.text}{/if}{/each}</span
-              >
+          {#if step.lines.length}
+            {@const skipped = step.skipped}
+            <div class="lines" bind:this={lines} style:min-width="calc(5em + var(--sp-4) + var(--sp-5) + {widest + 4}ch)">
+              <VirtualList items={step.lines} rowHeight={lineHeight} {scroller}>
+                {#snippet children(l, i)}
+                  <div class="line {l.k ?? ''}" class:match={matched.has(i)} class:is-cursor={i === cursorLine}>
+                    <span class="n">{skipped + i + 1}</span>
+                    <span class="t"
+                      >{#if l.k === 'group'}<CaretRight weight="bold" />{/if}{#if LABEL[l.k ?? '']}<b>{LABEL[l.k ?? '']}</b>{/if}{#each runs[i] ?? [] as r, j (j)}{#if r.cls}<span
+                            class={r.cls}>{r.text}</span
+                          >{:else}{r.text}{/if}{/each}</span
+                    >
+                  </div>
+                {/snippet}
+              </VirtualList>
             </div>
           {:else}
             <p class="muted cut">No output</p>
-          {/each}
+          {/if}
         {/if}
       </div>
     </div>
@@ -277,6 +291,9 @@
 
   .line {
     display: flex;
+    flex: 1;
+    align-self: stretch;
+    align-items: center;
     min-width: max-content;
     padding-right: var(--sp-5);
   }

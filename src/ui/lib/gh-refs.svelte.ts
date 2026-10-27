@@ -1,5 +1,6 @@
 // What `#123` references point at, for their state icons and hover cards: every reference shown is
-// asked for in one batched request (the server splits it into queries of 50), then kept.
+// asked for in one batched request (the server splits it into queries of 50), then kept. Now and
+// then they're asked for again: only those still shown.
 
 import { gh, ghRequest } from './github.svelte.ts';
 import { refKey } from './gh-links.ts';
@@ -12,13 +13,16 @@ class Refs {
   private queue = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private at = 0;
+  /** Bumped to have every reference shown call `get` again, asking for it anew. */
+  private round = $state(0);
 
   /** What `repo#number` is; undefined until known. Asks for it, along with every other reference shown meanwhile. */
   get(repo: string | null | undefined, number: string | number): IssueRef | null | undefined {
     if (!repo || !gh.ready) return undefined;
+    void this.round;
     const key = refKey(repo, number);
     const v = this.known[key];
-    if (v === undefined && !this.asked.has(key)) {
+    if (!this.asked.has(key)) {
       // Called while rendering: the state changes later, from the request.
       this.asked.add(key);
       this.queue.add(key);
@@ -41,20 +45,20 @@ class Refs {
     }
   }
 
-  /** After a GitHub refresh: ask again for what's shown, at most every couple of minutes. */
+  /** After a GitHub refresh, at most every couple of minutes: ask again for what's shown (the rest, when it shows again). */
   stale() {
     if (Date.now() - this.at < 120_000) return;
+    this.at = Date.now();
     this.asked.clear();
-    for (const k of Object.keys(this.known)) {
-      this.queue.add(k);
-      this.asked.add(k);
-    }
-    if (this.queue.size) this.timer ??= setTimeout(() => this.flush(), 30);
+    this.round++;
   }
 
   /** References learnt otherwise (a search, an issue just made). */
   put(list: IssueRef[]) {
-    if (list.length) this.known = { ...this.known, ...Object.fromEntries(list.map((r) => [refKey(r.repo, r.number), r])) };
+    if (!list.length) return;
+    const keys = list.map((r) => refKey(r.repo, r.number));
+    for (const k of keys) this.asked.add(k);
+    this.known = { ...this.known, ...Object.fromEntries(list.map((r, i) => [keys[i], r])) };
   }
 }
 

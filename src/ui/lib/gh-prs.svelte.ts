@@ -14,6 +14,8 @@ type Kind = 'local' | 'remote';
 const PER_REQUEST = 6000;
 /** A row shown again after this long asks again. */
 const STALE = 30_000;
+/** A refresh asks for the stack (a heavy query) when the branch or its pull request moved, else this often. */
+const STACK_STALE = 5 * 60_000;
 
 class Prs {
   /** Local branches' pull requests, by branch name, once their rows have shown. */
@@ -34,6 +36,8 @@ class Prs {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private firstWant = 0;
   private stackFor: string | null = null;
+  private stackKey = '';
+  private stackAt = 0;
   private gen = 0;
 
   /**
@@ -118,6 +122,8 @@ class Prs {
   async loadStack(fresh = false) {
     const gen = ++this.gen;
     const branch = app.repo?.branch ?? null;
+    this.stackKey = stackKey();
+    this.stackAt = Date.now();
     if (branch !== this.stackFor) this.stack = null;
     this.stackFor = branch;
     if (!gh.ready || !branch || !gh.pr) return void (this.stack = null);
@@ -125,18 +131,26 @@ class Prs {
       const s = await ghRequest<PrStack | null>('prStack', { branch, fresh: fresh ? 1 : null });
       if (gen === this.gen) this.stack = s;
     } catch (e) {
+      // The next refresh tries again.
+      if (gen === this.gen) this.stackKey = '';
       if (gen === this.gen && fresh) toast.error(e);
     }
   }
 
-  /** After `gh.refresh()`: the stack, and the badges of the rows the branch list shows. */
+  /** After `gh.refresh()`: the stack, when it may have changed, and the badges of the rows the branch list shows. */
   refreshed() {
-    this.loadStack();
+    if (stackKey() !== this.stackKey || Date.now() - this.stackAt > STACK_STALE) this.loadStack();
     this.loadBranches();
   }
 }
 
 export const prs = new Prs();
+
+/** What the stack is worked out from, here: the branch, its tip and what was fetched of it, and its pull request. */
+function stackKey() {
+  const r = app.repo;
+  return JSON.stringify([r?.branch, r?.head, r?.push?.tip, gh.ready, gh.pr]);
+}
 
 /** Switch to a stack entry's branch (its local one, else its remote one checked out, else its worktree). */
 export async function switchToEntry(e: StackEntry): Promise<boolean> {

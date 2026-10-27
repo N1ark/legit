@@ -4,10 +4,14 @@
 
 import { toast } from 'purr';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
-import type { CommitChecks, JobInfo, RollupState } from '../../shared/gh-checks.ts';
+import { type CommitChecks, FINISHED, type JobInfo, type JobLog, type RollupState } from '../../shared/gh-checks.ts';
 
 /** Commits whose state may still change get asked about again for this long after they first show. */
 const RECENT = 10 * 60_000;
+/** Full checks kept, of the commits looked at last: another's are asked for again when it's looked at. */
+const KEEP_DETAILS = 30;
+/** Logs of finished jobs kept (they don't change; a re-run is a new job), so opening one again is instant. */
+const KEEP_LOGS = 3;
 
 export interface LogTarget {
   jobId: number;
@@ -40,6 +44,7 @@ class Checks {
   private rowsAt = 0;
   /** The pull request a commit heads, for which of its checks are required. */
   private prs = new Map<string, number>();
+  private logs = new Map<number, Promise<JobLog>>();
 
   /** A commit list row shows `sha`; returns what to call when it stops. */
   want(sha: string): () => void {
@@ -94,15 +99,31 @@ class Checks {
   /** The full checks of `sha`; `quiet` for background refreshes, which don't toast. */
   async load(sha: string, opts: { pr?: number | null; quiet?: boolean } = {}) {
     if (!gh.ready) return;
+    // Most recent last, for `prune`.
+    this.loads.delete(sha);
     this.loads.set(sha, Date.now());
     if (opts.pr) this.prs.set(sha, opts.pr);
     try {
       const c = await ghRequest<CommitChecks>('checks', { sha, pr: opts.pr ?? this.prs.get(sha) });
-      this.details = { ...this.details, [sha]: c };
+      this.details = { ...this.prune(), [sha]: c };
       this.rollups = { ...this.rollups, [sha]: c.state };
     } catch (e) {
       if (!opts.quiet) toast.error(e);
     }
+  }
+
+  /** `details` without the commits looked at longest ago, past the last few (their dots stay). */
+  private prune(): Record<string, CommitChecks> {
+    if (this.loads.size <= KEEP_DETAILS) return this.details;
+    const details = { ...this.details };
+    for (const sha of this.loads.keys()) {
+      if (this.loads.size <= KEEP_DETAILS) break;
+      if (sha === this.open?.sha) continue;
+      this.loads.delete(sha);
+      this.prs.delete(sha);
+      delete details[sha];
+    }
+    return details;
   }
 
   /** When `sha`'s checks were last asked for (0: never). */
@@ -122,7 +143,26 @@ class Checks {
       return;
     }
     this.open = { sha, anchor };
-    this.load(sha, { pr });
+    // What the chip shows was just asked for: open with it, else look again.
+    if (Date.now() - this.loadedAt(sha) > 5_000 || (pr && pr !== this.prs.get(sha))) this.load(sha, { pr });
+  }
+
+  /** Job `jobId`'s log; a finished one's is kept, a failed load isn't. */
+  loadLog(jobId: number): Promise<JobLog> {
+    const hit = this.logs.get(jobId);
+    if (hit) {
+      this.logs.delete(jobId);
+      this.logs.set(jobId, hit);
+      return hit;
+    }
+    const value = ghRequest<JobLog>('checksLog', { job: jobId });
+    this.logs.set(jobId, value);
+    value.then(
+      (l) => FINISHED.has(l.state) || this.logs.delete(jobId),
+      () => this.logs.delete(jobId),
+    );
+    while (this.logs.size > KEEP_LOGS) this.logs.delete(this.logs.keys().next().value!);
+    return value;
   }
 
   async loadJob(jobId: number, quiet = false) {

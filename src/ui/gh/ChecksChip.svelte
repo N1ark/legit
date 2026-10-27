@@ -29,13 +29,16 @@
   const state = $derived(data ? overall(data.groups.map((g) => g.state)) : null);
 
   // A new target and the GitHub refresh that follows it come together: one request does for both
-  // (on a new branch, once `gh.pr` is that branch's, or known not to be yet).
+  // (on a new branch, or after a push, once the lookup of the pull request it may head is done).
   let last = '';
+  // Not `app.repo` itself, which every reload of the repo's state replaces (a fetch, a focus).
+  const branch = $derived(app.repo?.branch ?? null);
   $effect(() => {
     void gh.tick;
     const sha = target;
-    if (!sha || gh.branch !== (app.repo?.branch ?? null)) return;
+    if (!sha || gh.branch !== branch) return;
     const key = `${sha}:${pr}`;
+    if (key !== last && gh.pending) return;
     untrack(() => {
       if (key !== last || Date.now() - checks.loadedAt(sha) > 2000) checks.load(sha, { pr, quiet: true });
       last = key;
@@ -53,8 +56,11 @@
       for (const sha of new Set([target, checks.open?.sha])) if (sha && checks.active(sha)) checks.load(sha, { quiet: true });
       if (checks.open) checks.refreshJobs();
     }, 15_000);
+    // Finished checks are looked at again with the rest of GitHub (focus refreshes it after 30s).
     const focus = () => {
-      if (target && Date.now() - checks.loadedAt(target) > 10_000) checks.load(target, { pr, quiet: true });
+      if (target && checks.active(target) && Date.now() - checks.loadedAt(target) > 10_000) {
+        checks.load(target, { pr, quiet: true });
+      }
     };
     window.addEventListener('focus', focus);
     return () => {
