@@ -192,7 +192,8 @@ class App {
     const last = cur?.commits.at(-1) ?? this.repo!.commits.at(-1)!;
     // One page at a time per history; one still on its way for another history doesn't hold this one up.
     if (this.olderFor === last.sha) return this.olderPage ?? undefined;
-    if (this.olderFailed === last.sha && !retry) return;
+    // A page that failed is asked for again on scroll, at most every few seconds.
+    if (this.olderFailed?.sha === last.sha && (!retry || Date.now() - this.olderFailed.at < 3000)) return;
     this.olderFor = last.sha;
     this.loadingOlder = true;
     const page = this.fetchOlder(from, cur, last);
@@ -210,7 +211,7 @@ class App {
       this.loadAvatars(r.commits.map((c) => c.author.email));
     } catch (e) {
       if (this.olderFor !== last.sha) return;
-      this.olderFailed = last.sha;
+      this.olderFailed = { sha: last.sha, at: Date.now() };
       toast.error(e);
     } finally {
       if (this.olderFor === last.sha) this.olderFor = null;
@@ -221,7 +222,7 @@ class App {
   /** The oldest commit whose page of older history is on its way (`olderPage`), and the last one that couldn't be loaded (retried on scroll). */
   private olderFor: string | null = null;
   private olderPage: Promise<void> | null = null;
-  private olderFailed: string | null = null;
+  private olderFailed: { sha: string; at: number } | null = null;
 
   /** Select commit `rev` (a SHA, a tag, `HEAD~3`…), loading older history until the list has it. */
   async goTo(rev: string): Promise<boolean> {
@@ -233,12 +234,17 @@ class App {
       return false;
     }
     const what = `${shortSha(at.sha)} isn't in ${this.repo?.branch ?? 'HEAD'}'s history`;
-    if (at.index === null) {
+    const head = this.repo?.head;
+    // Listed already, under an expanded merge say.
+    if (this.bySha.has(at.sha)) at.index = 0;
+    else if (at.index === null) {
       toast.error(at.merged ? `${what} itself: a merge brought it in.` : `${what}.`);
       return false;
     }
+    // Stops at a page that fails (it said why), and once the branch moves.
     for (let pages = Math.ceil(at.index / OLDER_PAGE) + 2; !this.bySha.has(at.sha) && !this.atEnd && pages > 0; pages--) {
       await this.loadOlder(true);
+      if (this.olderFailed || this.repo?.head !== head) return false;
     }
     if (!this.bySha.has(at.sha)) {
       toast.error(`Couldn't load the history down to ${shortSha(at.sha)}.`);

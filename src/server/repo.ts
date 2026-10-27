@@ -228,12 +228,13 @@ export class Repo {
    * It's never editable: it's past what `state()` lists. `pushed`: `sha` is on a remote, so all of it is.
    */
   async older(sha: string, pushed = false): Promise<OlderCommits> {
-    const parent = (await this.git.commit(sha)).parents[0];
-    if (!parent) return { commits: [], more: false };
-    const [list, unpushed] = await Promise.all([
-      this.git.firstParent(parent, PAGE + 1),
-      pushed ? '' : this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 1}`, parent, '--not', '--remotes']),
+    // Walked from `sha` itself, so a shallow clone's boundary ends the history instead of naming a parent it doesn't have.
+    const [walk, unpushed] = await Promise.all([
+      this.git.firstParent(sha, PAGE + 2),
+      pushed ? '' : this.git.text(['rev-list', '--first-parent', `--max-count=${PAGE + 2}`, sha, '--not', '--remotes']),
     ]);
+    const list = walk.slice(1);
+    if (!list.length) return { commits: [], more: false };
     const local = new Set(unpushed.split('\n'));
     const commits = await this.git.loadCommits(list);
     return { commits: commits.slice(0, PAGE).map((c) => info(c, local, false)), more: commits.length > PAGE };

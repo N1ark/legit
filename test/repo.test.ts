@@ -574,3 +574,14 @@ test("locate a commit by name: its place in HEAD's first-parent history, or why 
   await assert.rejects(repo.locate('nope'), /There's no commit nope/);
   await assert.rejects(repo.locate('--all'), /There's no commit --all/);
 });
+
+test("a shallow clone's history ends at its boundary, without asking for the parent it doesn't have", async () => {
+  for (let i = 0; i < 5; i++) commit(`c${i}`, { 'f.txt': `${i}\n` });
+  const shallow = mkdtempSync(join(tmpdir(), 'legit-shallow-'));
+  dirs.push(shallow);
+  execFileSync('git', ['clone', '-q', '--depth', '2', `file://${dir}`, shallow], { env });
+  const repo = await Repo.open(shallow);
+  const oldest = execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: shallow, encoding: 'utf8' }).trim();
+  assert.deepEqual(await repo.older(oldest, true), { commits: [], more: false });
+  assert.deepEqual((await repo.older(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: shallow, encoding: 'utf8' }).trim())).commits.map((c) => c.sha), [oldest]);
+});

@@ -2,7 +2,7 @@
   // ⌘K: go anywhere from one field. A branch (local, checked out in another worktree, or a remote
   // one to check out), a worktree, a recent repository (in the app), or a commit: one listed, or
   // any by SHA or `HEAD~3`, the list loading older history down to it.
-  import { CommandPalette, IS_TAURI, toast, type PaletteItem } from 'purr';
+  import { CommandPalette, IS_TAURI, rank, toast, type PaletteItem } from 'purr';
   import { CloudArrowDown, FolderSimple, Folders, GitBranch, GitCommit, MagnifyingGlass } from 'purr/icons';
   import { onMount } from 'svelte';
   import type { BranchInfo, RemoteBranchInfo, WorktreeInfo } from '../shared/types.ts';
@@ -27,12 +27,16 @@
   let remotes = $state.raw<RemoteBranchInfo[]>([]);
   let trees = $state.raw<WorktreeInfo[]>([]);
   let recent = $state.raw<RecentRepo[]>([]);
+  /** Nothing is listed until every list is here, so the cursor doesn't jump as they arrive. */
+  let loaded = $state(false);
 
   onMount(() => {
-    request<BranchInfo[]>('/api/branches').then((r) => (locals = r), toast.error);
-    request<RemoteBranchInfo[]>('/api/branches/remote').then((r) => (remotes = r), toast.error);
-    listWorktrees().then((r) => (trees = r), () => {});
-    if (IS_TAURI) invoke<RecentRepo[]>('recent_repos').then((r) => (recent = r), () => {});
+    Promise.allSettled([
+      request<BranchInfo[]>('/api/branches').then((r) => (locals = r), toast.error),
+      request<RemoteBranchInfo[]>('/api/branches/remote').then((r) => (remotes = r), toast.error),
+      listWorktrees().then((r) => (trees = r), () => {}),
+      IS_TAURI && invoke<RecentRepo[]>('recent_repos').then((r) => (recent = r), () => {}),
+    ]).then(() => (loaded = true));
   });
 
   const folder = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
@@ -43,8 +47,11 @@
     invoke('open_repo', { path }).catch(toast.error);
   }
 
+  /** Switching branch waits for what's in progress to end; it says so rather than leave the branch out. */
+  const unlessBlocked = (run: () => unknown) => () => (app.repo?.blocked ? toast(`${app.repo.blocked} Finish or abort it first.`) : run());
+
   const items = $derived.by((): PaletteItem[] => {
-    const blocked = !!app.repo?.blocked;
+    if (!loaded) return [];
     const out: PaletteItem[] = [];
     for (const b of locals) {
       if (b.current) continue;
@@ -53,8 +60,7 @@
         label: b.name,
         detail: b.worktree ? `in ${folder(b.worktree)} · ${b.subject}` : b.subject,
         icon: GitBranch,
-        disabled: blocked && !b.worktree,
-        run: () => (b.worktree ? openWorktree(b.worktree) : switchOp('switch', { branch: b.name }, b.name)),
+        run: b.worktree ? () => openWorktree(b.worktree!) : unlessBlocked(() => switchOp('switch', { branch: b.name }, b.name)),
       });
     }
     for (const w of trees) {
@@ -70,8 +76,7 @@
         label: `${b.remote}/${b.name}`,
         detail: b.subject,
         icon: CloudArrowDown,
-        disabled: blocked,
-        run: () => switchOp('checkoutRemote', { ref: b.ref }, b.name),
+        run: unlessBlocked(() => switchOp('checkoutRemote', { ref: b.ref }, b.name)),
       });
     }
     for (const c of app.commits) {
@@ -80,7 +85,6 @@
         label: c.subject,
         detail: `${shortSha(c)} · ${c.author.name}`,
         icon: GitCommit,
-        keywords: [c.sha],
         run: () => {
           app.select(c.sha);
           app.reveal?.(c.sha);
@@ -90,12 +94,19 @@
     return out;
   });
 
-  /** A SHA not listed, or a revision like `HEAD~3` or `v1.2^`: looked for in the branch's history. */
+  const isSha = (q: string) => /^[0-9a-f]{4,64}$/i.test(q);
+
+  /** A query that could be a SHA matches commits by its start only: fuzzily, it's in most SHAs somewhere. */
+  function search(query: string) {
+    const q = query.trim().toLowerCase();
+    if (!isSha(q)) return rank(items, query, { keys: [(i) => i.label, (i) => i.detail ?? ''], limit: 200 });
+    return items.filter((i) => i.id.startsWith(`commit:${q}`)).map((item) => ({ item, score: 0, field: 1, indices: [] }));
+  }
+
+  /** Any other revision (a SHA not listed, a tag, `HEAD~3`) is looked for in the branch's history. */
   function goTo(query: string): PaletteItem | null {
-    const q = query.toLowerCase();
-    const sha = /^[0-9a-f]{4,64}$/.test(q);
-    if (!(sha || /[~^]/.test(query)) || query.startsWith('-') || /\s/.test(query)) return null;
-    if (sha && app.commits.some((c) => c.sha.startsWith(q))) return null;
+    if (query.startsWith('-') || /\s/.test(query)) return null;
+    if (isSha(query) && app.commits.some((c) => c.sha.startsWith(query.toLowerCase()))) return null;
     return { id: 'goto', label: `Go to commit ${query}`, icon: MagnifyingGlass, run: () => app.goTo(query) };
   }
 </script>
@@ -103,9 +114,10 @@
 <CommandPalette
   {items}
   {onclose}
+  {search}
   create={goTo}
   label="Go to"
   placeholder={IS_TAURI ? 'Branch, commit or repository…' : 'Branch, commit or worktree…'}
   chooseLabel="go"
-  emptyText={(q) => (q.trim() ? `Nothing matches “${q.trim()}”.` : 'Loading…')}
+  emptyText={(q) => (!loaded ? 'Loading…' : q.trim() ? `Nothing matches “${q.trim()}”.` : 'Nothing to go to.')}
 />

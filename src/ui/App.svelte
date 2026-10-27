@@ -140,7 +140,8 @@
     // In a field, ⌘Z is the field's own undo.
     { keys: '⌘Z', action: 'undo', label: 'Undo', typing: false },
     { keys: '⇧⌘Z', action: 'redo', label: 'Redo', typing: false },
-    { keys: '⌘K', action: 'goto', label: 'Go to a branch, commit or repository' },
+    // Not in a field, where ⌃K deletes to the end of the line, nor over another overlay.
+    { keys: '⌘K', action: 'goto', label: 'Go to a branch, commit or repository', typing: false, overlay: false },
     { keys: 'b', action: 'branch', label: 'Switch branch' },
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
