@@ -100,6 +100,15 @@ test("parsing: a type change's two patches, binary files, quoted paths, missing 
   assert.deepEqual([a.hunks, b.hunks[0].lines.map((l) => l.t + l.s)], [[], ['-x', '+y']]);
 });
 
+test("a file's token is the same whether its patch comes last or not", () => {
+  const z = '0'.repeat(40);
+  const rec = (p: string) => `:100644 100644 ${z} ${z} M\0${p}\0`;
+  const patch = (p: string) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-x\n+y\n`;
+  const both = parseDiff(`${rec('a')}${rec('b')}\0${patch('a')}${patch('b')}`, 'x').files;
+  const alone = (p: string) => parseDiff(`${rec(p)}\0${patch(p)}`, 'x').files[0].token;
+  assert.deepEqual(both.map((f) => f.token), [alone('a'), alone('b')]);
+});
+
 test('a kept old line stays in the place of the line it was edited into', () => {
   const h = (lines: [string, string][]) => [{
     header: '', oldStart: 1, oldCount: lines.filter(([t]) => t !== '+').length, newStart: 1,

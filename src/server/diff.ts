@@ -74,7 +74,9 @@ export function parseDiff(data: string, sha: string): CommitDiff {
       continue;
     }
     const upto = Math.min(ci + (f.status === 'T' ? 2 : 1), chunks);
-    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(data.slice(at, starts[upto] - 1), 'latin1').digest('hex');
+    // Without the patch's final newline, so a file's token doesn't change with whether it comes last.
+    const end = upto === chunks && data.endsWith('\n') ? data.length - 1 : starts[upto] - 1;
+    f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status} ${f.oldPath ?? ''}\0`).update(data.slice(at, end), 'latin1').digest('hex');
     let idx = 0;
     for (; ci < upto; ci++) {
       const stop = starts[ci + 1] - 1;
