@@ -4,7 +4,7 @@
   // Once merged or closed, it offers (never does by itself) to switch to the base branch and to
   // delete the local branch.
   import { Button, ConfirmButton, Kbd, Segmented, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
-  import { CheckCircle, Circle, GitMerge, GitPullRequestClosed, Lightning, UserCircle, XCircle } from 'purr/icons';
+  import { CheckCircle, Circle, GitMerge, GitMergeQueue, GitPullRequestClosed, Lightning, UserCircle, XCircle } from 'purr/icons';
   import { untrack } from 'svelte';
   import type { BranchInfo } from '../../shared/types.ts';
   import type { MergeMethod, PrOverview } from '../../shared/gh-prview.ts';
@@ -14,6 +14,7 @@
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
   import { tip } from '../lib/tip.ts';
+  import { PR_STATE } from './PrStatus.svelte';
 
   interface Props {
     pr: PrOverview;
@@ -139,7 +140,7 @@
 {/snippet}
 
 {#if pr.state === 'merged'}
-  <section class="box" style:--tone="var(--theme)" aria-label="Merged">
+  <section class="box" style:--tone={PR_STATE.merged.color} aria-label="Merged">
     <div class="status">
       <span class="badge" aria-hidden="true"><GitMerge weight="bold" /></span>
       <div>
@@ -152,7 +153,7 @@
     {@render afterwards()}
   </section>
 {:else if pr.state === 'closed'}
-  <section class="box" style:--tone="var(--danger)" aria-label="Closed">
+  <section class="box" style:--tone={PR_STATE.closed.color} aria-label="Closed">
     <div class="status">
       <span class="badge" aria-hidden="true"><GitPullRequestClosed weight="bold" /></span>
       <div>
@@ -165,7 +166,7 @@
   <section class="box" style:--tone={TONE[status.tone]} aria-label="Merge">
     <div class="status">
       <span class="badge" aria-hidden="true">
-        {#if status.canMerge}<GitMerge weight="bold" />{:else}<GitMerge />{/if}
+        {#if pr.state === 'queued'}<GitMergeQueue weight="bold" />{:else if status.canMerge}<GitMerge weight="bold" />{:else}<GitMerge />{/if}
       </span>
       <div>
         <b>{status.title}</b>
@@ -204,7 +205,9 @@
       {/if}
     </div>
 
-    {#if pr.state === 'draft'}
+    {#if pr.state === 'queued'}
+      <!-- GitHub merges it once it reaches the front; taking it out of the queue is done there. -->
+    {:else if pr.state === 'draft'}
       <div class="actions">
         {#if pr.canUpdate}
           <Button variant="primary" disabled={working} onclick={() => setDraft(false)} {@attach tip("Let reviewers know it's ready, and allow merging")}>

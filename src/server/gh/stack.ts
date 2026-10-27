@@ -9,7 +9,7 @@ import { ghRepos, needGhRepos, type GhRepos } from './context.ts';
 import { PR_FIELDS, forgetPrs, headCache, pickPr, toPullRequest } from './pulls.ts';
 import { byHead, missingBase, stackAround } from './stacks.ts';
 import type { CreatePrRequest, PrCreateInfo, PrStack, RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
-import type { PullRequest } from '../../shared/github.ts';
+import { type PullRequest, isLive } from '../../shared/github.ts';
 import type { Git } from '../git.ts';
 import type { Repo } from '../repo.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
@@ -17,7 +17,7 @@ import type { GetRoute, PostRoute } from './routes.ts';
 /** Most local branches a stack is looked for among (the most recently committed to). */
 const MAX_BRANCHES = 60;
 
-const live = (p: PullRequest | undefined) => p?.state === 'open' || p?.state === 'draft';
+const live = (p: PullRequest | undefined) => !!p && isLive(p.state);
 
 interface Local {
   name: string;

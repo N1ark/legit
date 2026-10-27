@@ -11,7 +11,7 @@ import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
 import { reviewGet, reviewPost } from './review.ts';
-import type { GithubStatus, PullRequest } from '../../shared/github.ts';
+import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
 export type GetRoute = (repo: Repo, query: URLSearchParams) => Promise<unknown>;
@@ -73,7 +73,7 @@ export async function githubRoute(repo: Repo, method: string, name: string, inpu
 function warmAround(repo: Repo, branch: string, pr: PullRequest | null): Promise<unknown> {
   if (!pr) return Promise.resolve();
   const q = (o: Record<string, string>) => new URLSearchParams(o);
-  const live = pr.state === 'open' || pr.state === 'draft';
+  const live = isLive(pr.state);
   return Promise.allSettled([
     warmChecks(repo, pr),
     getRoutes.prStack(repo, q({ branch })),

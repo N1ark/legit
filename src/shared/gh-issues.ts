@@ -1,9 +1,9 @@
 // Issues and `#123` references on GitHub (server/gh/issues.ts).
 
-import type { GhUser } from './github.ts';
+import type { GhUser, PrState } from './github.ts';
 
-/** An issue is open or closed; a pull request open, draft, merged or closed. */
-export type RefState = 'open' | 'closed' | 'merged' | 'draft';
+/** An issue is open or closed; a pull request any of its states. */
+export type RefState = PrState;
 
 /** What `#123` or `owner/repo#123` points at. */
 export interface IssueRef {

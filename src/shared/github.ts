@@ -5,7 +5,11 @@ export interface GhUser {
   avatar: string;
 }
 
-export type PrState = 'open' | 'draft' | 'merged' | 'closed';
+/** `queued`: open, and waiting in the base branch's merge queue. */
+export type PrState = 'open' | 'draft' | 'queued' | 'merged' | 'closed';
+
+/** Not merged or closed yet. */
+export const isLive = (s: PrState) => s === 'open' || s === 'draft' || s === 'queued';
 
 export interface PullRequest {
   number: number;

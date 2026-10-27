@@ -1,8 +1,8 @@
 // Stacked pull requests: one whose base is another's head is stacked on it. Pure, to be tested alone.
 
-import type { PullRequest } from '../../shared/github.ts';
+import { type PullRequest, isLive } from '../../shared/github.ts';
 
-const live = (p: PullRequest) => p.state === 'open' || p.state === 'draft';
+const live = (p: PullRequest) => isLive(p.state);
 
 /** Each head branch's pull request: an open one, else the first listed (the newest). */
 export function byHead(prs: PullRequest[]): Map<string, PullRequest> {

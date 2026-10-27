@@ -6,16 +6,20 @@ import type { PullRequest, PrState } from '../../shared/github.ts';
 import type { Repo } from '../repo.ts';
 
 /** GraphQL fields that make a `PullRequest` (see `toPullRequest`). */
-export const PR_FIELDS = `number title url state isDraft baseRefName headRefName headRefOid
+export const PR_FIELDS = `number title url state isDraft isInMergeQueue baseRefName headRefName headRefOid
   author { login avatarUrl } repository { nameWithOwner } headRepositoryOwner { login }`;
 
+/** A pull request's state from GraphQL's `state`, `isDraft` and `isInMergeQueue`. */
+export function prState(n: { state: string; isDraft?: boolean; isInMergeQueue?: boolean }): PrState {
+  return n.state === 'MERGED' ? 'merged' : n.state === 'CLOSED' ? 'closed' : n.isInMergeQueue ? 'queued' : n.isDraft ? 'draft' : 'open';
+}
+
 export function toPullRequest(n: any): PullRequest {
-  const state: PrState = n.state === 'MERGED' ? 'merged' : n.state === 'CLOSED' ? 'closed' : n.isDraft ? 'draft' : 'open';
   return {
     number: n.number,
     title: n.title,
     url: n.url,
-    state,
+    state: prState(n),
     base: n.baseRefName,
     head: n.headRefName,
     headSha: n.headRefOid,

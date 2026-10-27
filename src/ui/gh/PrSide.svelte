@@ -4,6 +4,7 @@
   import { Avatar, IconButton, Tag, entries, menu, tooltip, type MaybeEntry } from 'purr';
   import { ChatCircle, CheckCircle, Circle, Gear, MinusCircle, XCircle } from 'purr/icons';
   import type { PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
+  import { isLive } from '../../shared/github.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
 
   interface Props {
@@ -14,7 +15,7 @@
   }
   let { pr, act, working, options }: Props = $props();
 
-  const open = $derived(pr.state === 'open' || pr.state === 'draft');
+  const open = $derived(isLive(pr.state));
 
   const REVIEW: Record<PrReviewer['state'], { icon: typeof Circle; color: string }> = {
     approved: { icon: CheckCircle, color: 'var(--success)' },

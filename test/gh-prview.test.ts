@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { reviewers, squashDefaults, timeline, toOverview } from '../src/server/gh/prview.ts';
 import { db, mockGraphql, mockRest } from '../src/server/gh/mock/registry.ts';
 import '../src/server/gh/mock/index.ts';
+import { prState } from '../src/server/gh/pulls.ts';
 import { eventText, mergeStatus, reviewNeeds, reviewRefusal } from '../src/ui/lib/gh-prview.ts';
 import type { PrOverview } from '../src/shared/gh-prview.ts';
 
@@ -123,6 +124,18 @@ test('merge status says why it cannot be merged', () => {
   const clean = mergeStatus(o({ mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' }));
   assert.deepEqual([clean.title, clean.canMerge, clean.tone], ['Ready to merge', true, 'success']);
   assert.equal(mergeStatus(o({ mergeStateStatus: 'UNSTABLE' })).canMerge, true);
+  const queued = o({ isInMergeQueue: true, mergeQueueEntry: { position: 2 }, mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' });
+  assert.deepEqual([queued.state, queued.queuePosition], ['queued', 2]);
+  assert.deepEqual([mergeStatus(queued).title, mergeStatus(queued).canMerge], ['Queued to merge', false]);
+  assert.match(mergeStatus(queued).detail, /Number 2 in main's merge queue/);
+});
+
+test("a pull request's state: merged and closed first, then queued, then draft", () => {
+  assert.equal(prState({ state: 'OPEN' }), 'open');
+  assert.equal(prState({ state: 'OPEN', isDraft: true }), 'draft');
+  assert.equal(prState({ state: 'OPEN', isInMergeQueue: true }), 'queued');
+  assert.equal(prState({ state: 'MERGED', isInMergeQueue: true }), 'merged');
+  assert.equal(prState({ state: 'CLOSED', isDraft: true }), 'closed');
 });
 
 test("reviews: no approving one's own pull request, and words unless approving or carrying diff comments", () => {

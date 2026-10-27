@@ -3,15 +3,17 @@
   // timeline and merge box, with who reviews it and its labels beside them. One query loads it
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
-  import { ArrowSquareOut, CheckCircle, Circle, GitMerge, GitPullRequest, GitPullRequestClosed, X, XCircle } from 'purr/icons';
+  import { ArrowSquareOut, CheckCircle, Circle, GitPullRequestClosed, X, XCircle } from 'purr/icons';
   import { onMount, untrack } from 'svelte';
   import type { CheckState, PrOptions, PrOverview } from '../../shared/gh-prview.ts';
+  import { isLive } from '../../shared/github.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
   import { gh, ghPost, ghRequest, loadPrview } from '../lib/github.svelte.ts';
   import PrMergeBox from './PrMergeBox.svelte';
+  import PrStatus from './PrStatus.svelte';
   import PrReview from './PrReview.svelte';
   import PrSide from './PrSide.svelte';
   import PrTimeline from './PrTimeline.svelte';
@@ -185,13 +187,6 @@
     gh.close();
   }
 
-  const STATE = {
-    open: { label: 'Open', icon: GitPullRequest, color: 'var(--success)' },
-    draft: { label: 'Draft', icon: GitPullRequest, color: 'var(--muted)' },
-    merged: { label: 'Merged', icon: GitMerge, color: 'var(--theme)' },
-    closed: { label: 'Closed', icon: GitPullRequestClosed, color: 'var(--danger)' },
-  };
-
   const CHECK: Record<NonNullable<CheckState>, { icon: typeof Circle; color: string; label: string }> = {
     success: { icon: CheckCircle, color: 'var(--success)', label: 'Checks passed' },
     failure: { icon: XCircle, color: 'var(--danger)', label: 'Checks failed' },
@@ -209,14 +204,13 @@
   <div class="top">
     <div class="what">
       {#if pr}
-        {@const s = STATE[pr.state]}
-        <span class="state" style:--tone={s.color}><s.icon weight="bold" /> {s.label}</span>
+        <PrStatus state={pr.state} look="pill" />
         <span class="mono num">#{pr.number}</span>
       {:else}
         <span class="mono num">#{number}</span>
       {/if}
     </div>
-    {#if pr && (pr.state === 'open' || pr.state === 'draft')}
+    {#if pr && isLive(pr.state)}
       <PrReview {pr} {act} {working} />
     {/if}
     {#if pr}
@@ -263,7 +257,7 @@
           · merged by <b>{pr.mergedBy?.login ?? 'someone'}</b> <span use:tooltip={formatFull(pr.mergedAt)}>{formatRelative(pr.mergedAt)}</span>
         {/if}
         <span class="refs mono" use:tooltip={`Merges ${pr.head} into ${pr.base}`}>
-          {#if pr.canUpdate && (pr.state === 'open' || pr.state === 'draft')}
+          {#if pr.canUpdate && isLive(pr.state)}
             <button class="btn btn--ghost btn--sm ref" use:tooltip={'Change the base'} onclick={pickBase}>{pr.base}</button>
           {:else}
             <span class="ref">{pr.base}</span>
@@ -390,18 +384,6 @@
     flex-wrap: wrap;
     gap: var(--gap-4) var(--sp-4);
     min-height: var(--btn);
-  }
-
-  .state {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--gap-2);
-    padding: var(--gap-1) var(--sp-4);
-    border-radius: var(--radius-pill);
-    background: color-mix(in oklab, var(--tone) 14%, transparent);
-    color: var(--tone);
-    font-weight: 600;
-    font-size: var(--fs-sm);
   }
 
   .num {

@@ -26,7 +26,7 @@
   import { tip } from './lib/tip.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
-  import PrBadge from './gh/PrBadge.svelte';
+  import PrStatus from './gh/PrStatus.svelte';
   import { prs } from './lib/gh-prs.svelte.ts';
 
   type Row =
@@ -650,7 +650,7 @@
                       <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
                       <span class="name mono" {@attach () => prs.want('local', b.name)}><Highlight text={b.name} indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
-                      {#if prs.byBranch[b.name]}<PrBadge pr={prs.byBranch[b.name]} />{/if}
+                      {#if prs.byBranch[b.name]}{@const pr = prs.byBranch[b.name]}<PrStatus state={pr.state} number={pr.number} title={pr.title} />{/if}
                       {#if b.worktree}
                         <span class="worktree muted" use:tooltip={`Checked out in ${b.worktree}; picking it switches there`}>
                           <FolderSimple />{folder(b.worktree)}
@@ -667,7 +667,7 @@
                       <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
                       <span class="name mono" {@attach () => prs.want('remote', `${b.remote}/${b.name}`)}><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
-                      {#if prs.byRemote[`${b.remote}/${b.name}`]}<PrBadge pr={prs.byRemote[`${b.remote}/${b.name}`]} />{/if}
+                      {#if prs.byRemote[`${b.remote}/${b.name}`]}{@const pr = prs.byRemote[`${b.remote}/${b.name}`]}<PrStatus state={pr.state} number={pr.number} title={pr.title} />{/if}
                       {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                       <span class="when muted">{formatRelative(b.time * 1000)}</span>
                       {@render browseButton(r)}

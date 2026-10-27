@@ -15,7 +15,7 @@
   import Markdown from '../Markdown.svelte';
   import { tip } from '../lib/tip.ts';
   import CreatePr from './CreatePr.svelte';
-  import PrBadge from './PrBadge.svelte';
+  import PrStatus from './PrStatus.svelte';
   import type { RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
 
   let open = $state(false);
@@ -78,7 +78,7 @@
 
 {#if pr}
   <button bind:this={button} class="btn btn--ghost chip" class:shown onclick={show} aria-expanded={open} aria-label={chipLabel} use:tooltip={chipLabel}>
-    <PrBadge {pr} word />
+    <PrStatus state={pr.state} number={pr.number} look="word" tip={false} />
     {#if plan}<span class="needs" aria-hidden="true"><Warning weight="bold" /></span>{/if}
   </button>
 {:else if canCreate}
@@ -91,7 +91,7 @@
   <Popover anchor={button} label="Pull request #{pr.number}" onclose={() => (open = false)} width="min(520px, calc(100vw - 32px))" padding="var(--sp-4)">
     <div class="card">
       <button class="head" use:tooltip={'Show its overview'} onclick={overview}>
-        <PrBadge {pr} word />
+        <PrStatus state={pr.state} number={pr.number} look="word" tip={false} />
         <span class="title"><Markdown text={pr.title} inline links="off" /></span>
       </button>
       <div class="meta muted">
@@ -148,7 +148,7 @@
                 <span class="rail" aria-hidden="true"><span class="dot"></span></span>
                 <span class="body">
                   <span class="line">
-                    <PrBadge pr={e.pr} />
+                    <PrStatus state={e.pr.state} number={e.pr.number} tip={false} />
                     <span class="title"><Markdown text={e.pr.title} inline links="off" /></span>
                   </span>
                   <span class="line muted">

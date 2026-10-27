@@ -3,18 +3,19 @@
 
 import { GithubError, MOCK, cached, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
+import { prState } from './pulls.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
 import type { CreatedIssue, IssueMeta, IssueRef, NewIssue } from '../../shared/gh-issues.ts';
 
 /** GraphQL fields that make an `IssueRef` (see `toIssueRef`). */
 const REF_FIELDS = `__typename
   ... on Issue { number title url state stateReason author { login avatarUrl } repository { nameWithOwner } }
-  ... on PullRequest { number title url state isDraft author { login avatarUrl } repository { nameWithOwner } }`;
+  ... on PullRequest { number title url state isDraft isInMergeQueue author { login avatarUrl } repository { nameWithOwner } }`;
 
 export function toIssueRef(n: any): IssueRef | null {
   if (!n?.number) return null;
   const pr = n.__typename === 'PullRequest';
-  const state = n.state === 'MERGED' ? 'merged' : n.state === 'CLOSED' ? 'closed' : pr && n.isDraft ? 'draft' : 'open';
+  const state = pr ? prState(n) : n.state === 'CLOSED' ? 'closed' : 'open';
   return {
     repo: n.repository.nameWithOwner,
     number: n.number,

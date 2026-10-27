@@ -1,6 +1,7 @@
 // GitHub URLs (pages of a repository, permalinks to lines) and `#123` references: what one's state
 // is called, and the `#text` being typed in a message, to suggest issues for.
 
+import { STATE_LABEL } from './gh-pr.ts';
 import type { IssueRef } from '../../shared/gh-issues.ts';
 
 /** A repository's page on GitHub, or one of its tabs. */
@@ -28,7 +29,7 @@ export function blobUrl(repo: string, sha: string, path: string, span?: [number,
 /** A reference's state in words: "Open issue", "Merged pull request"… */
 export function refStateWords(r: Pick<IssueRef, 'state' | 'isPullRequest' | 'notPlanned'>): string {
   if (!r.isPullRequest) return r.state === 'open' ? 'Open issue' : r.notPlanned ? 'Closed issue (not planned)' : 'Closed issue';
-  return `${{ open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' }[r.state]} pull request`;
+  return `${STATE_LABEL[r.state]} pull request`;
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

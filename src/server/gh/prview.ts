@@ -5,7 +5,7 @@
 import { GithubError, MOCK, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { db } from './mock/registry.ts';
-import { forgetPrs } from './pulls.ts';
+import { forgetPrs, prState } from './pulls.ts';
 import type { GhUser } from '../../shared/github.ts';
 import type {
   CheckState, MergeMethod, MergeState, PrCommit, PrItem, PrLabel, PrOptions, PrOverview, PrReviewer, ReviewEvent, ReviewState,
@@ -42,7 +42,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod
     squashMergeCommitTitle squashMergeCommitMessage
     pullRequest(number: $number) {
-      id number title body url state isDraft createdAt mergedAt mergedBy { ${ACTOR} } author { ${ACTOR} }
+      id number title body url state isDraft isInMergeQueue mergeQueueEntry { position } createdAt mergedAt mergedBy { ${ACTOR} } author { ${ACTOR} }
       baseRefName headRefName headRefOid mergeable mergeStateStatus reviewDecision additions deletions changedFiles
       viewerCanUpdate viewerDidAuthor viewerCanEnableAutoMerge viewerCanDisableAutoMerge
       labels(first: 50) { nodes { name color } }
@@ -191,7 +191,8 @@ export function toOverview(d: any): PrOverview {
     title: pr.title,
     body: pr.body ?? '',
     url: pr.url,
-    state: pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'open',
+    state: prState(pr),
+    queuePosition: pr.mergeQueueEntry?.position ?? null,
     author: user(pr.author),
     createdAt: pr.createdAt,
     mergedAt: pr.mergedAt ?? null,

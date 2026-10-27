@@ -7,6 +7,7 @@ import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
 import type { DiffSide, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+import { isLive } from '../../shared/github.ts';
 
 /** A comment being written on lines of a diff (`key`: the diff's), kept while the view comes and goes. */
 export interface Draft {
@@ -44,7 +45,7 @@ class Reviews {
   /** The current branch's pull request, when it's open and GitHub's reachable. */
   get pr() {
     const pr = gh.pr;
-    return gh.ready && pr && (pr.state === 'open' || pr.state === 'draft') ? pr : null;
+    return gh.ready && pr && isLive(pr.state) ? pr : null;
   }
 
   /** Load pull request `number`'s threads, once per `gh.tick` (or now, with `fresh`). Quiet: it's background work. */

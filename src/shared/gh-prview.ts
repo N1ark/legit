@@ -88,6 +88,8 @@ export interface PrOverview {
   body: string;
   url: string;
   state: PrState;
+  /** Its place in the merge queue (1 is next) while `queued`. */
+  queuePosition: number | null;
   author: GhUser | null;
   createdAt: string;
   mergedAt: string | null;

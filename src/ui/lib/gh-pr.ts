@@ -2,7 +2,7 @@
 
 import type { PrState } from '../../shared/github.ts';
 
-export const STATE_LABEL: Record<PrState, string> = { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' };
+export const STATE_LABEL: Record<PrState, string> = { open: 'Open', draft: 'Draft', queued: 'Queued', merged: 'Merged', closed: 'Closed' };
 
 /** `feature/parser-errors` → "Parser errors". */
 export function humanize(branch: string): string {

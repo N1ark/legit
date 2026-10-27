@@ -67,6 +67,9 @@ export interface MergeStatus {
 export function mergeStatus(pr: PrOverview): MergeStatus {
   const checks = checksLabel(pr.checks);
   const no = (tone: Tone, title: string, detail: string, waits = false): MergeStatus => ({ tone, title, detail, canMerge: false, waits });
+  if (pr.state === 'queued') {
+    return no('warn', 'Queued to merge', pr.queuePosition ? `Number ${pr.queuePosition} in ${pr.base}'s merge queue.` : `In ${pr.base}'s merge queue.`);
+  }
   if (pr.state === 'draft' || pr.mergeState === 'draft') return no('neutral', 'Draft', 'Mark it ready to merge it.');
   if (pr.mergeable === 'conflicting' || pr.mergeState === 'dirty') {
     return no('danger', 'Conflicts', `Rebase on ${pr.base} and push, or resolve them on GitHub.`);
