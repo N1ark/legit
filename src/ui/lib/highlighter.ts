@@ -1,5 +1,6 @@
 // Main-thread side of syntax highlighting: one worker, fed one file at a time, always the
-// file nearest the viewport first, so fast scrolling never queues up stale work.
+// file nearest the viewport first, and what's no longer wanted dropped, so fast scrolling never
+// queues up stale work.
 
 import type { HunkData } from '../../shared/types.ts';
 import { highlightable, language } from './languages.ts';
@@ -17,10 +18,27 @@ interface Job {
   priority: () => number;
   /** False once nobody needs the result (e.g. the diff was closed). */
   wanted: () => boolean;
-  done: (t: Tokens | null) => void;
+  /** Undefined when the job was dropped. */
+  done: (t: Tokens | null | undefined) => void;
 }
 
+/** Results by key, least recently used first, kept to a few dozen MB however big the files. */
 const cache = new Map<string, Tokens | null>();
+const MAX_CACHED = 1000;
+const MAX_BYTES = 32 << 20;
+let cachedBytes = 0;
+const bytes = (t: Tokens | null | undefined) => (t ? t.offsets.byteLength + t.data.byteLength : 0);
+
+function remember(key: string, t: Tokens | null) {
+  cachedBytes += bytes(t) - bytes(cache.get(key));
+  cache.delete(key);
+  cache.set(key, t);
+  for (const [k, old] of cache) {
+    if (cache.size <= MAX_CACHED && cachedBytes <= MAX_BYTES) break;
+    cache.delete(k);
+    cachedBytes -= bytes(old);
+  }
+}
 const queue: Job[] = [];
 /** Jobs queued or running, by key. */
 const jobs = new Map<string, Job>();
@@ -33,7 +51,7 @@ function pump() {
   for (let k = queue.length - 1; k >= 0; k--) {
     if (queue[k].wanted()) continue;
     jobs.delete(queue[k].key);
-    queue.splice(k, 1);
+    queue.splice(k, 1)[0].done(undefined);
   }
   if (!queue.length) return;
   let best = 0;
@@ -49,14 +67,14 @@ function start() {
     const job = running!;
     running = null;
     jobs.delete(job.key);
-    if (cache.size > 300) cache.delete(cache.keys().next().value!);
-    cache.set(job.key, e.data.tokens);
+    remember(job.key, e.data.tokens);
     job.done(e.data.tokens);
     pump();
   };
   return w;
 }
 
+/** File `path`'s tokens (null when it isn't highlighted), or undefined when the job was dropped before it ran, unwanted. */
 export function highlight(
   key: string,
   path: string,
@@ -64,9 +82,13 @@ export function highlight(
   priority: () => number,
   wanted: () => boolean,
   syntax?: string,
-): Promise<Tokens | null> {
+): Promise<Tokens | null | undefined> {
   if (!syntax && !language(path)) return Promise.resolve(null);
-  if (cache.has(key)) return Promise.resolve(cache.get(key)!);
+  if (cache.has(key)) {
+    const t = cache.get(key)!;
+    remember(key, t);
+    return Promise.resolve(t);
+  }
   // The worker would refuse it, after copying it all over.
   if (!highlightable(hunks)) return Promise.resolve(null);
   const same = jobs.get(key);
