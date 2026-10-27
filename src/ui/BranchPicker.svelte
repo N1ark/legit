@@ -187,10 +187,7 @@
     if (m === 'upstream') tracker = branch ?? here;
     open = true;
     filter = '';
-    const loaded = setMode(m);
-    // The badges of rows shown before are brought up to date; the others are asked for as their rows show.
-    prs.loadBranches();
-    await loaded;
+    await setMode(m);
   }
 
   async function setMode(m: Mode) {

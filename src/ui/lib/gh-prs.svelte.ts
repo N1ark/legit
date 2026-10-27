@@ -10,8 +10,10 @@ import type { CreatePrRequest, PrStack, RestackPlan, StackEntry } from '../../sh
 import type { PullRequest } from '../../shared/github.ts';
 
 type Kind = 'local' | 'remote';
-/** Branch names sent in one request. */
-const PER_REQUEST = 100;
+/** Most of a request's URL taken by branch names. */
+const PER_REQUEST = 6000;
+/** A row shown again after this long asks again. */
+const STALE = 30_000;
 
 class Prs {
   /** Local branches' pull requests, by branch name, once their rows have shown. */
@@ -23,49 +25,94 @@ class Prs {
   /** The "Create pull request" dialog is open. */
   creating = $state(false);
 
-  /** Branches whose rows have shown, asked about again on each refresh; those not asked about yet. */
-  private asked: Record<Kind, Set<string>> = { local: new Set(), remote: new Set() };
+  /** Rows shown now (by how many), when each name was last asked about, and names waiting to be. */
+  private shown: Record<Kind, Map<string, number>> = { local: new Map(), remote: new Map() };
+  private askedAt: Record<Kind, Map<string, number>> = { local: new Map(), remote: new Map() };
   private pending: Record<Kind, Set<string>> = { local: new Set(), remote: new Set() };
+  /** One request in flight per kind, so answers land in the order they were asked. */
+  private busy: Record<Kind, boolean> = { local: false, remote: false };
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private firstWant = 0;
   private stackFor: string | null = null;
   private gen = 0;
 
-  /** Look up a branch's pull request once its row shows (a local branch, or a remote one as `remote/branch`); rows that show together are asked about together. */
+  /**
+   * A branch's row is shown (a local branch, or a remote one as `remote/branch`): look up its pull
+   * request, with the other rows shown meanwhile. Returns the cleanup, for an attachment.
+   */
   want(kind: Kind, name: string) {
-    if (this.asked[kind].has(name)) return;
-    this.asked[kind].add(name);
-    this.pending[kind].add(name);
-    this.timer ??= setTimeout(() => {
+    const shown = this.shown[kind];
+    shown.set(name, (shown.get(name) ?? 0) + 1);
+    if (Date.now() - (this.askedAt[kind].get(name) ?? 0) > STALE) {
+      this.pending[kind].add(name);
+      this.schedule();
+    }
+    return () => {
+      const n = (shown.get(name) ?? 1) - 1;
+      if (n) shown.set(name, n);
+      else shown.delete(name);
+    };
+  }
+
+  /** Asked once rows stop coming in (scrolling), or at most 300ms after the first. */
+  private schedule() {
+    if (!this.timer) this.firstWant = Date.now();
+    clearTimeout(this.timer ?? undefined);
+    this.timer = setTimeout(() => {
       this.timer = null;
-      this.ask(this.pending, false);
-    }, 30);
+      this.flush(false);
+    }, Math.max(0, Math.min(120, this.firstWant + 300 - Date.now())));
   }
 
-  /** Ask again about every branch whose row has shown. */
+  /** Ask again about the rows shown now. */
   async loadBranches(fresh = false) {
-    await this.ask(this.asked, fresh);
+    for (const kind of ['local', 'remote'] as const) for (const n of this.shown[kind].keys()) this.pending[kind].add(n);
+    await this.flush(fresh);
   }
 
-  private async ask(which: Record<Kind, Set<string>>, fresh: boolean) {
-    const names = { local: [...which.local], remote: [...which.remote] };
-    if (which === this.pending) [this.pending.local, this.pending.remote] = [new Set(), new Set()];
+  private async flush(fresh: boolean) {
     if (!gh.ready) return void ([this.byBranch, this.byRemote] = [{}, {}]);
-    const get = async (kind: Kind, list: string[]) => {
-      for (let i = 0; i < list.length; i += PER_REQUEST) {
-        const chunk = list.slice(i, i + PER_REQUEST);
+    await Promise.all((['local', 'remote'] as const).map((kind) => this.ask(kind, fresh)));
+  }
+
+  private async ask(kind: Kind, fresh: boolean) {
+    if (this.busy[kind]) return;
+    this.busy[kind] = true;
+    try {
+      // Rows scrolled past before their turn came aren't asked about.
+      for (let names = this.take(kind); names.length; names = this.take(kind)) {
         const r = await ghRequest<Record<string, PullRequest>>(kind === 'local' ? 'prBranches' : 'prRemoteBranches', {
-          names: chunk.join('\n'),
+          names: names.join('\n'),
           fresh: fresh ? 1 : null,
         }).catch(() => null);
         if (!r) continue;
         const next = { ...(kind === 'local' ? this.byBranch : this.byRemote) };
-        for (const n of chunk) delete next[n];
-        Object.assign(next, r);
+        for (const n of names) {
+          if (r[n]) next[n] = r[n];
+          else delete next[n];
+        }
         if (kind === 'local') this.byBranch = next;
         else this.byRemote = next;
       }
-    };
-    await Promise.all([get('local', names.local), get('remote', names.remote)]);
+    } finally {
+      this.busy[kind] = false;
+    }
+  }
+
+  /** The next names to ask about: pending ones still shown, as many as fit in a request. */
+  private take(kind: Kind): string[] {
+    const out: string[] = [];
+    let length = 0;
+    for (const n of this.pending[kind]) {
+      const size = encodeURIComponent(n).length + 3;
+      if (length && length + size > PER_REQUEST) break;
+      this.pending[kind].delete(n);
+      if (!this.shown[kind].has(n)) continue;
+      out.push(n);
+      length += size;
+      this.askedAt[kind].set(n, Date.now());
+    }
+    return out;
   }
 
   async loadStack(fresh = false) {
@@ -82,7 +129,7 @@ class Prs {
     }
   }
 
-  /** After `gh.refresh()`: the stack, and the badges the branch list has shown. */
+  /** After `gh.refresh()`: the stack, and the badges of the rows the branch list shows. */
   refreshed() {
     this.loadStack();
     this.loadBranches();

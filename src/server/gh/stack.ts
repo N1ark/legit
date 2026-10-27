@@ -162,7 +162,8 @@ function headNodes(r: GhRepos, heads: string[], fresh: boolean): Promise<any[][]
     // A name used by many forks can have newer pull requests than this repo's own: those are asked again for more.
     const all = queryHeads(r, chunk, FEW).then(async (res) => {
       const more = chunk.filter((_, k) => res[k].more);
-      if (more.length) (await queryHeads(r, more, MANY)).forEach((x, k) => (res[chunk.indexOf(more[k])] = x));
+      const wide = more.length ? await queryHeads(r, more, MANY).catch(() => null) : null;
+      wide?.forEach((x, k) => (res[chunk.indexOf(more[k])] = x));
       return res.map((x) => x.nodes);
     });
     chunk.forEach((h, k) => {
