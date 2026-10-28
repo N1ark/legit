@@ -278,8 +278,6 @@
             initial={at}
             sel={staged}
             readonly={false}
-            hint="Checked lines are staged"
-            help="Click a line, the strip beside a block, or a file's box; drag down the line numbers for several. Right-click to discard."
             onstage={stage}
             changeActions={(f, line, block) => [
               {

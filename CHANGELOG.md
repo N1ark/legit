@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A diff's file count, totals and **Hide whitespace** sit above the file tree, beside the diff, and that column is never taller than the part of the diff on screen: the tree can always be scrolled to its first and last file, even with the commit's message still in view. The "Click line numbers to pick" hint is gone.
+
 ## 0.15.0 — 2026-10-28
 
 - Labels and reviewers on a pull request, and labels and assignees on a new issue, are picked as on GitHub: tick as many as you like, filtering as you type (↵ ticks), and they're applied together when the picker closes. Labels show their descriptions, and the new ones show at once.

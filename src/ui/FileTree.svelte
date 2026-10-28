@@ -13,6 +13,7 @@
     onpick,
     onopen,
     onmenu,
+    natural = $bindable(0),
   }: {
     files: FileSummary[];
     /** Index of the file at the top of the diff, or -1. */
@@ -22,6 +23,8 @@
     onopen?: (i: number) => void;
     /** A file's context menu. */
     onmenu?: (e: MouseEvent, i: number) => void;
+    /** How tall it would be with every row shown (out): a short tree needs no more room. */
+    natural?: number;
   } = $props();
 
   const tree = $derived(fileTree(files.map((f) => f.path)));
@@ -43,6 +46,7 @@
   $effect(() => {
     void height;
     pad = above.offsetTop;
+    natural = rows.length * ROW + 2 * pad;
   });
 
   $effect(() => {

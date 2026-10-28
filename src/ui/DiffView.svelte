@@ -69,8 +69,6 @@
     summary,
     sel,
     readonly,
-    hint = 'Click line numbers to pick',
-    help = 'Pick lines to split out or remove: click, shift-click or drag the line numbers; the left edge picks whole blocks. Double-click a line to edit it.',
     fileActions,
     tree = true,
     initial = null,
@@ -83,9 +81,6 @@
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
     readonly: boolean;
-    /** How to pick lines, shown above the diff when it isn't read-only: a few words, with `help` as its tooltip. */
-    hint?: string;
-    help?: string;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
     /** Show the files as a folder tree beside the diff, to jump between them. */
@@ -724,6 +719,20 @@
   const savedTreeWidth = persisted('legit:tree-width', TREE_WIDTH);
   let treeWidth = $state(savedTreeWidth.value);
 
+  let summaryHeight = $state(0);
+  let treeNatural = $state(0);
+  /**
+   * The side pane's height: the part of the view the diff is in, so both ends of the file list can
+   * always be scrolled to; beside a shorter diff, all the side needs, as far as it fits on screen.
+   */
+  const sideHeight = $derived.by(() => {
+    const filesHeight = Math.max(0, tops[files.length] - GAP);
+    const fits = view.bottom - Math.max(view.top, 0);
+    const need = summaryHeight + treeNatural;
+    if (filesHeight < need) return Math.min(need, fits);
+    return Math.max(0, Math.min(view.bottom, filesHeight) - Math.max(view.top, 0));
+  });
+
   /** Where the last jump left the diff, so a file too near the end to reach the top still shows as picked. */
   let jump = $state<{ i: number; top: number } | null>(null);
   const current = $derived(
@@ -1122,36 +1131,34 @@
 
 <div class="diff">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
-  <div class="summary muted">
-    <div class="stats">
-      <div class="line">
-        <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
-        <span class="add">+{totals.a}</span>
-        <span class="del">−{totals.r}</span>
-        {#if generatedCount}
-          <span use:tooltip={'Generated files start collapsed'}>· {generatedCount} generated</span>
-        {/if}
+  <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px" style:--side-height="{sideHeight}px">
+    <!-- Never taller than what's on screen of the diff (see sideHeight), so its ends can always be reached. -->
+    <div class="side">
+      <div class="summary muted" bind:clientHeight={summaryHeight}>
+        <div class="stats">
+          <div class="line">
+            <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
+            <span class="add">+{totals.a}</span>
+            <span class="del">−{totals.r}</span>
+            {#if generatedCount}
+              <span use:tooltip={'Generated files start collapsed'}>· {generatedCount} generated</span>
+            {/if}
+          </div>
+          <div class="line">
+            <label class="ws" use:tooltip={'Show lines whose only change is whitespace as unchanged (~); picking one still picks both its changes'}>
+              <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
+              Hide whitespace
+            </label>
+            {#if hideWhitespace.value && totals.ws}
+              <span>· {totals.ws} whitespace-only</span>
+            {/if}
+          </div>
+        </div>
       </div>
-      <div class="line">
-        <label class="ws" use:tooltip={'Show lines whose only change is whitespace as unchanged (~); picking one still picks both its changes'}>
-          <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
-          Hide whitespace
-        </label>
-        {#if hideWhitespace.value && totals.ws}
-          <span>· {totals.ws} whitespace-only</span>
-        {/if}
-      </div>
-    </div>
-    {#if !readonly && files.length}
-      <span class="hint" use:tooltip={help}>{hint}</span>
-    {/if}
-  </div>
-
-  <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px">
-    {#if showTree}
-      <!-- As tall as the window, or the diff if that's shorter (a short diff above another). -->
-      <nav class="tree" style:height="{Math.min(view.bottom - view.top, tops[files.length] - GAP)}px">
-        <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} />
+      {#if showTree}
+        <nav class="tree">
+          <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} bind:natural={treeNatural} />
+        </nav>
         <ResizeEdge
           side="left"
           label="Resize the file tree"
@@ -1162,8 +1169,8 @@
           onresize={(w) => (treeWidth = w)}
           oncommit={(w) => (savedTreeWidth.value = w)}
         />
-      </nav>
-    {/if}
+      {/if}
+    </div>
     <div class="files" bind:this={filesEl} style:height="{Math.max(0, tops[files.length] - GAP)}px">
       {#each visible as i (i)}
         {@const f = files[i]}
@@ -1394,19 +1401,34 @@
     align-items: start;
   }
 
-  .tree {
+  .panes.with-tree .side {
     position: sticky;
     top: 0;
+    height: var(--side-height);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .tree {
+    flex: 1;
+    min-height: 0;
     margin-left: calc(-1 * var(--gap-3));
   }
 
-  /* Too narrow for both: the diff keeps the room. */
+  /* Too narrow for both: the diff keeps the room, the summary goes above it. */
   @container (max-width: 640px) {
     .panes.with-tree {
       display: block;
     }
 
-    .tree {
+    .panes.with-tree .side {
+      position: static;
+      height: auto;
+    }
+
+    .tree,
+    .side > :global(.edge) {
       display: none;
     }
   }
@@ -1417,7 +1439,6 @@
     align-items: center;
     font-size: var(--fs-sm);
     padding: 0 var(--gap-2) var(--sp-4);
-    white-space: nowrap;
   }
 
   .stats {
@@ -1428,15 +1449,10 @@
 
   .stats .line {
     display: flex;
-    gap: var(--sp-4);
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-4);
     align-items: center;
-  }
-
-  .hint {
-    margin-left: auto;
-    cursor: help;
-    font-size: var(--fs-xs);
-    white-space: normal;
+    white-space: nowrap;
   }
 
   .ws {
