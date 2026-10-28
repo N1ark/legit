@@ -14,6 +14,8 @@ export interface PrLabel {
   name: string;
   /** Hex, without the `#`. */
   color: string;
+  /** Only in the pickers' choices. */
+  description?: string | null;
 }
 
 /** Someone asked to review, or who did: their latest review, else `requested`. */

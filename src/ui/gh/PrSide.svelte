@@ -1,11 +1,12 @@
 <script lang="ts">
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
   // labels and size. Reviewers and labels change from a menu of the repository's choices.
-  import { Avatar, IconButton, Tag, entries, menu, tooltip, type MaybeEntry } from 'purr';
+  import { Avatar, IconButton, Tag, tooltip } from 'purr';
   import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
-  import type { PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
+  import type { PrLabel, PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
   import { isLive } from '../../shared/github.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
+  import PickMany, { type Choice } from './PickMany.svelte';
 
   interface Props {
     pr: PrOverview;
@@ -26,60 +27,71 @@
     requested: { icon: CircleRegular, color: 'var(--warn)' },
   };
 
+  /** The picker open, if any (see PickMany): its choices apply in one go when it closes. */
+  let picking = $state<{ anchor: HTMLElement; title: string; choices: Choice[]; chosen: string[]; apply: (keys: string[]) => void } | null>(null);
+  /** Labels just applied, shown until the pull request comes back with them. */
+  let applying = $state.raw<PrLabel[] | null>(null);
+  const labels = $derived(applying ?? pr.labels);
+  let picker = $state<PickMany>();
+
+  /** Asked to add `next`'s and remove what's gone from `now`; nothing when they're the same. */
+  const diff = (now: string[], next: string[]) => ({ add: next.filter((x) => !now.includes(x)), remove: now.filter((x) => !next.includes(x)) });
+
   async function pickReviewers(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
+    if (picking) return picker?.close();
     const anchor = e.currentTarget;
     const users = (await options())?.users;
     if (!users) return;
-    const item = (login: string, avatar: string | null): MaybeEntry => {
-      const requested = pr.reviewers.some((r) => r.login === login && r.state === 'requested');
+    const choice = (login: string, avatar: string | null, group?: string): Choice => {
       const review = pr.reviewers.find((r) => r.login === login && r.state !== 'requested');
-      return {
-        label: login,
-        icon: Avatar,
-        iconProps: { name: login, src: ghAvatar(avatar), size: 16, round: true, title: '' },
-        checked: requested,
-        keepOpen: true,
-        note: review ? REVIEW_LABEL[review.state] : undefined,
-        run: () => act('prviewReviewers', requested ? { remove: [login] } : { add: [login] }),
-      };
+      return { key: login, label: login, avatar: ghAvatar(avatar), note: review ? REVIEW_LABEL[review.state] : undefined, group };
     };
     const suggested = pr.suggested.filter((u) => u.login !== pr.author?.login);
     const others = users.filter((u) => u.login !== pr.author?.login && !suggested.some((s) => s.login === u.login));
-    menu.showFor(
+    const rest = suggested.length ? 'Everyone else' : undefined;
+    const requested = pr.reviewers.filter((r) => r.state === 'requested').map((r) => r.login);
+    picking = {
       anchor,
-      () =>
-        entries(
-          suggested.length > 0 && { kind: 'heading', label: 'Suggested' },
-          ...suggested.map((u) => item(u.login, u.avatar)),
-          suggested.length > 0 && 'separator',
-          ...others.map((u) => item(u.login, u.avatar)),
-          ...pr.reviewers.filter((r) => r.team).map((r) => item(r.login, r.avatar)),
-        ),
-      'Request a review from',
-    );
+      title: 'Request a review from',
+      choices: [
+        ...suggested.map((u) => choice(u.login, u.avatar, 'Suggested')),
+        ...others.map((u) => choice(u.login, u.avatar, rest)),
+        ...pr.reviewers.filter((r) => r.team).map((r) => choice(r.login, r.avatar, rest)),
+      ],
+      chosen: requested,
+      apply: (keys) => {
+        const change = diff(requested, keys);
+        if (change.add.length || change.remove.length) act('prviewReviewers', change);
+      },
+    };
   }
 
   async function pickLabels(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
+    if (picking) return picker?.close();
     const anchor = e.currentTarget;
-    const labels = (await options())?.labels;
-    if (!labels) return;
-    menu.showFor(
+    const all = (await options())?.labels;
+    if (!all) return;
+    const now = pr.labels.map((l) => l.name);
+    picking = {
       anchor,
-      () =>
-        labels.map((l) => {
-          const on = pr.labels.some((x) => x.name === l.name);
-          return {
-            label: l.name,
-            swatch: `#${l.color}`,
-            checked: on,
-            keepOpen: true,
-            run: () => act('prviewLabels', on ? { remove: [l.name] } : { add: [l.name] }),
-          };
-        }),
-      'Labels',
-    );
+      title: 'Apply labels to this pull request',
+      choices: all.map((l) => ({ key: l.name, label: l.name, color: `#${l.color}`, description: l.description ?? undefined })),
+      chosen: now,
+      apply: async (keys) => {
+        const change = diff(now, keys);
+        if (!change.add.length && !change.remove.length) return;
+        applying = keys.map((k) => all.find((l) => l.name === k) ?? { name: k, color: 'ededed' });
+        await act('prviewLabels', change);
+        applying = null;
+      },
+    };
   }
 </script>
+
+{#if picking}
+  {@const p = picking}
+  <PickMany bind:this={picker} anchor={p.anchor} title={p.title} choices={p.choices} chosen={p.chosen} onclose={(keys) => (p.apply(keys), (picking = null))} />
+{/if}
 
 <aside class="side">
   <section>
@@ -127,9 +139,9 @@
         <IconButton label="Change labels" size="sm" disabled={working} onclick={pickLabels}><GearRegular /></IconButton>
       {/if}
     </header>
-    {#if pr.labels.length}
+    {#if labels.length}
       <div class="labels">
-        {#each pr.labels as l (l.name)}<Tag label={l.name} color="#{l.color}" />{/each}
+        {#each labels as l (l.name)}<Tag label={l.name} color="#{l.color}" />{/each}
       </div>
     {:else}
       <p class="muted">None</p>

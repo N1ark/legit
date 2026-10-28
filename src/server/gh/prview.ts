@@ -246,7 +246,7 @@ async function options(repo: Repo, number: unknown): Promise<PrOptions> {
     `query PrViewOptions($owner: String!, $name: String!) {
       repository(owner: $owner, name: $name) {
         assignableUsers(first: 100) { nodes { ${ACTOR} } }
-        labels(first: 100, orderBy: { field: NAME, direction: ASC }) { nodes { name color } }
+        labels(first: 100, orderBy: { field: NAME, direction: ASC }) { nodes { name color description } }
         refs(refPrefix: "refs/heads/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) { nodes { name } }
       }
     }`,
@@ -330,7 +330,7 @@ export const prviewPost: Record<string, PostRoute> = {
   prviewLabels: change(async (r, b) => {
     const add = list(b.add);
     if (add.length) await rest('POST', `${r.path}/issues/${r.number}/labels`, { labels: add });
-    for (const l of list(b.remove)) await rest('DELETE', `${r.path}/issues/${r.number}/labels/${encodeURIComponent(l)}`);
+    await Promise.all(list(b.remove).map((l) => rest('DELETE', `${r.path}/issues/${r.number}/labels/${encodeURIComponent(l)}`)));
   }),
   prviewMerge: change((r, b) => {
     const how = method(b.method);

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Labels and reviewers on a pull request, and labels and assignees on a new issue, are picked as on GitHub: tick as many as you like, filtering as you type (↵ ticks), and they're applied together when the picker closes. Labels show their descriptions, and the new ones show at once.
+
 ## 0.14.0 — 2026-10-28
 
 - The branch list shows how far a branch is from its upstream as ↑2 ↓1 instead of "ahead 2, behind 1" (hover for it in words).

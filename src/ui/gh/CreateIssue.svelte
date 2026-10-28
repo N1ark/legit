@@ -1,12 +1,13 @@
 <script lang="ts">
   // A new GitHub issue: its title, a markdown description (written or previewed), labels and
   // assignees. Closing it without creating keeps what was typed for next time.
-  import { Avatar, Button, Kbd, Modal, Segmented, Spinner, Tag, TextArea, TextField, errorMessage, matches, menu, tooltip } from 'purr';
+  import { Avatar, Button, Kbd, Modal, Segmented, Spinner, Tag, TextArea, TextField, errorMessage, matches, tooltip } from 'purr';
   import { TagRegular, UserPlusRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import Markdown from '../Markdown.svelte';
   import { type IssueDraft, createIssue, issueMeta } from '../lib/gh-issues.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
+  import PickMany, { type Choice } from './PickMany.svelte';
   import { refComplete } from './ref-complete.svelte.ts';
   import type { IssueMeta } from '../../shared/gh-issues.ts';
 
@@ -37,30 +38,30 @@
   const labelOf = (name: string) => meta?.labels.find((l) => l.name === name);
   const avatarOf = (login: string) => meta?.assignees.find((u) => u.login === login)?.avatar ?? `https://github.com/${login}.png`;
 
+  /** The picker open, if any (see PickMany). */
+  let picking = $state<{ anchor: HTMLElement; title: string; choices: Choice[]; chosen: string[]; apply: (keys: string[]) => void } | null>(null);
+  let picker = $state<PickMany>();
+
   function pickLabels(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
-    menu.showFor(e.currentTarget, () =>
-      (meta?.labels ?? []).map((l) => ({
-        label: l.name,
-        swatch: `#${l.color}`,
-        note: l.description ?? undefined,
-        checked: labels.includes(l.name),
-        keepOpen: true,
-        run: () => (labels = toggle(labels, l.name)),
-      })),
-    );
+    if (picking) return picker?.close();
+    picking = {
+      anchor: e.currentTarget,
+      title: 'Apply labels to this issue',
+      choices: (meta?.labels ?? []).map((l) => ({ key: l.name, label: l.name, color: `#${l.color}`, description: l.description ?? undefined })),
+      chosen: labels,
+      apply: (keys) => (labels = keys),
+    };
   }
 
   function pickAssignees(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
-    menu.showFor(e.currentTarget, () =>
-      (meta?.assignees ?? []).map((u) => ({
-        label: u.login,
-        icon: Avatar,
-        iconProps: { name: u.login, src: u.avatar, size: 16, round: true, title: '' },
-        checked: assignees.includes(u.login),
-        keepOpen: true,
-        run: () => (assignees = toggle(assignees, u.login)),
-      })),
-    );
+    if (picking) return picker?.close();
+    picking = {
+      anchor: e.currentTarget,
+      title: 'Assign people to this issue',
+      choices: (meta?.assignees ?? []).map((u) => ({ key: u.login, label: u.login, avatar: u.avatar })),
+      chosen: assignees,
+      apply: (keys) => (assignees = keys),
+    };
   }
 
   async function create() {
@@ -139,6 +140,10 @@
     <Button onclick={() => onclose(left())}>Cancel</Button>
     <Button variant="primary" loading={busy} disabled={!title.trim()} onclick={create}>Create <Kbd hint="⌘↩" /></Button>
   {/snippet}
+  {#if picking}
+    {@const p = picking}
+    <PickMany bind:this={picker} anchor={p.anchor} title={p.title} choices={p.choices} chosen={p.chosen} onclose={(keys) => (p.apply(keys), (picking = null))} />
+  {/if}
 </Modal>
 
 <style>

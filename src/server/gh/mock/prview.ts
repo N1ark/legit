@@ -14,6 +14,10 @@ const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOStr
 const LABELS: Record<string, string> = {
   bug: 'd73a4a', documentation: '0075ca', enhancement: 'a2eeef', parser: '5319e7', ux: 'fbca04', 'good first issue': '7057ff',
 };
+const DESCRIPTIONS: Record<string, string> = {
+  bug: "Something isn't working", documentation: 'Improvements or additions to documentation', enhancement: 'New feature or request',
+  'good first issue': 'Good for newcomers',
+};
 const USERS = ['octocat', 'hubot', 'monalisa', 'defunkt', 'mojombo'];
 
 let ids = 100;
@@ -235,7 +239,7 @@ const count = (pending: any) => (Array.isArray(pending.comments) ? pending.comme
 onGraphql('PrViewOptions', () => ({
   repository: {
     assignableUsers: { nodes: USERS.map(actor) },
-    labels: { nodes: Object.entries(LABELS).map(([name, color]) => ({ name, color })) },
+    labels: { nodes: Object.entries(LABELS).map(([name, color]) => ({ name, color, description: DESCRIPTIONS[name] ?? null })) },
     refs: { nodes: Object.keys(db.tips).filter((t) => !t.startsWith('origin/')).map((name) => ({ name })) },
   },
 }));
