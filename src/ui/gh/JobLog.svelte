@@ -3,7 +3,7 @@
   // scrolled to, groups as headers. Find (⌘F in it) steps through the lines that match. A step
   // keeps up to 3000 lines: only those on screen are drawn.
   import { IconButton, Modal, SearchInput, Spinner, VirtualList, copyText, toast, tooltip } from 'purr';
-  import { ArrowSquareOut, CaretDown, CaretRight, CaretUp, Copy } from 'purr/icons';
+  import { ArrowSquareOutRegular, CaretDownRegular, CaretRightBold, CaretUpRegular, CopyRegular } from 'purr/glyphs';
   import { tick } from 'svelte';
   import CheckIcon from './CheckIcon.svelte';
   import { checks, type LogTarget } from '../lib/gh-checks.svelte.ts';
@@ -139,14 +139,14 @@
       <SearchInput variant="field" label="Find in the log" placeholder="Find" bind:value={query} bind:input={findInput} onkeydown={onFindKey} />
       {#if query}
         <span class="muted count" aria-live="polite">{matches.length ? `${Math.min(cursor, matches.length - 1) + 1}/${matches.length}` : 'none'}</span>
-        <IconButton label="Previous match" shortcut="⇧⌘G" disabled={!matches.length} onclick={() => move(-1)}><CaretUp /></IconButton>
-        <IconButton label="Next match" shortcut="⌘G" disabled={!matches.length} onclick={() => move(1)}><CaretDown /></IconButton>
+        <IconButton label="Previous match" shortcut="⇧⌘G" disabled={!matches.length} onclick={() => move(-1)}><CaretUpRegular /></IconButton>
+        <IconButton label="Next match" shortcut="⌘G" disabled={!matches.length} onclick={() => move(1)}><CaretDownRegular /></IconButton>
       {/if}
     </div>
-    <IconButton label="Copy this step's log" disabled={!step} onclick={copy}><Copy /></IconButton>
+    <IconButton label="Copy this step's log" disabled={!step} onclick={copy}><CopyRegular /></IconButton>
     {#if stepUrl}
       <a class="btn btn--icon btn--ghost" href={stepUrl} target="_blank" rel="noreferrer" aria-label="Open on GitHub" use:tooltip={'Open on GitHub'}
-        ><ArrowSquareOut /></a
+        ><ArrowSquareOutRegular /></a
       >
     {/if}
   {/snippet}
@@ -186,7 +186,7 @@
                   <div class="line {l.k ?? ''}" class:match={matched.has(i)} class:is-cursor={i === cursorLine}>
                     <span class="n">{skipped + i + 1}</span>
                     <span class="t"
-                      >{#if l.k === 'group'}<CaretRight weight="bold" />{/if}{#if LABEL[l.k ?? '']}<b>{LABEL[l.k ?? '']}</b>{/if}{#each runs[i] ?? [] as r, j (j)}{#if r.cls}<span
+                      >{#if l.k === 'group'}<CaretRightBold />{/if}{#if LABEL[l.k ?? '']}<b>{LABEL[l.k ?? '']}</b>{/if}{#each runs[i] ?? [] as r, j (j)}{#if r.cls}<span
                             class={r.cls}>{r.text}</span
                           >{:else}{r.text}{/if}{/each}</span
                     >

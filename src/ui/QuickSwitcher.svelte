@@ -3,7 +3,7 @@
   // one to check out), a worktree, a recent repository (in the app), or a commit: one listed, or
   // any by SHA or `HEAD~3`, the list loading older history down to it.
   import { CommandPalette, IS_TAURI, rank, toast, type PaletteItem } from 'purr';
-  import { CloudArrowDown, FolderSimple, Folders, GitBranch, GitCommit, MagnifyingGlass } from 'purr/icons';
+  import { CloudArrowDownRegular, FolderSimpleRegular, FoldersRegular, GitBranchRegular, GitCommitRegular, MagnifyingGlassRegular } from 'purr/glyphs';
   import { onMount } from 'svelte';
   import type { BranchInfo, RemoteBranchInfo, WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
@@ -66,23 +66,23 @@
         id: `local:${b.name}`,
         label: b.name,
         detail: b.worktree ? `in ${folder(b.worktree)} · ${b.subject}` : b.subject,
-        icon: GitBranch,
+        icon: GitBranchRegular,
         run: b.worktree ? () => openWorktree(b.worktree!) : unlessBlocked(() => switchOp('switch', { branch: b.name }, b.name)),
       });
     }
     for (const w of trees) {
       if (w.current || w.missing) continue;
-      out.push({ id: `tree:${w.path}`, label: w.name, detail: `${w.branch ?? 'detached'} · ${w.short}`, icon: FolderSimple, run: () => openWorktree(w.path) });
+      out.push({ id: `tree:${w.path}`, label: w.name, detail: `${w.branch ?? 'detached'} · ${w.short}`, icon: FolderSimpleRegular, run: () => openWorktree(w.path) });
     }
     for (const r of recent) {
-      if (!r.current) out.push({ id: `repo:${r.path}`, label: r.name, detail: r.short, icon: Folders, run: () => openRepo(r.path) });
+      if (!r.current) out.push({ id: `repo:${r.path}`, label: r.name, detail: r.short, icon: FoldersRegular, run: () => openRepo(r.path) });
     }
     for (const b of remotes) {
       out.push({
         id: `remote:${b.ref}`,
         label: `${b.remote}/${b.name}`,
         detail: b.subject,
-        icon: CloudArrowDown,
+        icon: CloudArrowDownRegular,
         run: unlessBlocked(() => switchOp('checkoutRemote', { ref: b.ref }, b.name)),
       });
     }
@@ -91,7 +91,7 @@
         id: `commit:${c.sha}`,
         label: c.subject,
         detail: `${shortSha(c)} · ${c.author.name}`,
-        icon: GitCommit,
+        icon: GitCommitRegular,
         run: () => {
           app.select(c.sha);
           app.reveal?.(c.sha);
@@ -114,7 +114,7 @@
   function goTo(query: string): PaletteItem | null {
     if (query.startsWith('-') || /\s/.test(query)) return null;
     if (isSha(query) && app.commits.some((c) => c.sha.startsWith(query.toLowerCase()))) return null;
-    return { id: 'goto', label: `Go to commit ${query}`, icon: MagnifyingGlass, run: () => app.goTo(query) };
+    return { id: 'goto', label: `Go to commit ${query}`, icon: MagnifyingGlassRegular, run: () => app.goTo(query) };
   }
 </script>
 

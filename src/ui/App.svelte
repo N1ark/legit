@@ -17,7 +17,7 @@
     tooltip,
     type Binding,
   } from 'purr';
-  import { ArrowUUpLeft, ArrowUUpRight, Gear, PencilSimpleLine, Warning } from 'purr/icons';
+  import { ArrowUUpLeftRegular, ArrowUUpRightRegular, GearRegular, PencilSimpleLineBold, WarningBold } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
@@ -219,28 +219,28 @@
     <RebaseOnBase />
     <PushButton />
     <IconButton label="Undo" shortcut="⌘Z" size="lg" disabled={!app.repo?.canUndo || app.busy} onclick={app.undo}>
-      <ArrowUUpLeft />
+      <ArrowUUpLeftRegular />
     </IconButton>
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
-      <ArrowUUpRight />
+      <ArrowUUpRightRegular />
     </IconButton>
     {#if github}<Notifications.component />{/if}
     <StashPanel />
     <Backups />
     {#if github}<GithubMenu.component />{/if}
-    <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><Gear /></IconButton>
+    <IconButton label="Settings" shortcut="⌘," size="lg" onclick={() => (settings = 'syntax')}><GearRegular /></IconButton>
   </header>
 
   {#if app.repo?.conflict?.edit}
     {@const edit = app.repo.conflict.edit}
     <div class="blocked editing">
-      <PencilSimpleLine weight="bold" />
+      <PencilSimpleLineBold />
       <span class="what" use:tooltip={`Editing "${edit.subject}": your files are as they were in it`}>Editing "{edit.subject}"</span>
       <button class="btn btn--link" onclick={() => app.selectWork()} use:tooltip={'Finish or cancel the edit'}>Finish</button>
     </div>
   {:else if app.repo?.blocked}
     <div class="blocked">
-      <Warning weight="bold" />
+      <WarningBold />
       <span use:tooltip={'History is read-only until it ends'}>{app.repo.blocked}</span>
       {#if app.repo.conflict}
         <button class="btn btn--link" onclick={() => app.selectWork()} use:tooltip={'Resolve, continue or abort it'}>Resolve</button>

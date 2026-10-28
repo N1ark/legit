@@ -2,7 +2,7 @@
   // Review a pull request: a few words and a verdict (comment, approve, request changes). When the
   // viewer has diff comments waiting in a review of theirs, that review is the one submitted.
   import { Button, Kbd, Popover, TextArea, matches, tooltip } from 'purr';
-  import { CaretDown, ChatCircle } from 'purr/icons';
+  import { CaretDownRegular, ChatCircleRegular } from 'purr/glyphs';
   import type { PrOverview, ReviewEvent } from '../../shared/gh-prview.ts';
   import { reviewNeeds, reviewRefusal } from '../lib/gh-prview.ts';
 
@@ -54,8 +54,8 @@
   use:tooltip={pending ? `${pending} pending comment${pending === 1 ? '' : 's'} to submit with a review` : 'Approve, request changes or comment'}
   onclick={() => (open = !open)}
 >
-  <ChatCircle /> Review{#if pending}&nbsp;<span class="count">{pending}</span>{/if}
-  <CaretDown />
+  <ChatCircleRegular /> Review{#if pending}&nbsp;<span class="count">{pending}</span>{/if}
+  <CaretDownRegular />
 </button>
 {#if open && button}
   <Popover

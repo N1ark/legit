@@ -1,7 +1,7 @@
 <script lang="ts">
   // A check's state as GitHub draws it: a filled tick or cross, a spinner while running, a clock while queued.
   // Decorative: whoever shows it also says the state in words.
-  import { CheckCircle, CircleNotch, Clock, DotOutline, MinusCircle, Prohibit, WarningCircle, XCircle } from 'purr/icons';
+  import { CheckCircleFill, CircleNotchBold, ClockBold, DotOutlineFill, MinusCircleRegular, ProhibitBold, WarningCircleFill, XCircleFill } from 'purr/glyphs';
   import type { CheckState, RollupState } from '../../shared/gh-checks.ts';
 
   interface Props {
@@ -13,14 +13,14 @@
 </script>
 
 <span class="icon {state}" class:spin={state === 'running'} aria-hidden="true">
-  {#if state === 'success'}<CheckCircle weight="fill" />
-  {:else if state === 'failure'}<XCircle weight="fill" />
-  {:else if state === 'action_required'}<WarningCircle weight="fill" />
-  {:else if state === 'running'}<CircleNotch weight="bold" />
-  {:else if state === 'pending' && dot}<DotOutline weight="fill" />
-  {:else if state === 'pending'}<Clock weight="bold" />
-  {:else if state === 'cancelled'}<Prohibit weight="bold" />
-  {:else}<MinusCircle />
+  {#if state === 'success'}<CheckCircleFill />
+  {:else if state === 'failure'}<XCircleFill />
+  {:else if state === 'action_required'}<WarningCircleFill />
+  {:else if state === 'running'}<CircleNotchBold />
+  {:else if state === 'pending' && dot}<DotOutlineFill />
+  {:else if state === 'pending'}<ClockBold />
+  {:else if state === 'cancelled'}<ProhibitBold />
+  {:else}<MinusCircleRegular />
   {/if}
 </span>
 

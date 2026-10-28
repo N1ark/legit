@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Icons are lighter: the first screen loads a fifth less code, and rows in the commit list, the branch list, diffs and ⌘K draw their icons in about half the time.
+
 ## 0.13.0 — 2026-10-28
 
 - Switching back to the window, or several changes at once, reload the repository once instead of several times over, and an operation's own changes no longer reload what it just showed.

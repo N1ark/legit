@@ -2,7 +2,7 @@
   // One comment of a review thread: who and when, its markdown (suggestions as small diffs), its
   // reactions, and for the viewer's own, editing and deleting.
   import { Avatar, Button, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, menu, tooltip } from 'purr';
-  import { ArrowSquareOut, Copy, DotsThree, PencilSimple, Smiley, Trash } from 'purr/icons';
+  import { ArrowSquareOutRegular, CopyRegular, DotsThreeBold, PencilSimpleRegular, SmileyRegular, TrashRegular } from 'purr/glyphs';
   import Markdown from '../Markdown.svelte';
   import Suggestion from './Suggestion.svelte';
   import { app } from '../lib/app.svelte.ts';
@@ -49,11 +49,11 @@
 
   function actions(e: MouseEvent) {
     menu.showFor(e.currentTarget as HTMLElement, [
-      comment.canEdit && { label: 'Edit', icon: PencilSimple, run: () => (editing = comment.body) },
-      { label: 'Copy link', icon: Copy, run: () => app.copy(comment.url, 'link') },
-      { label: 'Open on GitHub', icon: ArrowSquareOut, run: () => app.openUrl(comment.url) },
+      comment.canEdit && { label: 'Edit', icon: PencilSimpleRegular, run: () => (editing = comment.body) },
+      { label: 'Copy link', icon: CopyRegular, run: () => app.copy(comment.url, 'link') },
+      { label: 'Open on GitHub', icon: ArrowSquareOutRegular, run: () => app.openUrl(comment.url) },
       comment.canDelete && 'separator',
-      comment.canDelete && { label: 'Delete', icon: Trash, danger: true, confirm: 'Click again to delete', run: () => reviews.remove(number, comment) },
+      comment.canDelete && { label: 'Delete', icon: TrashRegular, danger: true, confirm: 'Click again to delete', run: () => reviews.remove(number, comment) },
     ]);
   }
 
@@ -79,8 +79,8 @@
     {#if comment.lastEditedAt}<span class="muted" use:tooltip={`Edited ${formatFull(comment.lastEditedAt)}`}>· edited</span>{/if}
     {#if comment.pending}<span use:tooltip={'Only you see it until your review is submitted'}><Tag color="var(--warn)" label="Pending" /></span>{/if}
     <span class="spacer"></span>
-    <IconButton label="React" size="sm" onclick={react}><Smiley /></IconButton>
-    <IconButton label="More" size="sm" onclick={actions}><DotsThree weight="bold" /></IconButton>
+    <IconButton label="React" size="sm" onclick={react}><SmileyRegular /></IconButton>
+    <IconButton label="More" size="sm" onclick={actions}><DotsThreeBold /></IconButton>
   </div>
   {#if editing !== null}
     <!-- svelte-ignore a11y_autofocus -->

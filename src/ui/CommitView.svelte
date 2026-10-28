@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast, tooltip } from 'purr';
-  import { ArrowCounterClockwise, ArrowUUpLeft, ChatCircleText, Check, CloudCheck, Eraser, GitMerge, PencilSimpleLine, Scissors, Trash, X } from 'purr/icons';
+  import { ArrowCounterClockwiseRegular, ArrowUUpLeftRegular, ChatCircleTextRegular, CheckBold, CloudCheckRegular, EraserRegular, GitMergeRegular, PencilSimpleLineRegular, ScissorsRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
@@ -219,7 +219,7 @@
     <span class="muted">{date}</span>
     {#if commit.pushed}
       <span use:tooltip={"On a remote branch: rewriting it means force-pushing"}>
-        <Tag color="var(--warn)"><span class="tag-icon"><CloudCheck /> pushed</span></Tag>
+        <Tag color="var(--warn)"><span class="tag-icon"><CloudCheckRegular /> pushed</span></Tag>
       </span>
     {/if}
     <span class="spacer"></span>
@@ -227,7 +227,7 @@
     {#if commit.merge && !commit.side}
       {@const open = commit.sha in app.expanded}
       <Button variant="ghost" onclick={() => app.toggleMerge(commit.sha)} {@attach tip('List the commits it brought in under it (→ / ←)')}>
-        <GitMerge /> {open ? 'Hide' : 'Show'} merged
+        <GitMergeRegular /> {open ? 'Hide' : 'Show'} merged
       </Button>
     {/if}
     {#if !readonly && !commit.merge}
@@ -237,7 +237,7 @@
         disabled={app.busy}
         {@attach tip('Check it out to change its files in your editor; finishing amends them into it and replays the commits after it')}
       >
-        <PencilSimpleLine /> Edit files
+        <PencilSimpleLineRegular /> Edit files
       </Button>
     {/if}
     {#if !readonly && isHead && !commit.merge}
@@ -249,11 +249,11 @@
           disabled={app.busy}
           {@attach tip('Undo this commit; its changes stay staged')}
         >
-          <ArrowUUpLeft /> Undo commit
+          <ArrowUUpLeftRegular /> Undo commit
         </ConfirmButton>
       {:else}
         <Button variant="ghost" onclick={() => app.uncommit()} disabled={app.busy} {@attach tip('Undo this commit; its changes stay staged')}>
-          <ArrowUUpLeft /> Undo commit
+          <ArrowUUpLeftRegular /> Undo commit
         </Button>
       {/if}
     {/if}
@@ -268,7 +268,7 @@
         aria-label="Drop this commit"
         {@attach tip('Drop this commit')}
       >
-        <span class="glyph"><Trash /></span>
+        <span class="glyph"><TrashRegular /></span>
       </ConfirmButton>
     {/if}
   </div>
@@ -332,9 +332,9 @@
     {#if dirty && !readonly}
       <div class="actions">
         <Button variant="primary" onclick={save} disabled={!valid || app.busy}>
-          <Check weight="bold" /> Save <Kbd hint="⌘↩" />
+          <CheckBold /> Save <Kbd hint="⌘↩" />
         </Button>
-        <Button onclick={revert}><ArrowCounterClockwise /> Revert <Kbd hint="Esc" /></Button>
+        <Button onclick={revert}><ArrowCounterClockwiseRegular /> Revert <Kbd hint="Esc" /></Button>
       </div>
     {/if}
   </div>
@@ -352,7 +352,7 @@
       fileActions={(f) => [
         !readonly && {
           label: 'Remove file from commit',
-          icon: Eraser,
+          icon: EraserRegular,
           note:
             f.status === 'A' || f.status === 'C' ? "The file won't be added" : f.status === 'D' ? 'The file stays'
             : f.status === 'R' ? `It goes back to ${f.oldPath}, as it was` : 'It goes back to how it was before',
@@ -366,7 +366,7 @@
 
   {#if picked.files && !readonly}
     <div class="split">
-      <Scissors />
+      <ScissorsRegular />
       <span class="count">
         Split <b>{picked.lines || picked.files}</b>
         {picked.lines ? (picked.lines === 1 ? 'change' : 'changes') : picked.files === 1 ? 'file' : 'files'}
@@ -408,14 +408,14 @@
         disabled={app.busy}
         {@attach tip("Take these changes out of the commit (added lines go, removed lines stay); the commits after it and your files lose them too")}
       >
-        <Eraser /> Remove <Kbd hint="⌫" />
+        <EraserRegular /> Remove <Kbd hint="⌫" />
       </Button>
       {#if comment}
         <Button onclick={comment.run} disabled={!!comment.why} {@attach tip(comment.why ?? 'Comment on these lines on GitHub')}>
-          <ChatCircleText /> Comment
+          <ChatCircleTextRegular /> Comment
         </Button>
       {/if}
-      <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><X /></IconButton>
+      <IconButton label="Clear selection" shortcut="Esc" onclick={clear}><XRegular /></IconButton>
     </div>
   {/if}
 </div>

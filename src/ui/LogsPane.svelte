@@ -1,7 +1,7 @@
 <script lang="ts">
   // Settings ▸ Logs: what went wrong lately, kept up to date while shown, to copy into a bug report.
   import { Button, copyText, toast } from 'purr';
-  import { Copy } from 'purr/icons';
+  import { CopyRegular } from 'purr/glyphs';
   import { loadLogs } from './lib/logs.ts';
 
   let text = $state<string | null>(null);
@@ -36,7 +36,7 @@
 
 <div class="logs">
   <div class="bar">
-    <Button size="sm" variant="ghost" disabled={!text} onclick={copy}><Copy /> Copy</Button>
+    <Button size="sm" variant="ghost" disabled={!text} onclick={copy}><CopyRegular /> Copy</Button>
   </div>
   {#if text}
     <pre class="mono" bind:this={pre}>{text}</pre>

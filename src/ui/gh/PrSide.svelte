@@ -2,7 +2,7 @@
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
   // labels and size. Reviewers and labels change from a menu of the repository's choices.
   import { Avatar, IconButton, Tag, entries, menu, tooltip, type MaybeEntry } from 'purr';
-  import { ChatCircle, CheckCircle, Circle, Gear, MinusCircle, XCircle } from 'purr/icons';
+  import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
   import { isLive } from '../../shared/github.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
@@ -17,13 +17,13 @@
 
   const open = $derived(isLive(pr.state));
 
-  const REVIEW: Record<PrReviewer['state'], { icon: typeof Circle; color: string }> = {
-    approved: { icon: CheckCircle, color: 'var(--success)' },
-    changes: { icon: XCircle, color: 'var(--danger)' },
-    commented: { icon: ChatCircle, color: 'var(--muted)' },
-    dismissed: { icon: MinusCircle, color: 'var(--faint)' },
-    pending: { icon: Circle, color: 'var(--faint)' },
-    requested: { icon: Circle, color: 'var(--warn)' },
+  const REVIEW: Record<PrReviewer['state'], { icon: GlyphComponent; color: string }> = {
+    approved: { icon: CheckCircleFill, color: 'var(--success)' },
+    changes: { icon: XCircleFill, color: 'var(--danger)' },
+    commented: { icon: ChatCircleFill, color: 'var(--muted)' },
+    dismissed: { icon: MinusCircleFill, color: 'var(--faint)' },
+    pending: { icon: CircleFill, color: 'var(--faint)' },
+    requested: { icon: CircleRegular, color: 'var(--warn)' },
   };
 
   async function pickReviewers(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
@@ -86,7 +86,7 @@
     <header>
       <h3>Reviewers</h3>
       {#if open && pr.canUpdate}
-        <IconButton label="Request a review" size="sm" disabled={working} onclick={pickReviewers}><Gear /></IconButton>
+        <IconButton label="Request a review" size="sm" disabled={working} onclick={pickReviewers}><GearRegular /></IconButton>
       {/if}
     </header>
     {#if pr.reviewers.length}
@@ -96,8 +96,8 @@
           <li>
             <Avatar name={r.login} src={ghAvatar(r.avatar)} size={18} round />
             <span class="name">{r.login}</span>
-            <span class="review" style:color={s.color} use:tooltip={REVIEW_LABEL[r.state]} aria-label={REVIEW_LABEL[r.state]}>
-              <s.icon weight={r.state === 'requested' ? 'regular' : 'fill'} />
+            <span class="review" style:color={s.color} use:tooltip={REVIEW_LABEL[r.state]} role="img" aria-label={REVIEW_LABEL[r.state]}>
+              <s.icon />
             </span>
           </li>
         {/each}
@@ -124,7 +124,7 @@
     <header>
       <h3>Labels</h3>
       {#if pr.canUpdate}
-        <IconButton label="Change labels" size="sm" disabled={working} onclick={pickLabels}><Gear /></IconButton>
+        <IconButton label="Change labels" size="sm" disabled={working} onclick={pickLabels}><GearRegular /></IconButton>
       {/if}
     </header>
     {#if pr.labels.length}

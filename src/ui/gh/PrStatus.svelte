@@ -1,14 +1,14 @@
 <script module lang="ts">
-  import { GitMerge, GitMergeQueue, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, type IconComponent } from 'purr/icons';
+  import { GitMergeBold, GitMergeQueueBold, GitPullRequestBold, GitPullRequestClosedBold, GitPullRequestDraftBold, type GlyphComponent } from 'purr/glyphs';
   import type { PrState } from '../../shared/github.ts';
 
   /** Each state's icon and colour, as GitHub shows them: what everything showing a pull request's state draws. */
-  export const PR_STATE: Record<PrState, { icon: IconComponent; color: string }> = {
-    open: { icon: GitPullRequest, color: 'var(--success)' },
-    draft: { icon: GitPullRequestDraft, color: 'var(--muted)' },
-    queued: { icon: GitMergeQueue, color: 'var(--warn)' },
-    merged: { icon: GitMerge, color: 'var(--theme2)' },
-    closed: { icon: GitPullRequestClosed, color: 'var(--danger)' },
+  export const PR_STATE: Record<PrState, { icon: GlyphComponent; color: string }> = {
+    open: { icon: GitPullRequestBold, color: 'var(--success)' },
+    draft: { icon: GitPullRequestDraftBold, color: 'var(--muted)' },
+    queued: { icon: GitMergeQueueBold, color: 'var(--warn)' },
+    merged: { icon: GitMergeBold, color: 'var(--theme2)' },
+    closed: { icon: GitPullRequestClosedBold, color: 'var(--danger)' },
   };
 </script>
 
@@ -40,7 +40,7 @@
 </script>
 
 <span class="pr" class:pill={look === 'pill'} class:numbered={number !== undefined} style:--tone={s.color} use:tooltip={tip ? label : undefined} aria-label={label} role="img">
-  <s.icon {size} weight="bold" aria-hidden="true" />
+  <s.icon {size} />
   {#if look !== 'pill' && number !== undefined}<span class="n">#{number}</span>{/if}
   {#if look === 'pill' || (look === 'word' && state !== 'open')}<span class="name">{STATE_LABEL[state]}</span>{/if}
 </span>

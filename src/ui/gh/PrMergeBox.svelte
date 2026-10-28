@@ -4,7 +4,7 @@
   // Once merged or closed, it offers (never does by itself) to switch to the base branch and to
   // delete the local branch.
   import { Button, ConfirmButton, Kbd, Segmented, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
-  import { CheckCircle, Circle, GitMerge, GitMergeQueue, GitPullRequestClosed, Lightning, UserCircle, XCircle } from 'purr/icons';
+  import { CheckCircleFill, CircleFill, CircleRegular, GitMergeBold, GitMergeQueueBold, GitMergeRegular, GitPullRequestClosedBold, LightningFill, LightningRegular, UserCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import type { BranchInfo } from '../../shared/types.ts';
   import type { MergeMethod, PrOverview } from '../../shared/gh-prview.ts';
@@ -31,16 +31,16 @@
 
   const TONE = { success: 'var(--success)', warn: 'var(--warn)', danger: 'var(--danger)', neutral: 'var(--muted)' };
   const CHECK = {
-    success: { icon: CheckCircle, color: 'var(--success)' },
-    failure: { icon: XCircle, color: 'var(--danger)' },
-    error: { icon: XCircle, color: 'var(--danger)' },
-    pending: { icon: Circle, color: 'var(--warn)' },
-    expected: { icon: Circle, color: 'var(--warn)' },
+    success: { icon: CheckCircleFill, color: 'var(--success)' },
+    failure: { icon: XCircleFill, color: 'var(--danger)' },
+    error: { icon: XCircleFill, color: 'var(--danger)' },
+    pending: { icon: CircleFill, color: 'var(--warn)' },
+    expected: { icon: CircleFill, color: 'var(--warn)' },
   };
   const REVIEWS = {
-    approved: { text: 'Approved', icon: CheckCircle, color: 'var(--success)' },
-    changes: { text: 'Changes requested', icon: XCircle, color: 'var(--danger)' },
-    required: { text: 'Review required', icon: UserCircle, color: 'var(--warn)' },
+    approved: { text: 'Approved', icon: CheckCircleFill, color: 'var(--success)' },
+    changes: { text: 'Changes requested', icon: XCircleFill, color: 'var(--danger)' },
+    required: { text: 'Review required', icon: UserCircleFill, color: 'var(--warn)' },
   };
 
   const commits = $derived(`${pr.commitCount} commit${pr.commitCount === 1 ? '' : 's'}`);
@@ -111,9 +111,9 @@
   }
 </script>
 
-{#snippet line(Icon: typeof Circle, color: string, text: string, weight: 'fill' | 'regular' = 'fill')}
+{#snippet line(Icon: GlyphComponent, color: string, text: string)}
   <div class="line">
-    <span class="mark" style:color aria-hidden="true"><Icon {weight} /></span>
+    <span class="mark" style:color aria-hidden="true"><Icon /></span>
     <span>{text}</span>
   </div>
 {/snippet}
@@ -144,7 +144,7 @@
 {#if pr.state === 'merged'}
   <section class="box" style:--tone={PR_STATE.merged.color} aria-label="Merged">
     <div class="status">
-      <span class="badge" aria-hidden="true"><GitMerge weight="bold" /></span>
+      <span class="badge" aria-hidden="true"><GitMergeBold /></span>
       <div>
         <b>Merged into {pr.base}</b>
         {#if pr.mergedAt}
@@ -157,7 +157,7 @@
 {:else if pr.state === 'closed'}
   <section class="box" style:--tone={PR_STATE.closed.color} aria-label="Closed">
     <div class="status">
-      <span class="badge" aria-hidden="true"><GitPullRequestClosed weight="bold" /></span>
+      <span class="badge" aria-hidden="true"><GitPullRequestClosedBold /></span>
       <div>
         <b>Closed with unmerged commits</b>
       </div>
@@ -168,7 +168,7 @@
   <section class="box" style:--tone={TONE[status.tone]} aria-label="Merge">
     <div class="status">
       <span class="badge" aria-hidden="true">
-        {#if pr.state === 'queued'}<GitMergeQueue weight="bold" />{:else if status.canMerge}<GitMerge weight="bold" />{:else}<GitMerge />{/if}
+        {#if pr.state === 'queued'}<GitMergeQueueBold />{:else if status.canMerge}<GitMergeBold />{:else}<GitMergeRegular />{/if}
       </span>
       <div>
         <b>{status.title}</b>
@@ -185,11 +185,11 @@
           use:tooltip={'Show them'}
           onclick={(e) => checks.show(pr.headSha, e.currentTarget, pr.number)}
         >
-          <span class="mark" style:color={CHECK[pr.checks].color} aria-hidden="true"><Icon weight="fill" /></span>
+          <span class="mark" style:color={CHECK[pr.checks].color} aria-hidden="true"><Icon /></span>
           <span>{checksLabel(pr.checks)}</span>
         </button>
       {:else}
-        {@render line(Circle, 'var(--faint)', checksLabel(null), 'regular')}
+        {@render line(CircleRegular, 'var(--faint)', checksLabel(null))}
       {/if}
       {#if pr.reviewDecision}
         {@const r = REVIEWS[pr.reviewDecision]}
@@ -197,7 +197,7 @@
       {/if}
       {#if pr.autoMerge}
         <div class="line">
-          <span class="mark" style:color="var(--success)" aria-hidden="true"><Lightning weight="fill" /></span>
+          <span class="mark" style:color="var(--success)" aria-hidden="true"><LightningFill /></span>
           <span use:tooltip={`It will ${METHOD_LABEL[pr.autoMerge.method].toLowerCase()} once everything required passes`}>
             Auto-merge is on{pr.autoMerge.by ? ` (${pr.autoMerge.by})` : ''}
           </span>
@@ -245,7 +245,7 @@
           {@attach tip(status.canMerge ? METHOD_NOTE[method] : status.title)}
           onclick={() => (confirming = true)}
         >
-          <GitMerge /> {METHOD_LABEL[method]}
+          <GitMergeRegular /> {METHOD_LABEL[method]}
         </Button>
         {#if !status.canMerge && status.waits && pr.canAutoMerge && !pr.autoMerge}
           <Button
@@ -253,7 +253,7 @@
             onclick={() => autoMerge(true)}
             {@attach tip(`GitHub merges it (${METHOD_LABEL[method].toLowerCase()}) as soon as what it waits for is done`)}
           >
-            <Lightning /> Enable auto-merge
+            <LightningRegular /> Enable auto-merge
           </Button>
         {/if}
         <span class="spacer"></span>

@@ -2,9 +2,7 @@
   // The bell in the header: GitHub notifications, this repo's or everyone's. A pull request of this
   // repo opens in legit's own view; anything else opens on GitHub. Opening one marks it read.
   import { Badge, Button, EmptyState, IconButton, Popover, Segmented, formatFull, formatRelative, persisted, tooltip } from 'purr';
-  import {
-    ArrowSquareOut, Bell, BellSlash, ChatsCircle, Check, CheckCircle, EnvelopeOpen, GitCommit, GitPullRequest, IssueOpened as IssueIcon, PlayCircle, Tag,
-  } from 'purr/icons';
+  import { ArrowSquareOutRegular, Bell, BellSlashRegular, ChatsCircleRegular, CheckCircleRegular, CheckRegular, EnvelopeOpenRegular, GitCommitRegular, GitPullRequestRegular, IssueOpenedRegular, PlayCircleRegular, TagRegular } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import type { Component } from 'svelte';
   import type { GhNotification, GhNotificationType } from '../../shared/gh-notifications.ts';
@@ -34,12 +32,12 @@
   );
 
   const ICONS: Record<GhNotificationType, Component> = {
-    PullRequest: GitPullRequest,
-    Issue: IssueIcon,
-    CheckSuite: PlayCircle,
-    Release: Tag,
-    Discussion: ChatsCircle,
-    Commit: GitCommit,
+    PullRequest: GitPullRequestRegular,
+    Issue: IssueOpenedRegular,
+    CheckSuite: PlayCircleRegular,
+    Release: TagRegular,
+    Discussion: ChatsCircleRegular,
+    Commit: GitCommitRegular,
     Other: Bell,
   };
   const kind: Record<GhNotificationType, string> = {
@@ -101,7 +99,7 @@
       <span class="spacer"></span>
       <Button size="sm" disabled={!shownUnread} onclick={() => notifications.readAll(scope.value === 'repo' ? repo : null)}>Mark all read</Button>
       <IconButton label="Open your inbox on GitHub" size="sm" onclick={() => app.openUrl('https://github.com/notifications')}>
-        <ArrowSquareOut />
+        <ArrowSquareOutRegular />
       </IconButton>
     </div>
     {#if notifications.error}
@@ -112,7 +110,7 @@
     {:else if notifications.items === null}
       <p class="muted">Loading…</p>
     {:else if !items.length}
-      <EmptyState icon={CheckCircle} text="All caught up" />
+      <EmptyState icon={CheckCircleRegular} text="All caught up" />
     {:else}
       <ol>
         {#each items as n (n.id)}
@@ -140,13 +138,13 @@
             </button>
             <span class="actions">
               {#if notifications.here(n)}
-                <IconButton label="Open on GitHub" size="sm" onclick={() => app.openUrl(n.url)}><ArrowSquareOut /></IconButton>
+                <IconButton label="Open on GitHub" size="sm" onclick={() => app.openUrl(n.url)}><ArrowSquareOutRegular /></IconButton>
               {/if}
               {#if n.unread}
-                <IconButton label="Mark as read" size="sm" onclick={() => notifications.markRead(n)}><EnvelopeOpen /></IconButton>
+                <IconButton label="Mark as read" size="sm" onclick={() => notifications.markRead(n)}><EnvelopeOpenRegular /></IconButton>
               {/if}
-              <IconButton label="Done" size="sm" onclick={() => notifications.done(n)}><Check /></IconButton>
-              <IconButton label="Unsubscribe" size="sm" onclick={() => notifications.unsubscribe(n)}><BellSlash /></IconButton>
+              <IconButton label="Done" size="sm" onclick={() => notifications.done(n)}><CheckRegular /></IconButton>
+              <IconButton label="Unsubscribe" size="sm" onclick={() => notifications.unsubscribe(n)}><BellSlashRegular /></IconButton>
             </span>
           </li>
         {/each}

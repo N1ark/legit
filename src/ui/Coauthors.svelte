@@ -1,7 +1,7 @@
 <script lang="ts">
   // Editable list of co-authors, one `Name <email>` per line, with suggestions from history.
   import { Button, IconButton } from 'purr';
-  import { Plus, X } from 'purr/icons';
+  import { PlusRegular, XRegular } from 'purr/glyphs';
   import PersonField from './PersonField.svelte';
 
   let { value = $bindable(), readonly = false, oninput }: { value: string[]; readonly?: boolean; oninput?: () => void } =
@@ -25,12 +25,12 @@
   {#each value as _, i (i)}
     <PersonField bind:value={value[i]} {readonly} {oninput}>
       {#if !readonly}
-        <IconButton label="Remove" onclick={() => remove(i)}><X /></IconButton>
+        <IconButton label="Remove" onclick={() => remove(i)}><XRegular /></IconButton>
       {/if}
     </PersonField>
   {/each}
   {#if !readonly}
-    <span class="add"><Button variant="ghost" onclick={add}><Plus /> Add</Button></span>
+    <span class="add"><Button variant="ghost" onclick={add}><PlusRegular /> Add</Button></span>
   {/if}
 </div>
 

@@ -3,7 +3,7 @@
   // What's picked in them is what's staged: picking a line, block or file stages or unstages
   // it right away (only the index changes). Discarding is in the menus.
   import { Button, Checkbox, ConfirmButton, Kbd, hasOverlay, matches, toast, tooltip } from 'purr';
-  import { ArrowDown, ArrowUp, Check, Trash } from 'purr/icons';
+  import { ArrowDownRegular, ArrowUpRegular, CheckBold, TrashRegular } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
@@ -214,7 +214,7 @@
     </div>
     <div class="actions">
       <Button variant="primary" onclick={commit} disabled={!canCommit || app.busy}>
-        <Check weight="bold" />
+        <CheckBold />
         {#if amend && head}
           Amend {shortSha(head)}
         {:else}
@@ -264,10 +264,10 @@
             onconfirm={() => discard(all(files))}
             disabled={app.busy}
             {@attach tip('Throw away every uncommitted change, untracked files included; saved first, so it can be restored')}
-            ><Trash /> Discard all</ConfirmButton
+            ><TrashRegular /> Discard all</ConfirmButton
           >
-          <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDown /> Unstage all</Button>
-          <Button onclick={() => stageAll(true)} disabled={!unstagedFiles.length}><ArrowUp /> Stage all</Button>
+          <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDownRegular /> Unstage all</Button>
+          <Button onclick={() => stageAll(true)} disabled={!unstagedFiles.length}><ArrowUpRegular /> Stage all</Button>
         {/if}
       </div>
       {#if files.length}
@@ -284,7 +284,7 @@
             changeActions={(f, line, block) => [
               {
                 label: 'Discard this change',
-                icon: Trash,
+                icon: TrashRegular,
                 danger: true,
                 confirm: 'Click again to discard',
                 note: 'From your file, and the index if staged. It can be restored.',
@@ -292,7 +292,7 @@
               },
               block.length > line.length && {
                 label: `Discard these ${block.length} changes`,
-                icon: Trash,
+                icon: TrashRegular,
                 danger: true,
                 confirm: 'Click again to discard',
                 note: 'The block around this line. It can be restored.',
@@ -303,7 +303,7 @@
             fileActions={(f) => [
               {
                 label: "Discard this file's changes",
-                icon: Trash,
+                icon: TrashRegular,
                 danger: true,
                 confirm: 'Click again to discard',
                 note: f.untracked ? 'Deletes the file. It can be restored.' : 'Back to the last commit, index included. It can be restored.',

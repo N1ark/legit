@@ -3,7 +3,7 @@
   // editor; this shows what changed so far, and Finish amends it into the commit and replays the
   // commits after it (conflicts go to the conflict view), or Cancel puts everything back.
   import { Button, ConfirmButton, Kbd, Segmented, hasOverlay, matches, tooltip } from 'purr';
-  import { ArrowCounterClockwise, Check } from 'purr/icons';
+  import { ArrowCounterClockwiseRegular, CheckBold } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
@@ -117,7 +117,7 @@
           disabled={app.busy}
           {@attach tip('Amend your changes into the commit (hooks run as usual), then replay the commits after it; a conflict stops for you to resolve')}
         >
-          <Check weight="bold" /> Finish editing <Kbd hint="⌘↩" />
+          <CheckBold /> Finish editing <Kbd hint="⌘↩" />
         </Button>
         {#if edits?.files.length}
           <ConfirmButton
@@ -126,11 +126,11 @@
             disabled={app.busy}
             {@attach tip('Put everything back as it was; your edits are saved under refs/legit/aborted first')}
           >
-            <ArrowCounterClockwise /> Cancel
+            <ArrowCounterClockwiseRegular /> Cancel
           </ConfirmButton>
         {:else}
           <Button onclick={cancel} disabled={app.busy} {@attach tip('Put everything back as it was')}>
-            <ArrowCounterClockwise /> Cancel
+            <ArrowCounterClockwiseRegular /> Cancel
           </Button>
         {/if}
         <span class="spacer"></span>

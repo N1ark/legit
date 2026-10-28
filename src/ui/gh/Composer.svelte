@@ -2,7 +2,7 @@
   // A new comment on lines of a diff: markdown, "Suggest" for the new side's lines, then
   // posted alone or into the viewer's review (starting one). ⌘↵ does the first, Esc cancels.
   import { Button, Kbd, TextArea, matches } from 'purr';
-  import { ChatCircleText, NotePencil, X } from 'purr/icons';
+  import { ChatCircleTextRegular, NotePencilRegular, XRegular } from 'purr/glyphs';
   import { type DiffReview, type Draft, reviews } from '../lib/gh-review.svelte.ts';
   import { suggestionBlock } from '../lib/gh-threads.ts';
   import { tip } from '../lib/tip.ts';
@@ -64,12 +64,12 @@
 
 <section class="composer" aria-label="New comment on {draft.path}, {lines}" {@attach focusFirst}>
   <div class="head">
-    <ChatCircleText />
+    <ChatCircleTextRegular />
     <span>Comment on {lines}</span>
     {#if draft.suggest}
       <span class="spacer"></span>
       <Button size="sm" variant="ghost" onclick={suggest} {@attach tip("Insert a suggestion block with these lines' text, to edit into what they should be")}>
-        <NotePencil /> Suggest
+        <NotePencilRegular /> Suggest
       </Button>
     {/if}
   </div>
@@ -97,7 +97,7 @@
       </Button>
     {/if}
     <span class="spacer"></span>
-    <Button size="sm" variant="ghost" onclick={cancel}><X /> Cancel <Kbd hint="Esc" /></Button>
+    <Button size="sm" variant="ghost" onclick={cancel}><XRegular /> Cancel <Kbd hint="Esc" /></Button>
   </div>
   {#if why}<p class="muted why">{why}</p>{/if}
 </section>

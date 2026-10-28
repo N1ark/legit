@@ -2,7 +2,7 @@
 // entries for lines: a permalink, or an issue about them.
 
 import { type MaybeEntry, toast } from 'purr';
-import { IssueOpened, Link } from 'purr/icons';
+import { IssueOpenedRegular, LinkRegular } from 'purr/glyphs';
 import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { blobUrl, lineSpan } from './gh-links.ts';
@@ -62,14 +62,14 @@ export function lineEntries(sha: string, path: string, lines: number[]): MaybeEn
   return [
     {
       label: 'Copy GitHub link',
-      icon: Link,
+      icon: LinkRegular,
       disabled: !!unpushed,
       note: unpushed ?? (span ? (one ? `To line ${span[0]}` : `To lines ${span[0]}–${span[1]}`) : undefined),
       run: () => app.copy(url, 'GitHub link'),
     },
     {
       label: one ? 'New issue from this line…' : 'New issue from these lines…',
-      icon: IssueOpened,
+      icon: IssueOpenedRegular,
       disabled: !!unpushed || !gh.ready,
       note: unpushed ?? (gh.ready ? 'GitHub shows the lines in it' : (gh.status?.error ?? undefined)),
       run: () => openNewIssue({ body: `${url}\n\n` }),

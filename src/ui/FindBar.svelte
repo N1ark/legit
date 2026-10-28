@@ -1,7 +1,7 @@
 <script lang="ts">
   // The find bar over the diff (⌘F): ↵ / ⇧↵ (or ⌘G / ⇧⌘G) for the next and previous match, esc closes.
   import { IconButton, registerOverlay } from 'purr';
-  import { CaretDown, CaretUp, X } from 'purr/icons';
+  import { CaretDownRegular, CaretUpRegular, XRegular } from 'purr/glyphs';
   import { finder } from './lib/finder.svelte.ts';
 
   let input: HTMLInputElement;
@@ -46,12 +46,12 @@
     {#if finder.query}{total ? `${Math.min(finder.current, total - 1) + 1}/${total}` : 'No matches'}{/if}
   </span>
   <IconButton label="Previous match" shortcut="⇧⌘G" size="sm" disabled={!total} onclick={() => finder.step(-1)}>
-    <CaretUp />
+    <CaretUpRegular />
   </IconButton>
   <IconButton label="Next match" shortcut="⌘G" size="sm" disabled={!total} onclick={() => finder.step(1)}>
-    <CaretDown />
+    <CaretDownRegular />
   </IconButton>
-  <IconButton label="Close" shortcut="Esc" size="sm" onclick={() => finder.close()}><X /></IconButton>
+  <IconButton label="Close" shortcut="Esc" size="sm" onclick={() => finder.close()}><XRegular /></IconButton>
 </div>
 
 <style>

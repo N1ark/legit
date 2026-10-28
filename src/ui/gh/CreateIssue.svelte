@@ -2,7 +2,7 @@
   // A new GitHub issue: its title, a markdown description (written or previewed), labels and
   // assignees. Closing it without creating keeps what was typed for next time.
   import { Avatar, Button, Kbd, Modal, Segmented, Spinner, Tag, TextArea, TextField, errorMessage, matches, menu, tooltip } from 'purr';
-  import { Tag as TagIcon, UserPlus } from 'purr/icons';
+  import { TagRegular, UserPlusRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import Markdown from '../Markdown.svelte';
   import { type IssueDraft, createIssue, issueMeta } from '../lib/gh-issues.svelte.ts';
@@ -110,7 +110,7 @@
       </div>
     {/if}
     <div class="pick">
-      <Button size="sm" disabled={!meta} onclick={pickLabels}><TagIcon /> Labels</Button>
+      <Button size="sm" disabled={!meta} onclick={pickLabels}><TagRegular /> Labels</Button>
       {#each labels as name (name)}
         <span use:tooltip={labelOf(name)?.description}>
           <Tag onremove={() => (labels = toggle(labels, name))} removeLabel="Remove {name}">
@@ -121,7 +121,7 @@
       {/each}
     </div>
     <div class="pick">
-      <Button size="sm" disabled={!meta} onclick={pickAssignees}><UserPlus /> Assignees</Button>
+      <Button size="sm" disabled={!meta} onclick={pickAssignees}><UserPlusRegular /> Assignees</Button>
       {#each assignees as login (login)}
         <Tag onremove={() => (assignees = toggle(assignees, login))} removeLabel="Unassign {login}">
           <Avatar name={login} src={avatarOf(login)} size={14} round title="" />{login}

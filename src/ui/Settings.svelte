@@ -3,7 +3,7 @@
   // files, and how diffs show lines. Each list has a part for this repo and one for all repos; a change is saved
   // as you type (shortly after), and the open diff is shown again with it. Plus the shortcuts, and the logs.
   import { Button, IconButton, Kbd, Modal, Segmented, SettingGroup, SettingRow, SettingsLayout, ShortcutList, toast, tooltip, type HelpGroup } from 'purr';
-  import { ArrowsInLineVertical, Columns, Keyboard, Palette, Plus, Scroll, Warning, X } from 'purr/icons';
+  import { ArrowsInLineVerticalRegular, ColumnsRegular, KeyboardRegular, PaletteRegular, PlusRegular, ScrollRegular, WarningBold, XRegular } from 'purr/glyphs';
   import LogsPane from './LogsPane.svelte';
   import type { Scope, ScopeSettings, SettingsInfo, Wrap } from '../shared/types.ts';
   import { app, request } from './lib/app.svelte.ts';
@@ -99,15 +99,15 @@
   const groups = [
     {
       sections: [
-        { id: 'syntax', label: 'Syntax highlighting', icon: Palette },
-        { id: 'collapse', label: 'Collapsed files', icon: ArrowsInLineVertical },
-        { id: 'lines', label: 'Lines', icon: Columns },
+        { id: 'syntax', label: 'Syntax highlighting', icon: PaletteRegular },
+        { id: 'collapse', label: 'Collapsed files', icon: ArrowsInLineVerticalRegular },
+        { id: 'lines', label: 'Lines', icon: ColumnsRegular },
       ],
     },
     {
       sections: [
-        { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
-        { id: 'logs', label: 'Logs', icon: Scroll },
+        { id: 'shortcuts', label: 'Keyboard shortcuts', icon: KeyboardRegular },
+        { id: 'logs', label: 'Logs', icon: ScrollRegular },
       ],
     },
   ];
@@ -146,7 +146,7 @@
                     bind:value={rule.grammar}
                     oninput={() => changed(scope)}
                   />
-                  <span class="problem" class:on={problem} use:tooltip={problem}>{#if problem}<Warning weight="bold" />{/if}</span>
+                  <span class="problem" class:on={problem} use:tooltip={problem}>{#if problem}<WarningBold />{/if}</span>
                   <IconButton
                     label="Remove rule"
                     size="sm"
@@ -154,13 +154,13 @@
                     onclick={() => {
                       draft![scope].syntax.splice(k, 1);
                       changed(scope);
-                    }}><X /></IconButton
+                    }}><XRegular /></IconButton
                   >
                 </div>
               {/each}
               <span class="add">
                 <Button size="sm" variant="ghost" onclick={() => draft![scope].syntax.push({ pattern: '', grammar: '' })}>
-                  <Plus /> Add rule
+                  <PlusRegular /> Add rule
                 </Button>
               </span>
             </div>
@@ -233,12 +233,12 @@
                     onclick={() => {
                       draft![scope].collapse.splice(k, 1);
                       changed(scope);
-                    }}><X /></IconButton
+                    }}><XRegular /></IconButton
                   >
                 </div>
               {/each}
               <span class="add">
-                <Button size="sm" variant="ghost" onclick={() => draft![scope].collapse.push('')}><Plus /> Add pattern</Button>
+                <Button size="sm" variant="ghost" onclick={() => draft![scope].collapse.push('')}><PlusRegular /> Add pattern</Button>
               </span>
             </div>
           </SettingGroup>

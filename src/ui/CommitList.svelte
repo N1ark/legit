@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Avatar, Spinner, Tag, Twisty, VirtualList, formatRelative, isMac, menu, tooltip } from 'purr';
   import { tick } from 'svelte';
-  import { ArrowUUpLeft, ArrowsMerge, CloudCheck, Copy, CopySimple, DotsSixVertical, GitBranch, GitMerge, Hash, PencilSimpleLine, Stack, Trash, Users } from 'purr/icons';
+  import { ArrowUUpLeftRegular, ArrowsMergeRegular, CloudCheckRegular, CopyRegular, CopySimpleRegular, DotsSixVerticalBold, GitBranchRegular, GitMergeRegular, HashRegular, PencilSimpleLineRegular, StackRegular, TrashRegular, UsersRegular } from 'purr/glyphs';
   import { WORK, app, avatarUrl, shortSha } from './lib/app.svelte.ts';
   import type { CommitInfo } from '../shared/types.ts';
   import Markdown from './Markdown.svelte';
@@ -88,7 +88,7 @@
     const merge = commits.some((c) => c.merge);
     return {
       label: commits.length > 1 ? `Copy ${commits.length} commits to branch…` : 'Copy to branch…',
-      icon: CopySimple,
+      icon: CopySimpleRegular,
       disabled: app.busy || !!app.repo?.blocked || merge,
       note: merge ? "Merges can't be cherry-picked." : 'Cherry-picked there, without switching',
       run: () => copyToBranch(commits.map((c) => c.sha)),
@@ -101,7 +101,7 @@
     const here = app.repo?.branch;
     return {
       label: `Rebuild ${here ?? 'branch'} on…`,
-      icon: Stack,
+      icon: StackRegular,
       disabled: app.busy || !!app.repo?.blocked || merge || !here,
       note: merge
         ? "Merges can't be replayed."
@@ -118,7 +118,7 @@
       menu.show(e, [
         {
           label: `Squash ${app.selection.length} commits`,
-          icon: ArrowsMerge,
+          icon: ArrowsMergeRegular,
           disabled: !canSquash || app.busy,
           note: canSquash
             ? `Into ${shortSha(app.selection.at(-1)!)}, with the message on the right`
@@ -130,7 +130,7 @@
         'separator',
         {
           label: `Drop ${app.selection.length} commits`,
-          icon: Trash,
+          icon: TrashRegular,
           danger: true,
           disabled: !canSquash || app.busy,
           confirm: `Click again to drop ${app.selection.length} commits`,
@@ -147,33 +147,33 @@
       // The newest commit can be undone (its changes stay staged).
       sha === app.repo?.head && c.editable && !c.merge && !blocked && {
         label: 'Undo commit (keep changes)',
-        icon: ArrowUUpLeft,
+        icon: ArrowUUpLeftRegular,
         disabled: app.busy,
         note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
         run: () => app.uncommit(),
       },
       c.editable && !c.merge && !blocked && {
         label: 'Edit files…',
-        icon: PencilSimpleLine,
+        icon: PencilSimpleLineRegular,
         disabled: app.busy,
         note: 'Check it out, change anything, then finish to amend',
         run: () => app.editCommit(c.sha),
       },
       {
         label: 'New branch from here…',
-        icon: GitBranch,
+        icon: GitBranchRegular,
         disabled: app.busy || blocked,
         run: () => newBranch(c.sha, `"${c.subject}"`),
       },
       copyEntry([c]),
       rebuildEntry([c]),
       'separator',
-      { label: 'Copy hash', icon: Copy, run: () => app.copy(c.sha, shortSha(c)) },
-      { label: 'Copy short hash', icon: Hash, run: () => app.copy(shortSha(c)) },
+      { label: 'Copy hash', icon: CopyRegular, run: () => app.copy(c.sha, shortSha(c)) },
+      { label: 'Copy short hash', icon: HashRegular, run: () => app.copy(shortSha(c)) },
       c.editable && !blocked && 'separator',
       c.editable && !blocked && {
         label: 'Drop this commit',
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         disabled: app.busy,
         note: c.pushed ? "It was pushed: you'll need to force push afterwards." : undefined,
@@ -259,7 +259,7 @@
             onclick={() => app.selectWork()}
             onkeydown={() => {}}
           >
-            <span class="grip"><PencilSimpleLine /></span>
+            <span class="grip"><PencilSimpleLineRegular /></span>
             {#if app.repo.conflict?.edit}
               <span class="subject">Editing "{app.repo.conflict.edit.subject}"</span>
             {:else if app.repo.conflict}
@@ -323,7 +323,7 @@
               </button>
             {:else}
               <span class="grip">
-                {#if c.merge}<GitMerge />{:else if c.editable}<DotsSixVertical weight="bold" />{/if}
+                {#if c.merge}<GitMergeRegular />{:else if c.editable}<DotsSixVerticalBold />{/if}
               </span>
             {/if}
             <span class="sha mono">{shortSha(c)}</span>
@@ -341,11 +341,11 @@
               >{#if c.subject}<Markdown text={c.subject} inline links="mod" />{:else}(no message){/if}</span
             >
             {#if c.coauthors.length}
-              <span class="meta" use:tooltip={c.coauthors.map((p) => p.name).join(', ')}><Users /></span>
+              <span class="meta" use:tooltip={c.coauthors.map((p) => p.name).join(', ')}><UsersRegular /></span>
             {/if}
             <span class="meta">{formatRelative(c.author.time * 1000)}</span>
             {#if c.pushed}<CommitChecks sha={c.sha} />{/if}
-            <span class="meta pushed" use:tooltip={c.pushed ? 'Pushed: rewriting it needs a force-push' : null}>{#if c.pushed}<CloudCheck />{/if}</span>
+            <span class="meta pushed" use:tooltip={c.pushed ? 'Pushed: rewriting it needs a force-push' : null}>{#if c.pushed}<CloudCheckRegular />{/if}</span>
           </div>
         {:else if it.kind === 'note'}
           <div class="note muted" class:side={it.side}>

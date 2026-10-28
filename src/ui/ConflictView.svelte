@@ -5,7 +5,7 @@
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
   import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, tooltip } from 'purr';
-  import { ArrowCounterClockwise, Check, Checks, FileArrowUp } from 'purr/icons';
+  import { ArrowCounterClockwiseRegular, CheckBold, CheckRegular, ChecksRegular, FileArrowUpRegular } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
@@ -109,7 +109,7 @@
               {#if f.markers}<span use:tooltip={'<<<<<<<, ======= or >>>>>>> at a line start'}><Tag color="var(--warn)" label="conflict markers" /></span>{/if}
               <span class="spacer"></span>
               <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
-                <FileArrowUp /> Open in Zed
+                <FileArrowUpRegular /> Open in Zed
               </Button>
               {#if f.markers}
                 <ConfirmButton
@@ -117,7 +117,7 @@
                   variant="default"
                   confirmLabel="It still has conflict markers. Mark resolved anyway?"
                   onconfirm={() => resolve(f.path, true)}
-                  disabled={app.busy}><Check /> Mark resolved</ConfirmButton
+                  disabled={app.busy}><CheckRegular /> Mark resolved</ConfirmButton
                 >
               {:else}
                 <Button
@@ -126,7 +126,7 @@
                   disabled={app.busy}
                   {@attach tip(f.exists ? 'Stage the file as it is now (git add)' : 'Resolve by deleting the file (git add)')}
                 >
-                  <Check /> Mark resolved{f.exists ? '' : ' (deleted)'}
+                  <CheckRegular /> Mark resolved{f.exists ? '' : ' (deleted)'}
                 </Button>
               {/if}
             </li>
@@ -141,9 +141,9 @@
               <span class="path mono" use:tooltip={path}>{path}</span>
               <Tag color="var(--warn)" label="changed since staged" />
               <span class="spacer"></span>
-              <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUp /> Open in Zed</Button>
+              <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUpRegular /> Open in Zed</Button>
               <Button size="sm" onclick={() => resolve(path)} disabled={app.busy} {@attach tip('Stage the file as it is now (git add)')}>
-                <Check /> Stage
+                <CheckRegular /> Stage
               </Button>
             </li>
           {/each}
@@ -174,11 +174,11 @@
               variant="default"
               confirmLabel="{marked === 1 ? 'One file still has' : `${marked} files still have`} conflict markers. Mark all resolved anyway?"
               onconfirm={() => resolveAll(true)}
-              disabled={app.busy}><Checks /> Mark all resolved</ConfirmButton
+              disabled={app.busy}><ChecksRegular /> Mark all resolved</ConfirmButton
             >
           {:else}
             <Button onclick={() => resolveAll()} disabled={app.busy} {@attach tip('Stage every file as it is now (git add)')}>
-              <Checks /> Mark all resolved
+              <ChecksRegular /> Mark all resolved
             </Button>
           {/if}
         {/if}
@@ -192,7 +192,7 @@
             : 'Commits with the prepared message; hooks run as usual',
           )}
         >
-          <Check weight="bold" /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
+          <CheckBold /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
         </Button>
         <ConfirmButton
           confirmLabel="Click to abort. What you resolved is saved first"
@@ -200,7 +200,7 @@
           disabled={app.busy}
           {@attach tip(`Go back to before the ${NAME[c.kind].toLowerCase()}; your work in progress is saved under refs/legit/aborted first`)}
         >
-          <ArrowCounterClockwise /> Abort {NAME[c.kind].toLowerCase()}
+          <ArrowCounterClockwiseRegular /> Abort {NAME[c.kind].toLowerCase()}
         </ConfirmButton>
       </div>
     </div>

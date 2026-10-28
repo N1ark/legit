@@ -7,7 +7,7 @@
   // git refuses if the remote has commits this branch never had. Whenever the remote has commits
   // the branch doesn't, Force push beside Pull overwrites them (as fetched) after a second click.
   import { Button, ConfirmButton, formatFull, formatRelative, menu, toast } from 'purr';
-  import { ArrowsClockwise, CaretDown, CloudArrowDown, CloudArrowUp, GitMerge, GitPullRequest, Warning } from 'purr/icons';
+  import { ArrowsClockwiseRegular, CaretDownRegular, CloudArrowDownRegular, CloudArrowUpRegular, GitMergeRegular, GitPullRequestRegular, WarningBold, WarningRegular } from 'purr/glyphs';
   import { onMount } from 'svelte';
   import { app } from './lib/app.svelte.ts';
   import { progressSummary } from './lib/progress.ts';
@@ -98,13 +98,13 @@
       [
         {
           label: `Rebase onto ${where}`,
-          icon: GitPullRequest,
+          icon: GitPullRequestRegular,
           note: `Replays your ${commits(info.ahead)} on top, stopping at conflicts for you to resolve`,
           run: () => app.sync('pull', { how: 'rebase' }),
         },
         {
           label: `Merge ${where}`,
-          icon: GitMerge,
+          icon: GitMergeRegular,
           note: 'Adds a merge commit; conflicts can be resolved here',
           run: () => app.sync('pull', { how: 'merge' }),
         },
@@ -140,7 +140,7 @@
   <div class="sync">
     <Button variant="ghost" size="sm" onclick={() => app.fetchRemote()} disabled={app.fetching} {@attach tip(fetchTitle)}>
       <span class="icon" class:spin={app.fetching || fetchProgress.length}>
-        {#if app.fetchError && !app.fetching}<Warning weight="bold" />{:else}<ArrowsClockwise />{/if}
+        {#if app.fetchError && !app.fetching}<WarningBold />{:else}<ArrowsClockwiseRegular />{/if}
       </span>
       <span class="when">{fetchLabel}</span>
     </Button>
@@ -150,8 +150,8 @@
 
     {#if mode === 'pull' || mode === 'diverged'}
       <Button variant="primary" onclick={pull} {disabled} {@attach tip(pullTitle)}>
-        <CloudArrowDown /> Pull <span class="count">↓{info.behind}</span>
-        {#if mode === 'diverged'}<CaretDown />{/if}
+        <CloudArrowDownRegular /> Pull <span class="count">↓{info.behind}</span>
+        {#if mode === 'diverged'}<CaretDownRegular />{/if}
       </Button>
       <ConfirmButton
         variant="ghost"
@@ -160,16 +160,16 @@
         {disabled}
         {@attach tip(overwriteTitle)}
       >
-        <Warning /> Force push
+        <WarningRegular /> Force push
       </ConfirmButton>
     {/if}
     {#if mode === 'rewritten'}
       <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} {disabled} {@attach tip(pushTitle)}>
-        <Warning weight="bold" /> Force push <span class="count">↑{info.ahead}</span>
+        <WarningBold /> Force push <span class="count">↑{info.ahead}</span>
       </ConfirmButton>
     {:else if mode === 'push' || mode === 'publish'}
       <Button variant="primary" onclick={() => push(false)} {disabled} {@attach tip(pushTitle)}>
-        <CloudArrowUp />
+        <CloudArrowUpRegular />
         {mode === 'publish' ? 'Publish' : 'Push'}
         {#if mode === 'push'}<span class="count">↑{info.ahead}</span>{/if}
       </Button>
