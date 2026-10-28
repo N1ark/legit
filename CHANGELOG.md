@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 — 2026-10-28
 
 - The branch list shows how far a branch is from its upstream as ↑2 ↓1 instead of "ahead 2, behind 1" (hover for it in words).
 - Icons are lighter: the first screen loads a fifth less code, and rows in the commit list, the branch list, diffs and ⌘K draw their icons in about half the time.
