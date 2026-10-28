@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 — 2026-10-28
 
 - Labels and reviewers on a pull request, and labels and assignees on a new issue, are picked as on GitHub: tick as many as you like, filtering as you type (↵ ticks), and they're applied together when the picker closes. Labels show their descriptions, and the new ones show at once.
 
