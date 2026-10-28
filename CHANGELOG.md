@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The branch list shows how far a branch is from its upstream as ↑2 ↓1 instead of "ahead 2, behind 1" (hover for it in words).
+
 ## 0.13.0 — 2026-10-28
 
 - Switching back to the window, or several changes at once, reload the repository once instead of several times over, and an operation's own changes no longer reload what it just showed.

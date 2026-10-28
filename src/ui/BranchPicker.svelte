@@ -25,6 +25,7 @@
   import { integrateEntries } from './lib/integrate.ts';
   import { pick } from './lib/picker.ts';
   import { tip } from './lib/tip.ts';
+  import { aheadBehind, trackTip } from './lib/track.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
   import Markdown from './Markdown.svelte';
   import PrStatus from './gh/PrStatus.svelte';
@@ -677,7 +678,13 @@
                       {#if promoted && k === 0}<span class="default">default branch</span>{/if}
                       {#if b.track === 'gone'}
                         <span class="track" use:tooltip={`${b.upstream} isn't on the remote; the next push publishes it`}>not on remote</span>
-                      {:else if b.track}<span class="track">{b.track}</span>{/if}
+                      {:else if b.track}{@const n = aheadBehind(b.track)}
+                        {#if n}
+                          <span class="track counts" use:tooltip={trackTip(b.upstream ?? 'its upstream', n.ahead, n.behind)}>
+                            {#if n.ahead}↑{n.ahead}{/if}{#if n.ahead && n.behind}&nbsp;{/if}{#if n.behind}↓{n.behind}{/if}
+                          </span>
+                        {:else}<span class="track">{b.track}</span>{/if}
+                      {/if}
                       <span class="when muted">{formatRelative(b.time * 1000)}</span>
                       {@render browseButton(r)}
                     {:else if r.kind === 'remote'}
@@ -919,6 +926,10 @@
     font-size: var(--fs-xs);
     color: var(--warn);
     flex-shrink: 0;
+  }
+
+  .counts {
+    font-family: var(--mono);
   }
 
   .default {
