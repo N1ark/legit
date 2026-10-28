@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-10-28
 
 - Switching back to the window, or several changes at once, reload the repository once instead of several times over, and an operation's own changes no longer reload what it just showed.
 - Uncommitted changes refresh much faster, and use far less memory, with many or large untracked files or a big partly staged file.
@@ -17,6 +17,7 @@
 - On Linux, opening a big repository no longer takes seconds or crashes when the system runs out of file watches; if watching stops, legit looks again whenever the window is focused.
 - Collapsed-file and syntax rules edited by hand in the settings file apply to diffs already viewed.
 - A branch with the same name as a tag is listed under its own name, not `heads/<name>`.
+- Long lists (the commit list, the branch list, diffs) scroll and step with **j**/**k** more smoothly.
 
 ## 0.12.0 — 2026-10-27
 
