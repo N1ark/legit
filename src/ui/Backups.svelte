@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast, tooltip } from 'purr';
-  import { ClockCounterClockwise } from 'purr/icons';
+  import { ClockCounterClockwiseRegular } from 'purr/glyphs';
   import type { Backup } from '../shared/types.ts';
   import DiscardedList from './DiscardedList.svelte';
   import Markdown from './Markdown.svelte';
@@ -31,7 +31,7 @@
   aria-expanded={open}
   onclick={toggle}
 >
-  <ClockCounterClockwise />
+  <ClockCounterClockwiseRegular />
 </IconButton>
 {#if open && button}
   <Popover

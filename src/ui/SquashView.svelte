@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, Kbd, hasOverlay, matches } from 'purr';
-  import { ArrowsMerge, Stack, Trash } from 'purr/icons';
+  import { ArrowsMergeRegular, StackRegular, TrashRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary } from '../shared/types.ts';
@@ -88,12 +88,12 @@
 <div class="view">
   <div class="top">
     {#if editable}
-      <h2><ArrowsMerge /> Squash {commits.length} commits</h2>
+      <h2><ArrowsMergeRegular /> Squash {commits.length} commits</h2>
       <p class="muted">
         Into <span class="mono sha">{shortSha(oldest)}</span>, keeping its author and date; commits in between are replayed on top.
       </p>
     {:else}
-      <h2><Stack /> {commits.length} commits</h2>
+      <h2><StackRegular /> {commits.length} commits</h2>
       <p class="muted">{app.repo?.blocked ? "Can't be rewritten right now" : "Some can't be rewritten"}</p>
     {/if}
 
@@ -124,7 +124,7 @@
       </div>
       <div class="actions">
         <Button variant="primary" onclick={squash} disabled={!valid || app.busy}>
-          <ArrowsMerge /> Squash <Kbd hint="⌘↩" />
+          <ArrowsMergeRegular /> Squash <Kbd hint="⌘↩" />
         </Button>
         {#if edited}
           <Button onclick={reset}>Reset message</Button>
@@ -138,7 +138,7 @@
           onconfirm={() => app.op('drop', { shas: commits.map((c) => c.sha) })}
           disabled={app.busy}
         >
-          <Trash /> Drop all
+          <TrashRegular /> Drop all
         </ConfirmButton>
       </div>
     {/if}

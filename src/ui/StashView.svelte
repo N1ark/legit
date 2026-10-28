@@ -2,7 +2,7 @@
   // A stash's changes (staged and unstaged together, then its untracked files), shown in place of
   // the selected commit, with what can be done with it. Esc or the close button goes back.
   import { Button, ConfirmButton, IconButton, Tag, formatAbsolute, hasOverlay, isTyping, toast } from 'purr';
-  import { X } from 'purr/icons';
+  import { XRegular } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
@@ -75,7 +75,7 @@
           onconfirm={() => run('stashDrop', 'Dropped the stash; it stays recoverable for two weeks', true)}>Drop</ConfirmButton
         >
       {/if}
-      <IconButton label="Close" shortcut="Esc" onclick={close}><X /></IconButton>
+      <IconButton label="Close" shortcut="Esc" onclick={close}><XRegular /></IconButton>
     </div>
     <h2>{stash.title}</h2>
     {#if stash.message !== stash.title}<p class="muted message"><Markdown text={stash.message} inline /></p>{/if}

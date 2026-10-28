@@ -4,7 +4,7 @@
   // how many comments of the viewer's review are pending, with a way to finish it. In a popover
   // (`ondone`), it also leads to the pull request's overview.
   import { Button, IconButton } from 'purr';
-  import { Article, ArrowsClockwise, Crosshair } from 'purr/icons';
+  import { ArrowsClockwiseRegular, ArticleRegular, CrosshairRegular } from 'purr/glyphs';
   import Thread from './Thread.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
@@ -72,9 +72,9 @@
     {/if}
     <span class="spacer"></span>
     {#if ondone}
-      <Button size="sm" variant="ghost" onclick={() => (gh.showPr(number), ondone())}><Article /> Overview</Button>
+      <Button size="sm" variant="ghost" onclick={() => (gh.showPr(number), ondone())}><ArticleRegular /> Overview</Button>
     {/if}
-    <IconButton label="Refresh" size="sm" onclick={refresh} disabled={refreshing}><ArrowsClockwise /></IconButton>
+    <IconButton label="Refresh" size="sm" onclick={refresh} disabled={refreshing}><ArrowsClockwiseRegular /></IconButton>
   </div>
   {#if data?.pending}
     <div class="pending">
@@ -103,7 +103,7 @@
             tip={typeof w === 'string' ? w : w.length > 1 ? "Show it in the pull request's changes" : 'Show it in the commit it was made on'}
             size="sm"
             disabled={typeof w === 'string'}
-            onclick={() => show(t)}><Crosshair /></IconButton
+            onclick={() => show(t)}><CrosshairRegular /></IconButton
           >
         </div>
       {/each}

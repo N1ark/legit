@@ -1,7 +1,7 @@
 <script lang="ts">
   // Changes left on this branch (stashed when switching away), offered back on return.
   import { Banner, Button, formatRelative, toast } from 'purr';
-  import { Archive } from 'purr/icons';
+  import { ArchiveRegular } from 'purr/glyphs';
   import { app } from './lib/app.svelte.ts';
 
   let dismissed = $state<string | null>(null);
@@ -19,7 +19,7 @@
   <div class="wrap">
     <Banner
       placement="inline"
-      icon={Archive}
+      icon={ArchiveRegular}
       title="Stashed changes"
       lines={[`${n} file${n === 1 ? '' : 's'} left on ${s.branch} ${formatRelative(s.time)}`]}
       ondismiss={() => (dismissed = s.sha)}

@@ -232,7 +232,8 @@ npm run check      # svelte-check + tsc
   own repo), and answer whether it can switch. Every switch, menu and CLI ones included, asks the page first, since
   it's the one that knows what it has running; a page that doesn't answer within two seconds doesn't hold it up.
 - `src/ui/` is a Svelte 5 UI built on [purr](https://github.com/N1ark/purr), the components, icons and styles
-  shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
+  shared with N1ark's other apps, pinned to a release tag in `package.json` (`npm link ../purr` to work on it live). Icons are purr's light
+  ones (`purr/glyphs`), named with their weight (`CheckBold`) unless it changes at runtime (`Bell`). The diff view (`DiffView.svelte`) is virtualized. Rows have a fixed
   height and don't wrap (when long lines do, they break anywhere, so a line's rows follow from its length and the
   font's width; a file with lines too long takes its height once its contents are in, keeping the view in place), so the full layout comes from a per-file summary (`/api/diff/<sha>`) before any content
   loads. Only files and rows near the viewport are mounted, and file contents are fetched in batches as they

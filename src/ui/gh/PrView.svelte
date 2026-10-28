@@ -4,7 +4,7 @@
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
   // Opened again within a minute, it shows the overview it had at once, while it loads again.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
-  import { ArrowSquareOut, CheckCircle, Circle, GitPullRequestClosed, X, XCircle } from 'purr/icons';
+  import { ArrowSquareOutRegular, CheckCircleFill, CircleFill, CircleRegular, GitPullRequestClosedRegular, XCircleFill, XRegular, type GlyphComponent } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import type { CheckState, PrOptions, PrOverview } from '../../shared/gh-prview.ts';
   import { isLive } from '../../shared/github.ts';
@@ -192,12 +192,12 @@
     gh.close();
   }
 
-  const CHECK: Record<NonNullable<CheckState>, { icon: typeof Circle; color: string; label: string }> = {
-    success: { icon: CheckCircle, color: 'var(--success)', label: 'Checks passed' },
-    failure: { icon: XCircle, color: 'var(--danger)', label: 'Checks failed' },
-    error: { icon: XCircle, color: 'var(--danger)', label: 'Checks errored' },
-    pending: { icon: Circle, color: 'var(--warn)', label: 'Checks running' },
-    expected: { icon: Circle, color: 'var(--warn)', label: 'Checks expected' },
+  const CHECK: Record<NonNullable<CheckState>, { icon: GlyphComponent; color: string; label: string }> = {
+    success: { icon: CheckCircleFill, color: 'var(--success)', label: 'Checks passed' },
+    failure: { icon: XCircleFill, color: 'var(--danger)', label: 'Checks failed' },
+    error: { icon: XCircleFill, color: 'var(--danger)', label: 'Checks errored' },
+    pending: { icon: CircleFill, color: 'var(--warn)', label: 'Checks running' },
+    expected: { icon: CircleFill, color: 'var(--warn)', label: 'Checks expected' },
   };
 
   const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
@@ -219,9 +219,9 @@
       <PrReview {pr} {act} {working} />
     {/if}
     {#if pr}
-      <IconButton label="Open on GitHub" onclick={() => pr && app.openUrl(pr.url)}><ArrowSquareOut /></IconButton>
+      <IconButton label="Open on GitHub" onclick={() => pr && app.openUrl(pr.url)}><ArrowSquareOutRegular /></IconButton>
     {/if}
-    <IconButton label="Close" shortcut="Esc" onclick={() => gh.close()}><X /></IconButton>
+    <IconButton label="Close" shortcut="Esc" onclick={() => gh.close()}><XRegular /></IconButton>
   </div>
 
   {#if !gh.ready}
@@ -319,10 +319,10 @@
                     aria-expanded={checks.open?.sha === c.sha}
                     onclick={(e) => checks.show(c.sha, e.currentTarget, c.sha === pr?.headSha ? pr.number : undefined)}
                   >
-                    <k.icon weight="fill" />
+                    <k.icon />
                   </button>
                 {:else}
-                  <span class="check" style:color="var(--faint)" use:tooltip={'No checks'} aria-label="No checks"><Circle /></span>
+                  <span class="check" style:color="var(--faint)" use:tooltip={'No checks'} role="img" aria-label="No checks"><CircleRegular /></span>
                 {/if}
                 {#if here}
                   <button class="headline linked" use:tooltip={'Show this commit'} onclick={() => app.select(c.sha)}>{c.headline}</button>
@@ -352,7 +352,7 @@
                 <Button onclick={() => setOpen(true)} disabled={working}>Reopen</Button>
               {:else if pr.canUpdate && pr.state !== 'merged'}
                 <Button onclick={() => setOpen(false)} disabled={working}>
-                  <GitPullRequestClosed /> {comment.trim() ? 'Close with comment' : 'Close'}
+                  <GitPullRequestClosedRegular /> {comment.trim() ? 'Close with comment' : 'Close'}
                 </Button>
               {/if}
               <Button variant="primary" onclick={send} disabled={!comment.trim() || working}>Comment <Kbd hint="⌘↩" /></Button>

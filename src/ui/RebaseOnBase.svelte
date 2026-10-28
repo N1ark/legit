@@ -2,7 +2,7 @@
   // "Rebase on main": shown when the repo's default branch (or its remote-tracking branch, whichever
   // is fresher) has commits the current branch doesn't. It fetches first.
   import { Button } from 'purr';
-  import { ArrowsClockwise, GitPullRequest } from 'purr/icons';
+  import { ArrowsClockwiseRegular, GitPullRequestRegular } from 'purr/glyphs';
   import { app } from './lib/app.svelte.ts';
   import { tip } from './lib/tip.ts';
 
@@ -20,9 +20,9 @@
 {#if base?.behind || app.fetchingBase}
   <Button variant="ghost" size="sm" onclick={() => app.rebaseOnBase()} disabled={app.busy || app.fetchingBase || !!app.repo?.blocked} {@attach tip(title)}>
     {#if app.fetchingBase}
-      <span class="spin"><ArrowsClockwise /></span> Fetching…
+      <span class="spin"><ArrowsClockwiseRegular /></span> Fetching…
     {:else if base}
-      <GitPullRequest /> Rebase on {base.name} <span class="count">↓{base.behind}</span>
+      <GitPullRequestRegular /> Rebase on {base.name} <span class="count">↓{base.behind}</span>
     {/if}
   </Button>
 {/if}

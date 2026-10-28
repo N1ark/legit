@@ -5,7 +5,7 @@
   // open pull request, that one (stacking on it). The branch is pushed first when GitHub doesn't
   // have all of it.
   import { Button, Checkbox, Field, Kbd, Modal, Spinner, TextArea, TextField, matches, toast } from 'purr';
-  import { GitPullRequest } from 'purr/icons';
+  import { GitPullRequestRegular } from 'purr/glyphs';
   import { tick } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
   import { ghRequest } from '../lib/github.svelte.ts';
@@ -99,7 +99,7 @@
     <span class="muted note">{pushNote}</span>
     <Button variant="ghost" onclick={onclose}>Cancel</Button>
     <Button variant="primary" onclick={submit} disabled={!info || !title.trim() || sending || empty}>
-      {#if sending}<Spinner label="Creating" />{:else}<GitPullRequest />{/if}
+      {#if sending}<Spinner label="Creating" />{:else}<GitPullRequestRegular />{/if}
       {draft ? 'Create draft PR' : 'Create PR'}
       <Kbd hint="⌘↩" />
     </Button>

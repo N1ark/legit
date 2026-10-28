@@ -2,7 +2,7 @@
   // A review thread: a bar saying where it is and who said what (a click opens or closes it), its
   // comments, and a reply box with Resolve. Resolved threads start closed.
   import { Avatar, Button, Kbd, Tag, TextArea, Twisty, matches, tooltip } from 'purr';
-  import { CheckCircle, ArrowCounterClockwise } from 'purr/icons';
+  import { ArrowCounterClockwiseRegular, CheckCircleRegular } from 'purr/glyphs';
   import ReviewComment from './ReviewComment.svelte';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { hunkLines, linesLabel } from '../lib/gh-threads.ts';
@@ -88,7 +88,7 @@
     {/if}
     {#if thread.resolved}
       <span use:tooltip={thread.resolvedBy ? `Resolved by ${thread.resolvedBy}` : null}
-        ><Tag color="var(--success)"><span class="tag-icon"><CheckCircle /> Resolved</span></Tag></span
+        ><Tag color="var(--success)"><span class="tag-icon"><CheckCircleRegular /> Resolved</span></Tag></span
       >
     {/if}
   </button>
@@ -148,9 +148,9 @@
 
 {#snippet resolveButton()}
   {#if thread.resolved && thread.canUnresolve}
-    <Button size="sm" variant="ghost" onclick={() => resolve(false)} loading={resolving}><ArrowCounterClockwise /> Unresolve</Button>
+    <Button size="sm" variant="ghost" onclick={() => resolve(false)} loading={resolving}><ArrowCounterClockwiseRegular /> Unresolve</Button>
   {:else if !thread.resolved && thread.canResolve}
-    <Button size="sm" onclick={() => resolve(true)} loading={resolving}><CheckCircle /> Resolve</Button>
+    <Button size="sm" onclick={() => resolve(true)} loading={resolving}><CheckCircleRegular /> Resolve</Button>
   {/if}
 {/snippet}
 

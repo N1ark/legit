@@ -2,10 +2,7 @@
   // A pull request's timeline: comments (the viewer's own editable), reviews with their state
   // and words, pushes, and everything else as one-line events.
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
-  import {
-    ArrowsClockwise, ChatCircle, CheckCircle, Eye, GitBranch, GitCommit, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, PencilSimple,
-    Tag as TagIcon, TextT, Trash, UserPlus, XCircle,
-  } from 'purr/icons';
+  import { ArrowsClockwiseRegular, ChatCircleFill, CheckCircleFill, EyeRegular, GitBranchRegular, GitCommitRegular, GitMergeBold, GitPullRequestClosedBold, GitPullRequestDraftRegular, GitPullRequestRegular, PencilSimpleRegular, TagRegular, TextTRegular, TrashRegular, UserPlusRegular, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrComment, PrEventType, PrOverview, ReviewState } from '../../shared/gh-prview.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
@@ -19,28 +16,29 @@
   }
   let { pr, act, working }: Props = $props();
 
-  const EVENT_ICON: Record<PrEventType, typeof GitCommit> = {
-    merged: GitMerge,
-    closed: GitPullRequestClosed,
-    reopened: GitPullRequest,
-    ready: Eye,
-    draft: GitPullRequestDraft,
-    'force-pushed': ArrowsClockwise,
-    'review-requested': UserPlus,
-    'review-request-removed': UserPlus,
-    labeled: TagIcon,
-    unlabeled: TagIcon,
-    'base-changed': GitBranch,
-    renamed: TextT,
-    'head-deleted': GitBranch,
+  // Merged and closed in bold, as their badges are.
+  const EVENT_ICON: Record<PrEventType, GlyphComponent> = {
+    merged: GitMergeBold,
+    closed: GitPullRequestClosedBold,
+    reopened: GitPullRequestRegular,
+    ready: EyeRegular,
+    draft: GitPullRequestDraftRegular,
+    'force-pushed': ArrowsClockwiseRegular,
+    'review-requested': UserPlusRegular,
+    'review-request-removed': UserPlusRegular,
+    labeled: TagRegular,
+    unlabeled: TagRegular,
+    'base-changed': GitBranchRegular,
+    renamed: TextTRegular,
+    'head-deleted': GitBranchRegular,
   };
 
-  const REVIEW: Record<ReviewState, { icon: typeof GitCommit; color: string; text: string }> = {
-    approved: { icon: CheckCircle, color: 'var(--success)', text: 'approved these changes' },
-    changes: { icon: XCircle, color: 'var(--danger)', text: 'requested changes' },
-    commented: { icon: ChatCircle, color: 'var(--muted)', text: 'reviewed' },
-    dismissed: { icon: ChatCircle, color: 'var(--faint)', text: 'reviewed (dismissed)' },
-    pending: { icon: ChatCircle, color: 'var(--faint)', text: 'started a review' },
+  const REVIEW: Record<ReviewState, { icon: GlyphComponent; color: string; text: string }> = {
+    approved: { icon: CheckCircleFill, color: 'var(--success)', text: 'approved these changes' },
+    changes: { icon: XCircleFill, color: 'var(--danger)', text: 'requested changes' },
+    commented: { icon: ChatCircleFill, color: 'var(--muted)', text: 'reviewed' },
+    dismissed: { icon: ChatCircleFill, color: 'var(--faint)', text: 'reviewed (dismissed)' },
+    pending: { icon: ChatCircleFill, color: 'var(--faint)', text: 'started a review' },
   };
 
   let editing = $state<string | null>(null);
@@ -94,7 +92,7 @@
           {#if item.edited}<span class="muted">· edited</span>{/if}
           <span class="spacer"></span>
           {#if item.canEdit && editing !== item.id}
-            <IconButton label="Edit comment" size="sm" disabled={working} onclick={() => edit(item)}><PencilSimple /></IconButton>
+            <IconButton label="Edit comment" size="sm" disabled={working} onclick={() => edit(item)}><PencilSimpleRegular /></IconButton>
           {/if}
           {#if item.canDelete}
             <ConfirmButton
@@ -104,7 +102,7 @@
               disabled={working}
               aria-label="Delete comment"
               {@attach tip('Delete comment')}
-              onconfirm={() => act('prviewDeleteComment', { dbId: item.dbId }, 'Deleted the comment')}><Trash /></ConfirmButton
+              onconfirm={() => act('prviewDeleteComment', { dbId: item.dbId }, 'Deleted the comment')}><TrashRegular /></ConfirmButton
             >
           {/if}
         </header>
@@ -125,7 +123,7 @@
       {@const r = REVIEW[item.state]}
       <li class="card review" style:--tone={r.color}>
         <header class="card-head">
-          <span class="glyph" style:color={r.color} aria-hidden="true"><r.icon weight="fill" /></span>
+          <span class="glyph" style:color={r.color} aria-hidden="true"><r.icon /></span>
           <Avatar name={item.actor?.login ?? 'ghost'} src={ghAvatar(item.actor?.avatar)} size={18} round />
           <b>{item.actor?.login ?? 'ghost'}</b>
           <span class="muted">{r.text}</span>
@@ -141,7 +139,7 @@
       </li>
     {:else if item.kind === 'commits'}
       <li class="event">
-        <span class="glyph" aria-hidden="true"><GitCommit /></span>
+        <span class="glyph" aria-hidden="true"><GitCommitRegular /></span>
         <div class="what">
           <div class="line">
             {#if item.actor}<Avatar name={item.actor.login} src={ghAvatar(item.actor.avatar)} size={16} round />{/if}
@@ -159,7 +157,7 @@
     {:else}
       {@const Icon = EVENT_ICON[item.type]}
       <li class="event" class:merged={item.type === 'merged'} class:closed={item.type === 'closed'}>
-        <span class="glyph" aria-hidden="true"><Icon weight={item.type === 'merged' || item.type === 'closed' ? 'bold' : 'regular'} /></span>
+        <span class="glyph" aria-hidden="true"><Icon /></span>
         <div class="what line">
           {#if item.actor}<Avatar name={item.actor.login} src={ghAvatar(item.actor.avatar)} size={16} round />{/if}
           <b>{item.actor?.login ?? 'someone'}</b>

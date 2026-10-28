@@ -6,7 +6,7 @@
   // on has moved on or was merged, the card offers to restack it. The chip is lit while the
   // overview is shown. A branch without a pull request gets "Create pull request" instead.
   import { Avatar, Button, Callout, ConfirmButton, Kbd, Popover, tooltip } from 'purr';
-  import { ArrowSquareOut, Article, GitBranch, GitPullRequest, Stack, Warning } from 'purr/icons';
+  import { ArrowSquareOutRegular, ArticleRegular, GitBranchRegular, GitPullRequestRegular, StackRegular, WarningBold } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
   import { gh, prefetchPrview } from '../lib/github.svelte.ts';
@@ -79,11 +79,11 @@
 {#if pr}
   <button bind:this={button} class="btn btn--ghost chip" class:shown onclick={show} aria-expanded={open} aria-label={chipLabel} use:tooltip={chipLabel}>
     <PrStatus state={pr.state} number={pr.number} look="word" tip={false} />
-    {#if plan}<span class="needs" aria-hidden="true"><Warning weight="bold" /></span>{/if}
+    {#if plan}<span class="needs" aria-hidden="true"><WarningBold /></span>{/if}
   </button>
 {:else if canCreate}
   <Button variant="ghost" size="sm" onclick={openCreatePr} {@attach tip(`Open a pull request for ${app.repo?.branch} on GitHub`)}>
-    <GitPullRequest /> Create PR
+    <GitPullRequestRegular /> Create PR
   </Button>
 {/if}
 
@@ -101,8 +101,8 @@
         {/if}
       </div>
       <div class="actions">
-        <Button size="sm" variant="primary" onclick={overview}><Article /> Overview <Kbd hint="p" /></Button>
-        <Button size="sm" onclick={() => app.openUrl(pr.url)}><ArrowSquareOut /> GitHub</Button>
+        <Button size="sm" variant="primary" onclick={overview}><ArticleRegular /> Overview <Kbd hint="p" /></Button>
+        <Button size="sm" onclick={() => app.openUrl(pr.url)}><ArrowSquareOutRegular /> GitHub</Button>
       </div>
 
       {#if plan}
@@ -120,12 +120,12 @@
           <div class="actions">
             {#if plan.onto}
               <Button size="sm" variant="primary" {disabled} onclick={() => rebase(plan)}>
-                <Stack /> {plan.why === 'merged' ? `Rebase onto ${plan.onto}` : `Restack on ${plan.onto}`}
+                <StackRegular /> {plan.why === 'merged' ? `Rebase onto ${plan.onto}` : `Restack on ${plan.onto}`}
               </Button>
             {/if}
             {#if plan.retarget}
               <ConfirmButton size="sm" confirmLabel="Change #{pr.number}'s base on GitHub" onconfirm={() => retarget(plan)}>
-                <GitPullRequest /> Retarget #{pr.number} to {plan.retarget}
+                <GitPullRequestRegular /> Retarget #{pr.number} to {plan.retarget}
               </ConfirmButton>
             {/if}
           </div>
@@ -170,7 +170,7 @@
           {/each}
           <li class="trunk">
             <span class="rail" aria-hidden="true"><span class="dot"></span></span>
-            <GitBranch />
+            <GitBranchRegular />
             <span class="mono">{stack.trunk}</span>
           </li>
         </ol>

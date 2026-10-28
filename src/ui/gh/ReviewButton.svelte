@@ -2,7 +2,7 @@
   // Above a diff of the current branch's pull request: its review threads (unresolved count, and
   // the viewer's pending comments), opening the threads panel. It keeps the threads loaded.
   import { Button, Popover } from 'purr';
-  import { ChatsCircle } from 'purr/icons';
+  import { ChatsCircleRegular } from 'purr/glyphs';
   import ReviewThreads from './ReviewThreads.svelte';
   import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
@@ -29,7 +29,7 @@
       onclick={() => (open = !open)}
       {@attach tip(`Review threads of #${pr.number}${data.pending ? `; ${data.pending.comments} of your comments are pending` : ''}`)}
     >
-      <ChatsCircle />
+      <ChatsCircleRegular />
       {unresolved ? `${unresolved} unresolved` : `${data.threads.length} resolved`}
       {#if data.pending}<span class="pending">· {data.pending.comments} pending</span>{/if}
     </Button>

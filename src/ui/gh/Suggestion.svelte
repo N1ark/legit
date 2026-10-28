@@ -2,7 +2,7 @@
   // A ```suggestion block: the lines it was made on as removed, the suggestion as added, and a
   // button applying it to the working tree's file (only where those lines still read the same).
   import { Button } from 'purr';
-  import { FileArrowDown } from 'purr/icons';
+  import { FileArrowDownRegular } from 'purr/glyphs';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { commentedLines } from '../lib/gh-threads.ts';
   import { tip } from '../lib/tip.ts';
@@ -44,7 +44,7 @@
           : "Only suggestions on the new side's lines can be applied",
       )}
     >
-      <FileArrowDown /> Apply
+      <FileArrowDownRegular /> Apply
     </Button>
   </div>
   <div class="lines mono">

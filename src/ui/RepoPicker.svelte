@@ -3,7 +3,7 @@
   // one, add one or remove one; in the desktop app, the recent repositories too: pick one to
   // switch to it, or open another. Right-click a row, or the name, for its menu.
   import { ConfirmButton, Highlight, IS_TAURI, IconButton, Popover, menu, rank, toast, tooltip, type MaybeEntry } from 'purr';
-  import { ArrowsLeftRight, CaretDown, Check, Copy, FolderOpen, FolderPlus, LockSimple, Trash, X } from 'purr/icons';
+  import { ArrowsLeftRightRegular, CaretDownRegular, CheckBold, CopyRegular, FolderOpenRegular, FolderPlusRegular, LockSimpleRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { invoke } from './lib/desktop.ts';
@@ -114,21 +114,21 @@
     if (await removeWorktree(w)) load();
   }
 
-  const copyPath = (path: string): MaybeEntry => ({ label: 'Copy path', icon: Copy, run: () => app.copy(path, 'the path') });
+  const copyPath = (path: string): MaybeEntry => ({ label: 'Copy path', icon: CopyRegular, run: () => app.copy(path, 'the path') });
 
   /** A worktree's or a recent repository's menu: what its row and its buttons do. */
   function rowMenu(r: Row): MaybeEntry[] {
     if (r.kind === 'worktree') {
       const w = r.w;
       return [
-        opens(r) && { label: 'Switch to it', icon: ArrowsLeftRight, run: () => choose(r) },
+        opens(r) && { label: 'Switch to it', icon: ArrowsLeftRightRegular, run: () => choose(r) },
         copyPath(w.path),
         !w.main && !w.current && w.locked === null && 'separator',
         !w.main &&
           !w.current &&
           w.locked === null && {
             label: w.missing ? 'Forget' : 'Remove',
-            icon: Trash,
+            icon: TrashRegular,
             danger: true,
             note: w.missing ? 'Its folder is already gone' : `Deletes its folder${w.branch ? `; ${w.branch} stays` : ''}`,
             confirm: w.missing ? `Forget ${w.name}` : `Remove ${w.name}`,
@@ -138,10 +138,10 @@
     }
     if (r.kind === 'recent') {
       return [
-        opens(r) && { label: 'Open', icon: FolderOpen, run: () => choose(r) },
+        opens(r) && { label: 'Open', icon: FolderOpenRegular, run: () => choose(r) },
         copyPath(r.r.path),
         'separator',
-        { label: 'Remove from the list', icon: X, run: () => forget(r.r) },
+        { label: 'Remove from the list', icon: XRegular, run: () => forget(r.r) },
       ];
     }
     return [];
@@ -159,8 +159,8 @@
     menu.show(
       e,
       [
-        { label: 'New worktree…', icon: FolderPlus, run: () => choose({ kind: 'new' }) },
-        IS_TAURI && { label: 'Open Repository…', icon: FolderOpen, run: () => choose({ kind: 'open' }) },
+        { label: 'New worktree…', icon: FolderPlusRegular, run: () => choose({ kind: 'new' }) },
+        IS_TAURI && { label: 'Open Repository…', icon: FolderOpenRegular, run: () => choose({ kind: 'open' }) },
         !!root && copyPath(root),
       ],
       app.repo?.name,
@@ -193,7 +193,7 @@
   use:tooltip={IS_TAURI ? `${app.repo?.root} (⌘T)` : app.repo?.root}
 >
   <span>{app.repo?.name}</span>
-  <CaretDown />
+  <CaretDownRegular />
 </button>
 {#if open && button}
   <Popover
@@ -246,7 +246,7 @@
           >
             {#if r.kind === 'worktree'}
               {@const w = r.w}
-              <span class="check">{#if w.current}<Check weight="bold" />{/if}</span>
+              <span class="check">{#if w.current}<CheckBold />{/if}</span>
               <span class="name" class:gone={w.missing}><Highlight text={w.name} indices={r.field === 0 ? r.indices : []} /></span>
               <span class="branch mono">
                 {#if w.branch}<Highlight text={w.branch} indices={r.field === 1 ? r.indices : []} />{:else}detached @ {w.head ? shortSha(w.head) : '?'}{/if}
@@ -255,7 +255,7 @@
                 {#if w.missing}missing{:else}<Highlight text={w.short} indices={r.field === 2 ? r.indices : []} />{/if}
               </span>
               {#if w.locked !== null}
-                <span class="lock muted" use:tooltip={`Locked${w.locked ? `: ${w.locked}` : ''}`}><LockSimple /></span>
+                <span class="lock muted" use:tooltip={`Locked${w.locked ? `: ${w.locked}` : ''}`}><LockSimpleRegular /></span>
               {:else if !w.main && !w.current}
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
                 <span class="forget" onclick={(e) => e.stopPropagation()}>
@@ -268,25 +268,25 @@
                     aria-label={w.missing ? 'Forget this worktree' : 'Remove this worktree'}
                     {@attach tip(removeWorktreeTip(w))}
                   >
-                    <Trash />
+                    <TrashRegular />
                   </ConfirmButton>
                 </span>
               {/if}
             {:else if r.kind === 'new'}
-              <span class="check"><FolderPlus /></span>
+              <span class="check"><FolderPlusRegular /></span>
               <span class="name" use:tooltip={'Check a branch out in a folder of its own'}>New worktree…</span>
             {:else if r.kind === 'recent'}
               {@const repo = r.r}
-              <span class="check">{#if repo.current}<Check weight="bold" />{/if}</span>
+              <span class="check">{#if repo.current}<CheckBold />{/if}</span>
               <span class="name"><Highlight text={repo.name} indices={r.field === 0 ? r.indices : []} /></span>
               <span class="path muted" use:tooltip={repo.path}><Highlight text={repo.short} indices={r.field === 1 ? r.indices : []} /></span>
               <span class="forget">
                 <IconButton label="Remove from the list" size="sm" onclick={(e) => (e.stopPropagation(), forget(repo))}>
-                  <X />
+                  <XRegular />
                 </IconButton>
               </span>
             {:else}
-              <span class="check"><FolderOpen /></span>
+              <span class="check"><FolderOpenRegular /></span>
               <span class="name">Open Repository…</span>
             {/if}
           </li>

@@ -10,10 +10,7 @@
   import {
     Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, VirtualList, formatRelative, isMac, menu, rank, toast, tooltip, type MaybeEntry,
   } from 'purr';
-  import {
-    ArrowCounterClockwise, ArrowLeft, ArrowsLeftRight, CaretDown, CaretRight, Check, CheckSquare, CloudArrowDown, CloudArrowUp, Copy,
-    CopySimple, FolderPlus, FolderSimple, GitBranch, GitMerge, GitPullRequest, LinkBreak, PencilSimple, Plus, Square, Stack, Trash, X,
-  } from 'purr/icons';
+  import { ArrowCounterClockwiseRegular, ArrowLeftRegular, ArrowsLeftRightRegular, CaretDownRegular, CaretRightRegular, CheckBold, CheckSquareFill, CloudArrowDownRegular, CloudArrowUpRegular, CopyRegular, CopySimpleRegular, FolderPlusRegular, FolderSimpleRegular, GitBranchRegular, GitMergeRegular, GitPullRequestRegular, LinkBreakRegular, PencilSimpleRegular, PlusBold, PlusRegular, SquareRegular, StackRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { BranchInfo, CommitInfo, DeletedBranch, RemoteBranchInfo } from '../shared/types.ts';
@@ -312,7 +309,7 @@
     return [
       {
         label: `Delete ${many(n)}`,
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         disabled: !n,
         note: bulkNote,
@@ -321,14 +318,14 @@
       },
       !!upstreams.length && {
         label: upstreams.length === 1 ? 'Delete its upstream on the remote…' : `Delete their ${upstreams.length} upstreams on the remote…`,
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         note: `${upstreams.map((u) => u.slice('refs/remotes/'.length)).join(', ')}, for everyone. Each is refused if it moved since you last fetched.`,
         confirm: `Delete ${upstreams.length} on the remote`,
         run: () => act(() => deleteRemoteBranches(upstreams), true),
       },
       'separator',
-      { label: 'Clear selection', icon: X, run: () => chosen.clear() },
+      { label: 'Clear selection', icon: XRegular, run: () => chosen.clear() },
     ];
   }
 
@@ -371,7 +368,7 @@
     else if (r.kind === 'deleted') act(() => restoreBranch(r.b, names.has(r.b.name)), true);
   }
 
-  const copyName = (name: string): MaybeEntry => ({ label: 'Copy name', icon: Copy, run: () => app.copy(name, 'the branch name') });
+  const copyName = (name: string): MaybeEntry => ({ label: 'Copy name', icon: CopyRegular, run: () => app.copy(name, 'the branch name') });
 
   /** The folder's name of a worktree's path. */
   const folder = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
@@ -387,28 +384,28 @@
     return [
       !b.current && {
         label: b.worktree ? `Switch to its worktree (${folder(b.worktree)})` : 'Switch to it',
-        icon: b.worktree ? FolderSimple : ArrowsLeftRight,
+        icon: b.worktree ? FolderSimpleRegular : ArrowsLeftRightRegular,
         run: () => choose({ kind: 'local', b, indices: [] }),
       },
-      !b.current && !b.worktree && { label: 'New worktree for it…', icon: FolderPlus, run: () => addWorktree({ branch: b.name }) },
-      { label: 'New branch from here…', icon: Plus, run: () => act(() => newBranch(b.sha, b.name), true) },
-      { label: 'Rename…', icon: PencilSimple, run: () => act(() => renameBranch(b.name), true) },
-      !b.current && !!here && { label: 'Cherry-pick from it…', icon: CopySimple, run: () => browse(b.name) },
+      !b.current && !b.worktree && { label: 'New worktree for it…', icon: FolderPlusRegular, run: () => addWorktree({ branch: b.name }) },
+      { label: 'New branch from here…', icon: PlusRegular, run: () => act(() => newBranch(b.sha, b.name), true) },
+      { label: 'Rename…', icon: PencilSimpleRegular, run: () => act(() => renameBranch(b.name), true) },
+      !b.current && !!here && { label: 'Cherry-pick from it…', icon: CopySimpleRegular, run: () => browse(b.name) },
       copyName(b.name),
       'separator',
       {
         label: 'Set upstream…',
-        icon: CloudArrowUp,
+        icon: CloudArrowUpRegular,
         note: b.upstream ? `Tracks ${b.upstream}. Pick another remote branch, or a new one to publish to.` : 'Pick a remote branch to push to and pull from.',
         run: () => pickUpstream(b.name),
       },
-      !!b.upstream && { label: 'Stop tracking', icon: LinkBreak, note: `Forget ${b.upstream}. The next push publishes it under its own name.`, run: () => act(() => unsetUpstream(b), true) },
+      !!b.upstream && { label: 'Stop tracking', icon: LinkBreakRegular, note: `Forget ${b.upstream}. The next push publishes it under its own name.`, run: () => act(() => unsetUpstream(b), true) },
       'separator',
       ...integrateEntries(b.name, b.current, () => (open = false)),
       'separator',
       {
         label: 'Delete',
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         disabled: b.current || !!b.worktree,
         note: b.current
@@ -421,7 +418,7 @@
       },
       !!upstream && {
         label: `Delete ${upstream} on the remote…`,
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         note: "For everyone. Refused if it moved since you last fetched.",
         confirm: `Delete ${upstream} on the remote`,
@@ -433,21 +430,21 @@
   function remoteMenu(b: RemoteBranchInfo): MaybeEntry[] {
     const short = `${b.remote}/${b.name}`;
     return [
-      { label: `Check out as ${b.name}`, icon: CloudArrowDown, run: () => choose({ kind: 'remote', b, indices: [] }) },
+      { label: `Check out as ${b.name}`, icon: CloudArrowDownRegular, run: () => choose({ kind: 'remote', b, indices: [] }) },
       {
         label: `Check out as ${b.name} in a new worktree…`,
-        icon: FolderPlus,
+        icon: FolderPlusRegular,
         run: () => addWorktree({ branch: b.name, from: short, what: short, track: true }),
       },
-      { label: 'New branch from here…', icon: Plus, run: () => act(() => newBranch(b.sha, short), true) },
-      !!here && { label: 'Cherry-pick from it…', icon: CopySimple, run: () => browse(short) },
+      { label: 'New branch from here…', icon: PlusRegular, run: () => act(() => newBranch(b.sha, short), true) },
+      !!here && { label: 'Cherry-pick from it…', icon: CopySimpleRegular, run: () => browse(short) },
       copyName(short),
       'separator',
       ...integrateEntries(short, false, () => (open = false)),
       'separator',
       {
         label: `Delete on ${b.remote}…`,
-        icon: Trash,
+        icon: TrashRegular,
         danger: true,
         note: "For everyone. Refused if it moved since you last fetched.",
         confirm: `Delete ${short} on the remote`,
@@ -458,9 +455,9 @@
 
   function deletedMenu(b: DeletedBranch): MaybeEntry[] {
     return [
-      { label: 'Restore', icon: ArrowCounterClockwise, run: () => choose({ kind: 'deleted', b, indices: [] }) },
-      { label: 'Restore as…', icon: PencilSimple, run: () => act(() => restoreBranch(b, true), true) },
-      { label: 'Copy SHA', icon: Copy, run: () => app.copy(b.sha, shortSha(b.sha)) },
+      { label: 'Restore', icon: ArrowCounterClockwiseRegular, run: () => choose({ kind: 'deleted', b, indices: [] }) },
+      { label: 'Restore as…', icon: PencilSimpleRegular, run: () => act(() => restoreBranch(b, true), true) },
+      { label: 'Copy SHA', icon: CopyRegular, run: () => app.copy(b.sha, shortSha(b.sha)) },
     ];
   }
 
@@ -538,9 +535,9 @@
   aria-expanded={open}
   use:tooltip={'Switch branch (b)'}
 >
-  <GitBranch />
+  <GitBranchRegular />
   <span>{app.repo?.branch ?? `detached @ ${app.repo?.head ? shortSha(app.repo.head) : '?'}`}</span>
-  <CaretDown />
+  <CaretDownRegular />
 </button>
 {#if open && button}
   <Popover
@@ -566,14 +563,14 @@
     <div class="panel">
       {#if mode !== 'switch'}
         <div class="mode">
-          <IconButton label="Back to switching branches" size="sm" onclick={() => setMode('switch')}><ArrowLeft /></IconButton>
-          {#if mode === 'merge'}<GitMerge /> Merge a branch into <b class="mono">{here}</b>
-          {:else if mode === 'rebase'}<GitPullRequest /> Rebase <b class="mono">{here}</b> onto a branch
-          {:else if mode === 'rebuild'}<Stack /> Rebuild <b class="mono">{here}</b> on a branch with {copying.length === 1 ? '1 commit' : `${copying.length} commits`}
-          {:else if mode === 'copy'}<CopySimple /> Copy {copying.length === 1 ? '1 commit' : `${copying.length} commits`} to a branch
-          {:else if mode === 'upstream'}<CloudArrowUp /> What <b class="mono">{tracker}</b> pushes to and pulls from
+          <IconButton label="Back to switching branches" size="sm" onclick={() => setMode('switch')}><ArrowLeftRegular /></IconButton>
+          {#if mode === 'merge'}<GitMergeRegular /> Merge a branch into <b class="mono">{here}</b>
+          {:else if mode === 'rebase'}<GitPullRequestRegular /> Rebase <b class="mono">{here}</b> onto a branch
+          {:else if mode === 'rebuild'}<StackRegular /> Rebuild <b class="mono">{here}</b> on a branch with {copying.length === 1 ? '1 commit' : `${copying.length} commits`}
+          {:else if mode === 'copy'}<CopySimpleRegular /> Copy {copying.length === 1 ? '1 commit' : `${copying.length} commits`} to a branch
+          {:else if mode === 'upstream'}<CloudArrowUpRegular /> What <b class="mono">{tracker}</b> pushes to and pulls from
             {#if tracked?.upstream}<span class="muted">(now <span class="mono">{tracked.upstream}</span>)</span>{/if}
-          {:else}<GitBranch /> Commits on <b class="mono">{browsing}</b> that <b class="mono">{here}</b> doesn't have{/if}
+          {:else}<GitBranchRegular /> Commits on <b class="mono">{browsing}</b> that <b class="mono">{here}</b> doesn't have{/if}
         </div>
       {/if}
       <input
@@ -615,7 +612,7 @@
                 onclick={() => togglePick(c.sha)}
                 onmousemove={() => (active = k)}
               >
-                <span class="check">{#if picked.has(c.sha)}<CheckSquare weight="fill" />{:else}<Square />{/if}</span>
+                <span class="check">{#if picked.has(c.sha)}<CheckSquareFill />{:else}<SquareRegular />{/if}</span>
                 <span class="sha mono">{shortSha(c.sha)}</span>
                 <span class="subject" use:tooltip={c.subject}><Markdown text={c.subject} inline links="off" /></span>
                 <span class="when muted">{c.author.name} · {formatRelative(c.author.time * 1000)}</span>
@@ -657,22 +654,22 @@
                     onmousemove={() => (active = k)}
                   >
                     {#if r.kind === 'create'}
-                      <span class="check"><Plus weight="bold" /></span>
+                      <span class="check"><PlusBold /></span>
                       <span class="name">Create branch <b class="mono">{r.name}</b></span>
                       <span class="subject muted">from {app.repo?.branch ?? 'HEAD'}</span>
                     {:else if r.kind === 'publish'}
-                      <span class="check">{#if current(r)}<Check weight="bold" />{:else}<CloudArrowUp />{/if}</span>
+                      <span class="check">{#if current(r)}<CheckBold />{:else}<CloudArrowUpRegular />{/if}</span>
                       <span class="name mono">{r.remote}/{r.name}</span>
                       <span class="subject muted">{current(r) ? 'tracked · ' : ''}not on {r.remote} yet; push publishes it</span>
                     {:else if r.kind === 'local'}
                       {@const b = r.b}
-                      <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if b.current}<Check weight="bold" />{/if}</span>
+                      <span class="check">{#if isChosen(r)}<CheckSquareFill />{:else if b.current}<CheckBold />{/if}</span>
                       <span class="name mono" {@attach () => prs.want('local', b.name)}><Highlight text={b.name} indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                       {#if prs.byBranch[b.name]}{@const pr = prs.byBranch[b.name]}<PrStatus state={pr.state} number={pr.number} title={pr.title} />{/if}
                       {#if b.worktree}
                         <span class="worktree muted" use:tooltip={`Checked out in ${b.worktree}; picking it switches there`}>
-                          <FolderSimple />{folder(b.worktree)}
+                          <FolderSimpleRegular />{folder(b.worktree)}
                         </span>
                       {/if}
                       {#if promoted && k === 0}<span class="default">default branch</span>{/if}
@@ -689,7 +686,7 @@
                       {@render browseButton(r)}
                     {:else if r.kind === 'remote'}
                       {@const b = r.b}
-                      <span class="check">{#if isChosen(r)}<CheckSquare weight="fill" />{:else if current(r)}<Check weight="bold" />{:else}<CloudArrowDown />{/if}</span>
+                      <span class="check">{#if isChosen(r)}<CheckSquareFill />{:else if current(r)}<CheckBold />{:else}<CloudArrowDownRegular />{/if}</span>
                       <span class="name mono" {@attach () => prs.want('remote', `${b.remote}/${b.name}`)}><Highlight text="{b.remote}/{b.name}" indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}><Markdown text={b.subject} inline links="off" /></span>
                       {#if prs.byRemote[`${b.remote}/${b.name}`]}{@const pr = prs.byRemote[`${b.remote}/${b.name}`]}<PrStatus state={pr.state} number={pr.number} title={pr.title} />{/if}
@@ -698,7 +695,7 @@
                       {@render browseButton(r)}
                     {:else}
                       {@const b = r.b}
-                      <span class="check"><ArrowCounterClockwise /></span>
+                      <span class="check"><ArrowCounterClockwiseRegular /></span>
                       <span class="name mono gone"><Highlight text={b.name} indices={r.indices} /></span>
                       <span class="subject muted" use:tooltip={b.subject}>{b.remote ? `deleted on ${b.remote}` : shortSha(b.sha)} · <Markdown text={b.subject} inline links="off" /></span>
                       <span class="when muted">{formatRelative(b.time)}</span>
@@ -713,27 +710,27 @@
       {#if mode === 'switch' && chosen.size > 1}
         <div class="pick bulk">
           <span class="foot muted">{chosen.size} selected · {bulkNote}</span>
-          <Button size="sm" variant="ghost" onclick={() => chosen.clear()}><X /> Clear</Button>
+          <Button size="sm" variant="ghost" onclick={() => chosen.clear()}><XRegular /> Clear</Button>
           <ConfirmButton
             size="sm"
             confirmLabel="Click again to delete {many(toDelete)}"
             disabled={!toDelete || app.busy}
             onconfirm={() => act(deleteChosen, true)}
           >
-            <Trash /> Delete {many(toDelete)}
+            <TrashRegular /> Delete {many(toDelete)}
           </ConfirmButton>
         </div>
       {/if}
       {#if mode === 'switch'}
         <div class="modes">
           <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('merge')} {@attach tip('Merge a branch into this one (m)')}>
-            <GitMerge /> Merge…
+            <GitMergeRegular /> Merge…
           </Button>
           <Button size="sm" variant="ghost" disabled={!here} onclick={() => setMode('rebase')} {@attach tip('Rebase onto a branch (r)')}>
-            <GitPullRequest /> Rebase on…
+            <GitPullRequestRegular /> Rebase on…
           </Button>
           <Button size="sm" variant="ghost" onclick={() => addWorktree()} {@attach tip('Check a branch out in a folder of its own')}>
-            <FolderPlus /> New worktree…
+            <FolderPlusRegular /> New worktree…
           </Button>
           {#if hereInfo}
             <span class="tracks">
@@ -743,7 +740,7 @@
                 onclick={() => pickUpstream(hereInfo.name)}
                 {@attach tip(hereInfo.upstream ? `${hereInfo.name} pushes to and pulls from it; click to change` : `${hereInfo.name} tracks nothing; click to pick`)}
               >
-                <CloudArrowUp /> <span class="mono">{hereInfo.upstream ?? 'No upstream'}</span>
+                <CloudArrowUpRegular /> <span class="mono">{hereInfo.upstream ?? 'No upstream'}</span>
               </Button>
             </span>
           {/if}
@@ -754,7 +751,7 @@
       {:else if mode === 'commits'}
         <div class="pick">
           <Button variant="primary" size="sm" disabled={!picked.size || app.busy} onclick={cherryPick}>
-            <CopySimple /> Cherry-pick {picked.size ? `${picked.size} ` : ''}onto {here} <Kbd hint="⌘↩" />
+            <CopySimpleRegular /> Cherry-pick {picked.size ? `${picked.size} ` : ''}onto {here} <Kbd hint="⌘↩" />
           </Button>
           <span class="foot muted">
             Oldest first · <span class="mono">⌘Z</span> undoes
@@ -764,7 +761,7 @@
         <div class="pick">
           {#if tracked?.upstream}
             <Button size="sm" variant="ghost" disabled={app.busy} onclick={stopTracking}>
-              <LinkBreak /> Stop tracking
+              <LinkBreakRegular /> Stop tracking
             </Button>
           {/if}
           <span class="foot muted">
@@ -804,7 +801,7 @@
         browse(name);
       }}
     >
-      <CaretRight />
+      <CaretRightRegular />
     </IconButton>
   {/if}
 {/snippet}

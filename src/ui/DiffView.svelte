@@ -27,7 +27,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDown, ArrowLineUp, ArrowsOutLineVertical, ChatCircleText, Copy, Eraser, FileArrowUp, PencilSimple } from 'purr/icons';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CopyRegular, EraserRegular, FileArrowUpRegular, PencilSimpleRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -288,7 +288,7 @@
     const why = review.why(rows, a, b);
     return {
       label: a === b ? 'Comment on this line…' : `Comment on ${b - a + 1} lines…`,
-      icon: ChatCircleText,
+      icon: ChatCircleTextRegular,
       disabled: !!why,
       note: why ?? `On #${review.pr.number}`,
       run: () => review.compose(files[i].path, rows, a, b),
@@ -1030,7 +1030,7 @@
     return [
       ...(changeActions && ci >= 0 ? changeActions(f, mine, block) : []),
       commentEntry(i, r),
-      canEdit(i, r) && { label: 'Edit line', icon: PencilSimple, note: 'Or double-click it', run: () => startEdit(i, r) },
+      canEdit(i, r) && { label: 'Edit line', icon: PencilSimpleRegular, note: 'Or double-click it', run: () => startEdit(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
           ? `Remove ${count} picked changes from commit`
@@ -1039,7 +1039,7 @@
             : kind === SPACED
               ? "Keep this line's old whitespace"
               : 'Keep this removed line',
-        icon: Eraser,
+        icon: EraserRegular,
         note: 'Takes the change out of the commit',
         run: () => onremove!(many ? picked() : { [f.path]: mine }),
       },
@@ -1091,14 +1091,14 @@
       ...(onLine ? [...lineActions(i, r), 'separator' as const] : []),
       {
         label: 'Open in Zed',
-        icon: FileArrowUp,
+        icon: FileArrowUpRegular,
         disabled: f.status === 'D',
         note: line ? `At line ${line}` : undefined,
         run: () => app.openInZed(f.path, line),
       },
       'separator',
-      { label: 'Copy path', icon: Copy, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
-      { label: 'Copy relative path', icon: Copy, run: () => app.copy(f.path, 'relative path') },
+      { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
+      { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(f.path, 'relative path') },
       ...(onLine ? githubEntries(i, r) : []),
       ...(fileActions ? ['separator' as const, ...fileActions(f)] : []),
     ]);
@@ -1288,22 +1288,22 @@
                                 use:tooltip={`Show ${STEP} more lines`}
                                 aria-label="Show {STEP} more lines"
                                 disabled={opening[i]}
-                                onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
+                                onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
                               >{:else if left > STEP}{#if k > 0}<button
                                   use:tooltip={`Show ${STEP} more lines below the hunk above`}
                                   aria-label="Show {STEP} more lines below the hunk above"
                                   disabled={opening[i]}
-                                  onclick={() => expand(i, k, 'top')}><ArrowLineDown size={12} /></button
+                                  onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
                                 >{/if}<button
                                 use:tooltip={`Show ${STEP} more lines above`}
                                 aria-label="Show {STEP} more lines above"
                                 disabled={opening[i]}
-                                onclick={() => expand(i, k, 'bottom')}><ArrowLineUp size={12} /></button
+                                onclick={() => expand(i, k, 'bottom')}><ArrowLineUpRegular size={12} /></button
                               >{:else if left > 0}<button
                                 use:tooltip={`Show ${left} hidden ${left === 1 ? 'line' : 'lines'}`}
                                 aria-label="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
                                 disabled={opening[i]}
-                                onclick={() => expand(i, k, 'top')}><ArrowsOutLineVertical size={12} /></button
+                                onclick={() => expand(i, k, 'top')}><ArrowsOutLineVerticalRegular size={12} /></button
                               >{/if}</span
                           ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
                         </div>

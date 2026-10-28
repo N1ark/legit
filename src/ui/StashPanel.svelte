@@ -2,7 +2,7 @@
   // The stash list (apply, restore = pop, drop), plus dropped stashes, which legit keeps for two
   // weeks under refs/legit/stashes and which can still be applied.
   import { Button, ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast, tooltip } from 'purr';
-  import { Archive } from 'purr/icons';
+  import { ArchiveRegular } from 'purr/glyphs';
   import type { StashEntry, Stashes } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { tip } from './lib/tip.ts';
@@ -39,7 +39,7 @@
 </script>
 
 <IconButton label="Stashes" tip="Stashed changes" size="lg" aria-expanded={open} onclick={toggle}>
-  <Archive />
+  <ArchiveRegular />
 </IconButton>
 {#if open && button}
   <Popover

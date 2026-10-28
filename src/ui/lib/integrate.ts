@@ -1,7 +1,7 @@
 // Bringing another branch into the current one, for a branch's right-click menu.
 
 import type { MenuEntry } from 'purr';
-import { GitMerge, GitPullRequest } from 'purr/icons';
+import { GitMergeRegular, GitPullRequestRegular } from 'purr/glyphs';
 import { app } from './app.svelte.ts';
 
 /**
@@ -20,14 +20,14 @@ export function integrateEntries(name: string, current: boolean, close?: () => v
   return [
     {
       label: `Merge ${name} into ${here}`,
-      icon: GitMerge,
+      icon: GitMergeRegular,
       disabled: !!why || app.busy,
       note: why ?? 'Needs no uncommitted changes. Conflicts can be resolved here, or aborted.',
       run: go('merge'),
     },
     {
       label: `Rebase ${here} onto ${name}`,
-      icon: GitPullRequest,
+      icon: GitPullRequestRegular,
       disabled: !!why || app.busy,
       note: why ?? `Replays the commits only on ${here} on top of ${name}, stopping at each one that conflicts.`,
       run: go('rebase'),

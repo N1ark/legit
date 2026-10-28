@@ -3,7 +3,7 @@
   // and whether GitHub can be reached (a warning dot when signed out, with why and "Try again").
   // Also hosts what GitHub features open anywhere: the new-issue dialog, `#` suggestions.
   import { IconButton, menu } from 'purr';
-  import { ArrowClockwise, ArrowSquareOut, GitPullRequest, GithubLogo, IssueOpened, UserCircle, Warning } from 'purr/icons';
+  import { ArrowClockwiseRegular, ArrowSquareOutRegular, GitPullRequestRegular, GithubLogoRegular, IssueOpenedRegular, UserCircleRegular, WarningRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import CreateIssue from './CreateIssue.svelte';
   import RefSuggestions from './RefSuggestions.svelte';
@@ -28,26 +28,26 @@
     const why = error ? 'Not signed in to GitHub' : undefined;
     const link = (label: string, tab?: 'issues' | 'pulls' | 'actions') => ({
       label,
-      icon: ArrowSquareOut,
+      icon: ArrowSquareOutRegular,
       run: () => app.openUrl(repoUrl(repo, tab)),
     });
     menu.showFor(
       e.currentTarget,
       [
-        !!error && { label: 'Not signed in to GitHub', icon: Warning, disabled: true, note: error },
-        !!error && { label: 'Try again', icon: ArrowClockwise, run: () => gh.refresh({ retry: true }) },
+        !!error && { label: 'Not signed in to GitHub', icon: WarningRegular, disabled: true, note: error },
+        !!error && { label: 'Try again', icon: ArrowClockwiseRegular, run: () => gh.refresh({ retry: true }) },
         !!error && 'separator',
-        { label: 'New issue…', icon: IssueOpened, disabled: !!why, note: why, run: () => openNewIssue() },
+        { label: 'New issue…', icon: IssueOpenedRegular, disabled: !!why, note: why, run: () => openNewIssue() },
         gh.pr
-          ? { label: `Pull request #${gh.pr.number}`, icon: GitPullRequest, hint: 'p', run: () => gh.showPr(gh.pr!.number) }
-          : { label: 'New pull request…', icon: GitPullRequest, disabled: !!why, note: why, run: () => openCreatePr() },
+          ? { label: `Pull request #${gh.pr.number}`, icon: GitPullRequestRegular, hint: 'p', run: () => gh.showPr(gh.pr!.number) }
+          : { label: 'New pull request…', icon: GitPullRequestRegular, disabled: !!why, note: why, run: () => openCreatePr() },
         'separator',
         link('Open repository on GitHub'),
         link('Issues', 'issues'),
         link('Pull requests', 'pulls'),
         link('Actions', 'actions'),
         !!gh.status?.login && 'separator',
-        !!gh.status?.login && { label: `Signed in as ${gh.status.login}`, icon: UserCircle, disabled: true },
+        !!gh.status?.login && { label: `Signed in as ${gh.status.login}`, icon: UserCircleRegular, disabled: true },
       ],
       repo,
       'bottom-end',
@@ -64,7 +64,7 @@
       aria-haspopup="menu"
       onclick={show}
     >
-      <GithubLogo />
+      <GithubLogoRegular />
     </IconButton>
     {#if error}<span class="dot" aria-hidden="true"></span>{/if}
   </span>

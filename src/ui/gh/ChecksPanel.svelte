@@ -3,7 +3,7 @@
   // steps, each step one click from its log), other apps' checks, and commit statuses. Runs can be
   // re-run or cancelled from here.
   import { Button, ConfirmButton, IconButton, Spinner, Tag, Twisty, formatFull, tooltip } from 'purr';
-  import { ArrowClockwise, ArrowSquareOut, FileText } from 'purr/icons';
+  import { ArrowClockwiseRegular, ArrowSquareOutRegular, FileTextRegular } from 'purr/glyphs';
   import CheckIcon from './CheckIcon.svelte';
   import { shortSha } from '../lib/app.svelte.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
@@ -78,7 +78,7 @@
                 size="sm"
                 onclick={() => checks.act(sha, 'checksRerunFailed', { run: runId }, `Re-running the failed jobs of ${g.name}`)}
               >
-                <ArrowClockwise /> Re-run failed
+                <ArrowClockwiseRegular /> Re-run failed
               </Button>
             {/if}
             <Button size="sm" variant="ghost" onclick={() => checks.act(sha, 'checksRerun', { run: runId }, `Re-running every job of ${g.name}`)}>
@@ -88,7 +88,7 @@
         {/if}
         {#if g.url}
           <a class="btn btn--icon btn--ghost btn--sm" href={g.url} target="_blank" rel="noreferrer" aria-label="Open the run on GitHub" use:tooltip={'Open the run on GitHub'}
-            ><ArrowSquareOut /></a
+            ><ArrowSquareOutRegular /></a
           >
         {/if}
       </div>
@@ -123,12 +123,12 @@
                 <IconButton
                   size="sm"
                   label="Re-run this job"
-                  onclick={() => checks.act(sha, 'checksRerunJob', { job: jobId }, `Re-running ${j.name}`)}><ArrowClockwise /></IconButton
+                  onclick={() => checks.act(sha, 'checksRerunJob', { job: jobId }, `Re-running ${j.name}`)}><ArrowClockwiseRegular /></IconButton
                 >
               {/if}
               {#if j.state === 'failure'}
                 <Button size="sm" variant="danger" onclick={() => openLog(j)} {@attach tip('Show the log of the step that failed')}>
-                  <FileText /> Log
+                  <FileTextRegular /> Log
                 </Button>
               {:else}
                 <IconButton
@@ -136,13 +136,13 @@
                   label="Show the log"
                   tip={hasLog(j) ? 'Show the log' : 'GitHub has the log once the job finishes'}
                   disabled={!hasLog(j)}
-                  onclick={() => openLog(j)}><FileText /></IconButton
+                  onclick={() => openLog(j)}><FileTextRegular /></IconButton
                 >
               {/if}
             {/if}
             {#if j.url}
               <a class="btn btn--icon btn--ghost btn--sm" href={j.url} target="_blank" rel="noreferrer" aria-label="Open on GitHub" use:tooltip={'Open on GitHub'}
-                ><ArrowSquareOut /></a
+                ><ArrowSquareOutRegular /></a
               >
             {/if}
           </li>
