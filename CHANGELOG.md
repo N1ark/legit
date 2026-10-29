@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Markdown, CSV and TSV files can be shown rendered instead of as a diff: the eye button in a file's header (or its menu) shows markdown as GitHub does (code highlighted, tables, task lists, alerts) and CSV/TSV as a table, with what the commit changed washed green. The choice sticks to the file as you go through commits.
+- Inline code in commit messages is monospace again.
+
 ## 0.16.0 — 2026-10-29
 
 - A diff's file count, totals and **Hide whitespace** sit above the file tree, beside the diff, and that column is never taller than the part of the diff on screen: the tree can always be scrolled to its first and last file, even with the commit's message still in view. The "Click line numbers to pick" hint is gone.

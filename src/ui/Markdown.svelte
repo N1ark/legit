@@ -119,7 +119,7 @@
 {#snippet fileImage(l: Tokens.Image, at: string)}
   {@const src = safeHref(l.href)}
   {#if images && src?.startsWith('https:')}
-    <img class="img" {src} alt={l.text} title={l.title ?? undefined} loading="lazy" />
+    <img class="img" {src} alt={l.text} title={l.title ?? undefined} loading="lazy" referrerpolicy="no-referrer" />
   {:else}
     {@const to = docLink(l.href, at)}
     {@const where = to?.kind === 'file' ? `${to.path}, in the repository: not shown` : `${l.href}: not shown`}
@@ -155,7 +155,7 @@
       {@render fileImage(t as Tokens.Image, file)}
     {:else if t.type === 'image' && images && safeHref((t as Tokens.Image).href)?.startsWith('https:')}
       {@const l = t as Tokens.Image}
-      <img class="img" src={safeHref(l.href)} alt={l.text} title={l.title ?? undefined} loading="lazy" />
+      <img class="img" src={safeHref(l.href)} alt={l.text} title={l.title ?? undefined} loading="lazy" referrerpolicy="no-referrer" />
     {:else if t.type === 'image'}
       <!-- Not loaded: a message shouldn't fetch from wherever it points. -->
       {@const l = t as Tokens.Image}
