@@ -62,3 +62,41 @@ test('binary files and images: sizes in the summary, images served at each side'
     s.close();
   }
 });
+
+test("files' whole texts to render: each side, uncommitted ones from disk, documents only so big", async () => {
+  writeFileSync(join(t.dir, 'notes.md'), '# Notes\n');
+  writeFileSync(join(t.dir, 'gone.csv'), 'a,b\n1,2\n');
+  git('add', '-A');
+  git('commit', '-qm', 'texts');
+  writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nMore.\n');
+  git('rm', '-q', 'gone.csv');
+  writeFileSync(join(t.dir, 'big.md'), 'x'.repeat(600 * 1024));
+  writeFileSync(join(t.dir, 'big.csv'), 'y'.repeat(600 * 1024));
+  git('add', '-A');
+  git('commit', '-qm', 'more');
+  const sha = git('rev-parse', 'HEAD');
+  const s = await server();
+  try {
+    const d: DiffSummary = await (await s.get(`/api/diff/${sha}`)).json();
+    const at = (path: string) => d.files.findIndex((f) => f.path === path);
+    const text = async (key: string, i: number, side: string) => {
+      const r = await s.get(`/api/diff/${key}/text?i=${i}&side=${side}`);
+      return r.ok ? ((await r.json()) as { text: string }).text : r.status;
+    };
+    assert.equal(await text(sha, at('notes.md'), 'old'), '# Notes\n');
+    assert.equal(await text(sha, at('notes.md'), 'new'), '# Notes\n\nMore.\n');
+    assert.equal(await text(sha, at('gone.csv'), 'old'), 'a,b\n1,2\n');
+    assert.equal(await text(sha, at('gone.csv'), 'new'), 404);
+    // A document is laid out whole, so past a size it isn't rendered; a table only shows some of its rows.
+    assert.equal(await text(sha, at('big.md'), 'new'), 413);
+    assert.equal(((await text(sha, at('big.csv'), 'new')) as string).length, 600 * 1024);
+
+    writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nOn disk.\n');
+    const w: WorkState = await (await s.get('/api/work')).json();
+    const k = w.changes.files.findIndex((f) => f.path === 'notes.md');
+    assert.equal(await text(w.changes.sha, k, 'new'), '# Notes\n\nOn disk.\n');
+    assert.equal(await text(w.changes.sha, k, 'old'), '# Notes\n\nMore.\n');
+  } finally {
+    s.close();
+  }
+});

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
-import { imageType } from '../shared/files.ts';
+import { imageType, renderKind } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
 import './gh/mock/index.ts';
 import { githubRoute, warmGithub } from './gh/routes.ts';
@@ -92,8 +92,9 @@ const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
 const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
 const DIFF_TEXT = new RegExp(`^/api/diff/${KEY}/text$`);
-/** Files bigger than this aren't rendered. */
+/** Files bigger than this aren't rendered: a table shows some of its rows, but a document is laid out whole, all at once. */
 const MAX_TEXT = 5 * 1024 * 1024;
+const MAX_DOCUMENT = 512 * 1024;
 /** A diff key whose content never changes (a commit's, a stash's or a squash's), unlike a working-tree snapshot's. */
 const fixedKey = (key: string) => !/^w\d+$/.test(key);
 /** Images bigger than this aren't shown. */
@@ -377,7 +378,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const f = (await repo.diff(whole[1])).files[Number(query.get('i'))];
       const data = f && !f.binary ? await fileBytes(repo.git, f, side) : null;
       if (!data) return send(res, 404, { error: 'Not found' });
-      if (data.length > MAX_TEXT) return send(res, 413, { error: 'Too big to render' });
+      if (data.length > (renderKind(f.path) === 'markdown' ? MAX_DOCUMENT : MAX_TEXT)) return send(res, 413, { error: 'Too big to render' });
       return send(res, 200, { text: data.toString('utf8') }, etag);
     }
     // /api/diff/<sha>/image?i=3&side=old: an image file as it was or is, for an <img> of this page only.
