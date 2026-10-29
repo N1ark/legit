@@ -3,8 +3,11 @@
   let knownCharWidth = 0;
   /** Files shown rendered rather than as their diff, by path, for the session: the next commit's view shows them so too. */
   const renderedPaths = new Set<string>();
-  /** Rendered files' heights as last measured, by path, blob and width, so a view opening on one starts at its height. */
+  /** Rendered files' heights as last measured, by path, version and width, and by path and width alone (any version's,
+   *  about as tall), so a view opening on one starts at (or near) its height. */
   const knownHeights = new Map<string, number>();
+  /** The diff's width, as the last view measured it: a new one looks those heights up at it until it's measured. */
+  let knownPaneWidth = 0;
 </script>
 
 <script lang="ts">
@@ -365,14 +368,18 @@
   /** Rendered files' texts once loaded, or why they can't be shown. */
   let renderTexts = $state.raw<Record<number, string | { error: string }>>({});
   let renderHeights = $state.raw<Record<number, number>>({});
-  function heightKey(i: number): string | null {
+  function heightKeys(i: number): [string, string] {
     const f = files[i];
     const sha = renderSide(f) === 'old' ? f.oldSha : f.newSha;
-    // An uncommitted file's text has no blob yet.
-    return /^0*$/.test(sha) ? null : `${f.path}:${sha}:${paneWidth}`;
+    // An uncommitted file's text has no blob yet: its token in the snapshot says which it is.
+    const w = paneWidth || knownPaneWidth;
+    return [`${f.path}:${/^0*$/.test(sha) ? (f.token ?? '') : sha}:${w}`, `${f.path}::${w}`];
   }
-  const renderedHeight = (i: number) =>
-    renderHeights[i] ?? knownHeights.get(heightKey(i) ?? '') ?? Math.max(NOTE, linesHeight(i));
+  function renderedHeight(i: number): number {
+    if (renderHeights[i]) return renderHeights[i];
+    const [exact, any] = heightKeys(i);
+    return knownHeights.get(exact) ?? knownHeights.get(any) ?? Math.max(NOTE, linesHeight(i));
+  }
 
   function measureRendered(i: number) {
     return (el: HTMLElement) => {
@@ -380,9 +387,8 @@
         const h = el.offsetHeight;
         if (!h || h === renderHeights[i]) return;
         renderHeights = { ...renderHeights, [i]: h };
-        const key = heightKey(i);
         if (knownHeights.size > 500) knownHeights.clear();
-        if (key) knownHeights.set(key, h);
+        for (const key of heightKeys(i)) knownHeights.set(key, h);
       });
       ro.observe(el);
       return () => ro.disconnect();
@@ -465,7 +471,7 @@
     const height = scroller.clientHeight - inset;
     if (top !== view.top || view.bottom - view.top !== height) view = { top, bottom: top + height };
     measured = true;
-    if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
+    if (paneWidth !== filesEl.clientWidth) paneWidth = knownPaneWidth = filesEl.clientWidth;
     const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
     held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
   }
@@ -578,7 +584,7 @@
       if (!side) continue;
       textAsked.add(i);
       const done = (t: string | { error: string }) => alive && (renderTexts = { ...renderTexts, [i]: t });
-      app.fileText(summary.sha, i, side).then(done, (e: Error) => done({ error: e.message || "Can't show it rendered" }));
+      app.fileText(summary, i, side).then(done, (e: Error) => done({ error: e.message || "Can't show it rendered" }));
     }
   });
 

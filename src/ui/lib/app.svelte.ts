@@ -380,11 +380,12 @@ class App {
   }
 
   /** File i's whole text on one side (rejecting when that side has none, or it's too big), to show it rendered. */
-  fileText(sha: string, i: number, side: 'old' | 'new'): Promise<string> {
-    const key = `${sha}:${i}:${side}`;
+  fileText(d: DiffSummary, i: number, side: 'old' | 'new'): Promise<string> {
+    // By the file's token in a snapshot: the next snapshot, made as another file changes, has the same text.
+    const key = `${fileKey(d, i)}:${side}`;
     const had = this.texts.get(key);
     if (had) return had;
-    const p = request<{ text: string }>(`/api/diff/${sha}/text?i=${i}&side=${side}`).then((r) => r.text);
+    const p = request<{ text: string }>(`/api/diff/${d.sha}/text?i=${i}&side=${side}`).then((r) => r.text);
     p.then((t) => this.texts.weigh(key, p, t.length), () => this.texts.delete(key, p));
     this.texts.set(key, p);
     return p;
