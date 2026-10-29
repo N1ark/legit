@@ -18,6 +18,17 @@ export function imageType(path: string): string | null {
   return dot > path.lastIndexOf('/') ? (IMAGES[path.slice(dot + 1).toLowerCase()] ?? null) : null;
 }
 
+/** Files a diff can also show rendered, by kind. */
+export type RenderKind = 'markdown' | 'csv' | 'tsv';
+
+const RENDERED: Record<string, RenderKind> = { md: 'markdown', markdown: 'markdown', mdown: 'markdown', mkd: 'markdown', csv: 'csv', tsv: 'tsv' };
+
+/** How a file can be shown rendered, by its extension; null when it can't. */
+export function renderKind(path: string): RenderKind | null {
+  const dot = path.lastIndexOf('.');
+  return dot > path.lastIndexOf('/') ? (RENDERED[path.slice(dot + 1).toLowerCase()] ?? null) : null;
+}
+
 /** 950 B, 12.3 KB, 4.0 MB. */
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

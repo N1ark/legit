@@ -91,6 +91,9 @@ const DIFF = new RegExp(`^/api/diff/${KEY}$`);
 const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
 const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
+const DIFF_TEXT = new RegExp(`^/api/diff/${KEY}/text$`);
+/** Files bigger than this aren't rendered. */
+const MAX_TEXT = 5 * 1024 * 1024;
 /** A diff key whose content never changes (a commit's, a stash's or a squash's), unlike a working-tree snapshot's. */
 const fixedKey = (key: string) => !/^w\d+$/.test(key);
 /** Images bigger than this aren't shown. */
@@ -364,6 +367,18 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const f = (await repo.diff(old[1])).files[Number(query.get('i'))];
       if (!f) return send(res, 404, { error: 'Not found' });
       return send(res, 200, await oldLines(repo.git, f), etag);
+    }
+    // /api/diff/<sha>/text?i=3&side=new: a file's whole text as it was or is, to show it rendered.
+    const whole = DIFF_TEXT.exec(path);
+    if (whole) {
+      const side = query.get('side') === 'old' ? 'old' : 'new';
+      const etag = fixedKey(whole[1]) ? `"${boot}"` : undefined;
+      if (unchanged(req, res, etag)) return;
+      const f = (await repo.diff(whole[1])).files[Number(query.get('i'))];
+      const data = f && !f.binary ? await fileBytes(repo.git, f, side) : null;
+      if (!data) return send(res, 404, { error: 'Not found' });
+      if (data.length > MAX_TEXT) return send(res, 413, { error: 'Too big to render' });
+      return send(res, 200, { text: data.toString('utf8') }, etag);
     }
     // /api/diff/<sha>/image?i=3&side=old: an image file as it was or is, for an <img> of this page only.
     const image = DIFF_IMAGE.exec(path);

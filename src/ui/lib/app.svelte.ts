@@ -44,6 +44,8 @@ class App {
   private diffs = new Lru<string, Promise<DiffSummary>>(200, 20_000);
   private contents = new Lru<string, Promise<HunkData[]>>(4000, 200_000);
   private olds = new Lru<string, Promise<FileLines>>(50, 200_000);
+  /** Whole files shown rendered, weighed by characters. */
+  private texts = new Lru<string, Promise<string>>(20, 20_000_000);
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
@@ -374,6 +376,17 @@ class App {
     const p = request<FileLines>(`/api/diff/${sha}/old?i=${i}`);
     p.then((r) => this.olds.weigh(key, p, r.lines.length), () => this.olds.delete(key, p));
     this.olds.set(key, p);
+    return p;
+  }
+
+  /** File i's whole text on one side (rejecting when that side has none, or it's too big), to show it rendered. */
+  fileText(sha: string, i: number, side: 'old' | 'new'): Promise<string> {
+    const key = `${sha}:${i}:${side}`;
+    const had = this.texts.get(key);
+    if (had) return had;
+    const p = request<{ text: string }>(`/api/diff/${sha}/text?i=${i}&side=${side}`).then((r) => r.text);
+    p.then((t) => this.texts.weigh(key, p, t.length), () => this.texts.delete(key, p));
+    this.texts.set(key, p);
     return p;
   }
 
