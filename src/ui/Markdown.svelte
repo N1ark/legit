@@ -253,7 +253,7 @@
   }
 
   code {
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 0.9em;
     padding: 0.05em 0.3em;
     border-radius: var(--radius-sm, 4px);

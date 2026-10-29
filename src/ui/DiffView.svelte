@@ -1383,7 +1383,8 @@
               {:else}
                 <div {@attach measureRendered(i)}>
                   {#if typeof text === 'string'}
-                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} changed={addedLines(rows)} />
+                    <!-- A new file is all new: marking every line of it would mark nothing. -->
+                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} changed={f.status === 'A' ? undefined : addedLines(rows)} />
                   {:else}
                     <div class="note status">{text.error}</div>
                   {/if}
