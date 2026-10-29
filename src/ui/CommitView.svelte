@@ -84,6 +84,18 @@
   // A new commit starts at the top; one rewritten from its own diff, where the old one was.
   const position = app.takeDiffPosition(init.sha) ?? back?.position ?? null;
   let diffView = $state<DiffView>();
+  /** The top bar stays in view as the commit scrolls; the diff's own view starts below it. */
+  let barHeight = $state(0);
+  let scrolled = $state(false);
+  let bar = $state<HTMLElement>();
+  $effect(() => {
+    const scroller = bar?.closest('[data-scroller]');
+    if (!scroller) return;
+    const onscroll = () => (scrolled = scroller.scrollTop > 0);
+    onscroll();
+    scroller.addEventListener('scroll', onscroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onscroll);
+  });
   const review = new DiffReview(init.sha, [init.sha]);
   onMount(() => {
     if (!position) app.scrollToTop();
@@ -214,7 +226,7 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="view">
-  <div class="top">
+  <div class="top" class:scrolled bind:this={bar} bind:offsetHeight={barHeight}>
     <button class="btn btn--ghost sha mono" onclick={copySha} use:tooltip={'Copy full SHA'}>{shortSha(commit)}</button>
     <span class="muted">{date}</span>
     {#if commit.pushed}
@@ -346,6 +358,7 @@
       {sel}
       {readonly}
       initial={position}
+      inset={barHeight}
       {review}
       onremove={remove}
       oneditline={editLine}
@@ -428,10 +441,19 @@
   }
 
   .top {
+    position: sticky;
+    top: 0;
+    z-index: calc(var(--z-sticky) + 1);
     display: flex;
     align-items: center;
     gap: var(--sp-4);
-    padding: var(--sp-4) var(--sp-5) 0 var(--sp-5);
+    padding: var(--sp-4) var(--sp-5) var(--sp-3);
+    background: var(--bg);
+    border-bottom: 1px solid transparent;
+  }
+
+  .top.scrolled {
+    border-bottom-color: var(--border);
   }
 
   .sha {
@@ -460,7 +482,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--gap-4);
-    padding: var(--sp-4) var(--sp-5) var(--sp-5);
+    padding: var(--sp-1) var(--sp-5) var(--sp-5);
     border-bottom: 1px solid var(--border);
   }
 

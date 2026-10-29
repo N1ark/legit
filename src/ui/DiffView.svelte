@@ -77,6 +77,7 @@
     onstage,
     changeActions,
     review,
+    inset = 0,
   }: {
     summary: DiffSummary;
     sel: Record<string, SvelteSet<number>>;
@@ -100,6 +101,8 @@
     changeActions?: (f: FileSummary, line: number[], block: number[]) => MaybeEntry[];
     /** The pull request's review threads to show under the lines they're on, and commenting on lines. */
     review?: DiffReview;
+    /** How much of the scroller's top a sticky bar above the diff covers (px): the view starts below it. */
+    inset?: number;
   } = $props();
 
   // Fixed geometry (px). The CSS below pins elements to exactly these sizes.
@@ -373,10 +376,9 @@
   let measured = $state(false);
   function measure() {
     if (!filesEl || !scroller) return;
-    const top = scroller.getBoundingClientRect().top - filesEl.getBoundingClientRect().top;
-    if (top !== view.top || view.bottom - view.top !== scroller.clientHeight) {
-      view = { top, bottom: top + scroller.clientHeight };
-    }
+    const top = scroller.getBoundingClientRect().top + inset - filesEl.getBoundingClientRect().top;
+    const height = scroller.clientHeight - inset;
+    if (top !== view.top || view.bottom - view.top !== height) view = { top, bottom: top + height };
     measured = true;
     if (paneWidth !== filesEl.clientWidth) paneWidth = filesEl.clientWidth;
     const k = view.top > 0 && view.top < tops[files.length] ? rowAt(tops, view.top) : -1;
@@ -405,6 +407,12 @@
     ro.observe(el);
     return () => ro.disconnect();
   }
+
+  // The bar above it changing height moves where the view starts (before it's measured, the first measure will do).
+  $effect(() => {
+    void inset;
+    if (untrack(() => measured)) untrack(measure);
+  });
 
   onMount(() => {
     scroller = filesEl.closest('[data-scroller]') as HTMLElement;
@@ -1129,7 +1137,7 @@
 
 <svelte:window onmouseup={up} />
 
-<div class="diff">
+<div class="diff" style:--inset="{inset}px">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
   <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px" style:--side-height="{sideHeight}px">
     <!-- Never taller than what's on screen of the diff (see sideHeight), so its ends can always be reached. -->
@@ -1403,7 +1411,7 @@
 
   .panes.with-tree .side {
     position: sticky;
-    top: 0;
+    top: var(--inset);
     height: var(--side-height);
     display: flex;
     flex-direction: column;
@@ -1486,7 +1494,7 @@
 
   .fhead {
     position: sticky;
-    top: 0;
+    top: var(--inset);
     z-index: var(--z-sticky);
     height: 34px;
     display: flex;
