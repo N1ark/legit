@@ -1,6 +1,10 @@
 <script module lang="ts">
   /** The code font's character width, as the last view measured it: the next one starts with it. */
   let knownCharWidth = 0;
+  /** Files shown rendered rather than as their diff, by path, for the session: the next commit's view shows them so too. */
+  const renderedPaths = new Set<string>();
+  /** Rendered files' heights as last measured, by path, blob and width, so a view opening on one starts at its height. */
+  const knownHeights = new Map<string, number>();
 </script>
 
 <script lang="ts">
@@ -8,11 +12,13 @@
   // known from the summary alone: the full layout (and scrollbar) exists before any content
   // loads, nothing is ever measured, and nothing jumps. (When long lines wrap, a file with lines
   // wider than the wrap takes its height from its contents once they're in, keeping the view
-  // where it was; the code breaks anywhere, so a line's rows follow from its length.) Only files near the viewport are
+  // where it was; the code breaks anywhere, so a line's rows follow from its length. A file shown
+  // rendered takes its height from its layout, measured, the same way.) Only files near the viewport are
   // mounted, and within them only the rows near the viewport. Contents load as files come
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
     type MaybeEntry,
+    IconButton,
     Popover,
     ResizeEdge,
     Tag,
@@ -27,14 +33,15 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CopyRegular, EraserRegular, FileArrowUpRegular, PencilSimpleRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, PencilSimpleRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
-  import { formatSize, imageType } from '../shared/files.ts';
+  import { formatSize, imageType, renderKind } from '../shared/files.ts';
   import type { DiffSummary, FileSummary, HunkData, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
+  import RenderedFile from './RenderedFile.svelte';
   import Composer from './gh/Composer.svelte';
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
@@ -230,6 +237,8 @@
     const i = files.findIndex((x) => x.path === f.path);
     if (i < 0) return void (reviews.focus = null);
     const placed = placedThreads[i];
+    // A thread shows with the diff: a rendered file goes back to it (and this runs again).
+    if (rendered[i]) return void untrack(() => setRendered(i, false));
     untrack(() => {
       if (!scroller) return;
       if (!placed) return reveal(i);
@@ -340,11 +349,87 @@
     const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
     return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
   }
+  // Markdown and CSV files can be shown rendered instead of as lines (the button in their header).
+  // A rendered file is as tall as it was laid out, measured as it shows (and as it changes: images
+  // loading, the width); until then, as it was last measured, or as its lines. Its rows aren't shown,
+  // so nothing that works on them (picking, editing, gaps, threads, ⌘F) reaches it.
+  /** The side of file f to show rendered (the old one of a deleted file), when it can be. */
+  const renderSide = (f: FileSummary): 'old' | 'new' | null =>
+    renderKind(f.path) && !f.binary && (f.rows || f.status === 'R' || f.status === 'C') ? (f.status === 'D' ? 'old' : 'new') : null;
+  let rendered = $state<Record<number, boolean>>(
+    untrack(() =>
+      Object.fromEntries(summary.files.flatMap((f, i) => (renderSide(f) && renderedPaths.has(f.path) ? [[i, true]] : []))),
+    ),
+  );
+  const anyRendered = $derived(Object.values(rendered).some(Boolean));
+  /** Rendered files' texts once loaded, or why they can't be shown. */
+  let renderTexts = $state.raw<Record<number, string | { error: string }>>({});
+  let renderHeights = $state.raw<Record<number, number>>({});
+  function heightKey(i: number): string | null {
+    const f = files[i];
+    const sha = renderSide(f) === 'old' ? f.oldSha : f.newSha;
+    // An uncommitted file's text has no blob yet.
+    return /^0*$/.test(sha) ? null : `${f.path}:${sha}:${paneWidth}`;
+  }
+  const renderedHeight = (i: number) =>
+    renderHeights[i] ?? knownHeights.get(heightKey(i) ?? '') ?? Math.max(NOTE, linesHeight(i));
+
+  function measureRendered(i: number) {
+    return (el: HTMLElement) => {
+      const ro = new ResizeObserver(() => {
+        const h = el.offsetHeight;
+        if (!h || h === renderHeights[i]) return;
+        renderHeights = { ...renderHeights, [i]: h };
+        const key = heightKey(i);
+        if (knownHeights.size > 500) knownHeights.clear();
+        if (key) knownHeights.set(key, h);
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    };
+  }
+
+  /** Show file i rendered, or as its diff again: a header stuck at the top stays, over the file's start; else the view stays. */
+  function setRendered(i: number, on: boolean) {
+    if (on) renderedPaths.add(files[i].path);
+    else renderedPaths.delete(files[i].path);
+    if (editing?.i === i) editing = null;
+    if (hoverBlock?.i === i) hoverBlock = null;
+    if (on && typeof renderTexts[i] === 'object') {
+      textAsked.delete(i);
+      const t = { ...renderTexts };
+      delete t[i];
+      renderTexts = t;
+    }
+    const above = collapsed[i] ? 0 : view.top - tops[i];
+    const stuck = above > 0 && above < fileHeight(i);
+    rendered[i] = on;
+    collapsed[i] = false;
+    if (stuck && scroller) {
+      scroller.scrollTop -= above;
+      measure();
+    } else keepHeld();
+  }
+
+  /** New-side line numbers of the lines `rows` adds, for the renderer to mark. */
+  const addedCache = new WeakMap<FileRows, ReadonlySet<number>>();
+  function addedLines(rows: FileRows | undefined): ReadonlySet<number> | undefined {
+    if (!rows) return;
+    let set = addedCache.get(rows);
+    if (!set) {
+      const s = new Set<number>();
+      for (let r = 0; r < rows.kind.length; r++) if (rows.kind[r] === ADDED) s.add(rows.n[r]);
+      addedCache.set(rows, (set = s));
+    }
+    return set;
+  }
+
   /** Height of what comes before each file's lines: its images. */
   const leads = $derived(files.map((f) => (imageType(f.path) && f.oldSha !== f.newSha ? IMG : 0)));
   const lead = (i: number) => leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
-  const bodyHeight = (i: number) => lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
+  const bodyHeight = (i: number) =>
+    rendered[i] ? renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
   const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
@@ -385,19 +470,28 @@
     held = k >= 0 ? { k, offset: view.top - tops[k] } : null;
   }
 
-  // With wrapping, files change height as their contents come in (or the width changes), and with
-  // review threads as they're placed: the file at the top of the view stays where it was.
+  // With wrapping, files change height as their contents come in (or the width changes), with
+  // review threads as they're placed, and rendered files as they're laid out: the file at the top of
+  // the view stays where it was.
   let held: { k: number; offset: number } | null = null;
   $effect(() => {
-    const t = tops;
-    const a = held;
-    if ((!cols && !review) || !a || !scroller || a.k >= files.length) return;
-    const drift = t[a.k] + Math.min(a.offset, t[a.k + 1] - t[a.k]) - untrack(() => view.top);
-    if (Math.abs(drift) >= 1) {
-      scroller.scrollTop += drift;
-      measure();
-    }
+    void tops;
+    if (cols || review || anyRendered) untrack(keepHeld);
   });
+
+  /** Scroll the file at the top of the view (as last measured) back to where it was, after files above it changed height. */
+  function keepHeld() {
+    const a = held;
+    if (!a || !scroller || a.k >= files.length) return;
+    const was = view.top;
+    const drift = tops[a.k] + Math.min(a.offset, tops[a.k + 1] - tops[a.k]) - was;
+    if (Math.abs(drift) < 1) return;
+    const j = jump;
+    scroller.scrollTop += drift;
+    measure();
+    // A file the tree jumped to, too near the end to reach the top, still shows as picked.
+    if (j && Math.abs(j.top - was) < 1) jump = { i: j.i, top: view.top };
+  }
 
   // Read once laid out (and again when the font loads) rather than forcing a layout as the view mounts.
   function measureChars(el: HTMLElement) {
@@ -475,6 +569,19 @@
     });
   });
 
+  // Rendered files' texts, as they come near the viewport.
+  const textAsked = new Set<number>();
+  $effect(() => {
+    if (!measured) return;
+    for (let i = near[0]; i < near[1]; i++) {
+      const side = rendered[i] && !collapsed[i] && !textAsked.has(i) ? renderSide(files[i]) : null;
+      if (!side) continue;
+      textAsked.add(i);
+      const done = (t: string | { error: string }) => alive && (renderTexts = { ...renderTexts, [i]: t });
+      app.fileText(summary.sha, i, side).then(done, (e: Error) => done({ error: e.message || "Can't show it rendered" }));
+    }
+  });
+
   function load(want: number[]) {
     return app.fileContents(summary, want).then(
       (res) => {
@@ -516,7 +623,7 @@
   $effect(() => {
     for (let i = near[0]; i < near[1]; i++) {
       const rows = contents[i];
-      if (rows && !collapsed[i]) untrack(() => queueHighlight(i, rows));
+      if (rows && !collapsed[i] && !rendered[i]) untrack(() => queueHighlight(i, rows));
     }
   });
 
@@ -572,17 +679,11 @@
   $effect(() => {
     const ws = hideWhitespace.value;
     untrack(() => {
-      const a = held;
       for (const k of Object.keys(contents)) {
         const i = Number(k);
         if (contents[i].ws !== ws) replaceRows(i, build(i, contents[i].hunks));
       }
-      if (!a || !scroller || a.k >= files.length) return;
-      const drift = tops[a.k] + Math.min(a.offset, tops[a.k + 1] - tops[a.k]) - view.top;
-      if (Math.abs(drift) >= 1) {
-        scroller.scrollTop += drift;
-        measure();
-      }
+      keepHeld();
     });
   });
 
@@ -595,7 +696,7 @@
     const sensitive = caseSensitive(query);
     files.forEach((_, i) => {
       const rows = contents[i];
-      if (!rows) return;
+      if (!rows || rendered[i]) return;
       for (let r = 0; r < rows.kind.length; r++) {
         if (isHead(rows.kind[r])) continue;
         for (const start of matchesIn(rows.text[r], query, sensitive)) out.push({ i, r, start });
@@ -1113,6 +1214,11 @@
         note: line ? `At line ${line}` : undefined,
         run: () => app.openInZed(f.path, line),
       },
+      !!renderSide(f) && {
+        label: rendered[i] ? 'Show diff' : 'Show rendered',
+        icon: rendered[i] ? CodeRegular : EyeRegular,
+        run: () => setRendered(i, !rendered[i]),
+      },
       'separator',
       { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
       { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(f.path, 'relative path') },
@@ -1243,12 +1349,48 @@
                 />
               </span>
             {/if}
+            {#if rendered[i] && placedThreads[i]?.blocks.length}
+              {@const n = placedThreads[i].blocks.length}
+              <span use:tooltip={'Review threads on lines of this file show with its diff'}>
+                <Tag
+                  color="var(--theme2)"
+                  label="{n} {n === 1 ? 'thread' : 'threads'} in the diff"
+                  onclick={() => setRendered(i, false)}
+                />
+              </span>
+            {/if}
             <span class="spacer"></span>
+            {#if renderSide(f)}
+              <IconButton
+                size="sm"
+                label="Show rendered"
+                pressed={!!rendered[i]}
+                tip={rendered[i] ? 'Show diff' : 'Show rendered'}
+                onclick={() => setRendered(i, !rendered[i])}
+              >
+                {#if rendered[i]}<CodeRegular />{:else}<EyeRegular />{/if}
+              </IconButton>
+            {/if}
             <span class="add mono">+{f.added}</span>
             <span class="del mono">−{f.removed}</span>
           </div>
 
-          {#if !collapsed[i]}
+          {#if !collapsed[i] && rendered[i]}
+            {@const text = renderTexts[i]}
+            <div class="body page" style:height="{bodyHeight(i)}px">
+              {#if text === undefined}
+                <div class="note status">Loading…</div>
+              {:else}
+                <div {@attach measureRendered(i)}>
+                  {#if typeof text === 'string'}
+                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} changed={addedLines(rows)} />
+                  {:else}
+                    <div class="note status">{text.error}</div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {:else if !collapsed[i]}
             {#if lead(i)}
               {@const kind = f.path.slice(f.path.lastIndexOf('.') + 1).toUpperCase()}
               <ImageDiff
@@ -1531,6 +1673,10 @@
     cursor: pointer;
   }
 
+  .note.status {
+    cursor: default;
+  }
+
   .note.sel {
     background: var(--theme-soft);
     color: var(--theme2);
@@ -1544,6 +1690,12 @@
     overflow-y: hidden;
     scrollbar-width: none;
     contain: strict;
+  }
+
+  /* A rendered file scrolls sideways within itself (a wide table), if at all. */
+  .body.page {
+    background: var(--surface);
+    overflow: hidden;
   }
 
   .body::-webkit-scrollbar {
