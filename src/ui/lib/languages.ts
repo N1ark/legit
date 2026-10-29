@@ -123,3 +123,25 @@ export function language(path: string): string | null {
   return dot > 0 ? (EXT[base.slice(dot + 1).toLowerCase()] ?? null) : null;
 }
 
+/** Code block languages that are neither an extension nor a grammar's name. */
+const FENCES: Record<string, string> = {
+  shell: 'bash', console: 'bash', 'shell-session': 'bash', 'c++': 'cpp', 'c#': 'csharp', golang: 'go',
+  objc: 'objectivec', dockerfile: 'docker', make: 'makefile', terraform: 'hcl', elisp: 'lisp', proto3: 'protobuf',
+};
+
+/** A file name for each grammar, the first extension (or file name) that `language` reads as it. */
+let named: Map<string, string> | null = null;
+
+/** A file name `language` reads as a code block's language (```ts, ```rust, ```shell...), or null when it's none it knows. */
+export function fencePath(info: string | undefined): string | null {
+  const lang = info?.trim().split(/[\s{,]/)[0].toLowerCase();
+  if (!lang) return null;
+  if (EXT[lang]) return `x.${lang}`;
+  if (!named) {
+    named = new Map();
+    for (const [ext, l] of Object.entries(EXT)) if (!named.has(l)) named.set(l, `x.${ext}`);
+    for (const [name, l] of Object.entries(NAMES)) if (!named.has(l)) named.set(l, name);
+  }
+  return named.get(FENCES[lang] ?? lang) ?? null;
+}
+
