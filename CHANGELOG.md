@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 — 2026-10-29
 
 - A diff's file count, totals and **Hide whitespace** sit above the file tree, beside the diff, and that column is never taller than the part of the diff on screen: the tree can always be scrolled to its first and last file, even with the commit's message still in view. The "Click line numbers to pick" hint is gone.
 - A commit's top bar (its SHA, date, **Edit files**, **Undo commit**…) stays in view as you scroll its diff.
