@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A rendered markdown file shows what the commit changed, as GitHub's rich diff does: added blocks green, removed ones red where they were, edited paragraphs, list items, table cells and code lines marked word by word or line by line. Only the changes show, with a little around them; the rest folds into gaps that open with the arrows, as in a code diff.
+- Switching a file between its diff and its rendered view keeps your place, and so do images loading or the window resizing while you read it.
+- Rendered files are much faster: they show the moment they're switched on, stay rendered at no cost as you go through commits, and never freeze the window, however big (markdown up to 1 MB, CSV and TSV up to 5 MB).
+
 ## 0.17.0 — 2026-10-30
 
 - Markdown, CSV and TSV files can be shown rendered instead of as a diff: the eye button in a file's header (or its menu) shows markdown as GitHub does (code highlighted, tables, task lists, alerts) and CSV/TSV as a table, with what the commit changed washed green. The choice sticks to the file as you go through commits.
