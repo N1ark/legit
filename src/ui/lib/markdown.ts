@@ -95,7 +95,9 @@ const RAW_HTML = /^ {0,3}(?:<(script|pre|style|textarea)(?=[\s>]|$)|(<!--)|(<\?)
 const SECTION = /^[a-z#]/i;
 
 /** Where `src` can be cut so its parts lex as the whole does: before a line that starts a heading or a
- *  paragraph after a blank line, outside fences and raw HTML, the parts `size` characters or more. */
+ *  paragraph after a blank line, outside fences and raw HTML, the parts `size` characters or more. Which of
+ *  those lines a cut is at goes by the line (one in 8 will do, up to 2 × `size`), not by where the last cut
+ *  was: past an edit, another version of the file is cut at the same lines again, so its parts are the same. */
 export function sections(src: string, size: number): number[] {
   const cuts: number[] = [];
   let from = 0;
@@ -117,7 +119,7 @@ export function sections(src: string, size: number): number[] {
       else if (h) {
         const close = h[1] ? `</${h[1].toLowerCase()}>` : h[2] ? '-->' : h[3] ? '?>' : h[4] ? ']]>' : '>';
         if (!line.slice(h[0].length).toLowerCase().includes(close)) html = close;
-      } else if (blank && at - from >= size && SECTION.test(line)) {
+      } else if (blank && at - from >= size && SECTION.test(line) && (at - from >= 2 * size || picked(line))) {
         cuts.push(at);
         from = at;
       }
@@ -128,9 +130,17 @@ export function sections(src: string, size: number): number[] {
   return cuts;
 }
 
+/** One line in 8 or so, by its text. */
+function picked(line: string): boolean {
+  let h = 0;
+  for (let k = 0; k < line.length && k < 32; k++) h = (Math.imul(h, 31) + line.charCodeAt(k)) | 0;
+  return ((h ^ (h >>> 7)) & 7) === 0;
+}
+
 /** Lexes a file in steps, a section at a time, so a big one never holds the thread for long; the blocks
  *  come out as `lexDocument`'s would. Each section's links are resolved as soon as it's lexed, unless the
- *  file may define link references: then once all the blocks are. */
+ *  file may define link references: then once all the blocks are. A section another version of the file
+ *  lexed already (`share`) is taken as it is: an edit leaves all but a section or two the same. */
 export class DocLexer {
   /** The top-level blocks lexed so far, in order. */
   readonly tokens: Token[] = [];
@@ -139,7 +149,12 @@ export class DocLexer {
   private parts: string[];
   private next = 0;
   /** Sections whose blocks are lexed, with where their inline work ends in the lexer's queue. */
-  private blocked: { tokens: Token[]; queued: number }[] = [];
+  private blocked: { tokens: Token[]; queued: number; shared?: boolean }[] = [];
+  /** Another version's lexer, to take sections it lexed from. */
+  private donor: DocLexer | null = null;
+  /** Its sections by length, and those taken. */
+  private donated: Map<number, number[]> | null = null;
+  private taken = new Set<number>();
   private emitted = 0;
   private inlined = 0;
   private defer: boolean;
@@ -154,13 +169,38 @@ export class DocLexer {
     this.defer = DEF.test(body);
   }
 
+  /** Take sections `other` (a lexer of another version of this file) has lexed rather than lex them again, when
+   *  neither file defines link references (which any section's links may use). */
+  share(other: DocLexer) {
+    if (other === this || this.defer || other.defer || other === this.donor) return;
+    this.donor = other;
+    this.taken = new Set();
+  }
+
+  /** The blocks of a section of text `part`, if this lexer has it lexed, and once only; never twice to the same `taker`. */
+  private lexed(part: string, taker: DocLexer): Token[] | null {
+    if (!this.donated) {
+      this.donated = new Map();
+      this.parts.forEach((p, k) => {
+        const same = this.donated!.get(p.length);
+        if (same) same.push(k);
+        else this.donated!.set(p.length, [k]);
+      });
+    }
+    const like = this.donated.get(part.length)?.filter((k) => this.parts[k] === part) ?? [];
+    const k = like.length === 1 ? like[0] : -1;
+    if (k < 0 || k >= this.emitted || taker.taken.has(k)) return null;
+    taker.taken.add(k);
+    return this.blocked[k].tokens;
+  }
+
   /** Lex more while `more()` says so; whether it's all lexed. */
   step(more: () => boolean): boolean {
     const queue = this.lexer.inlineQueue;
     while (!this.done && more()) {
       const b = this.blocked[this.emitted];
       if (b && this.inlined >= b.queued) {
-        for (const t of b.tokens) this.tokens.push(alert(t));
+        for (const t of b.tokens) this.tokens.push(b.shared ? t : alert(t));
         this.emitted++;
       } else if (this.inlined < queue.length && (!this.defer || this.next === this.parts.length)) {
         // A few paragraphs before asking again whether there's time: they're quick.
@@ -170,9 +210,14 @@ export class DocLexer {
           this.lexer.inlineTokens(q.src, q.tokens);
         }
       } else if (this.next < this.parts.length) {
-        const tokens: Token[] = [];
-        this.lexer.blockTokens(this.parts[this.next++], tokens);
-        this.blocked.push({ tokens, queued: queue.length });
+        const part = this.parts[this.next++];
+        const had = this.donor?.lexed(part, this);
+        if (had) this.blocked.push({ tokens: had, queued: queue.length, shared: true });
+        else {
+          const tokens: Token[] = [];
+          this.lexer.blockTokens(part, tokens);
+          this.blocked.push({ tokens, queued: queue.length });
+        }
       } else {
         this.lexer.inlineQueue = [];
         this.done = true;
@@ -184,6 +229,7 @@ export class DocLexer {
 
 /** A file's text lexed as far as it got, with each block's lines and anchors: shared by every view of that text. */
 export class DocModel {
+  readonly text: string;
   private lexer: DocLexer;
   /** Each top-level block's first and last line. */
   readonly lines: [number, number][] = [];
@@ -194,9 +240,11 @@ export class DocModel {
   /** The top-level block each anchor is in. */
   readonly anchors = new Map<string, number>();
   private seen = new Set<string>();
-  private line = 1;
+  /** The line the next block lexed starts at. */
+  private at = 1;
 
   constructor(text: string) {
+    this.text = text;
     this.lexer = new DocLexer(text);
     this.sync();
   }
@@ -204,6 +252,24 @@ export class DocModel {
   /** The top-level blocks lexed so far. */
   get tokens(): readonly Token[] {
     return this.lexer.tokens;
+  }
+
+  get length() {
+    return this.lexer.tokens.length;
+  }
+
+  token(k: number): Token {
+    return this.lexer.tokens[k];
+  }
+
+  /** The first line of block k. */
+  line(k: number): number {
+    return this.lines[k][0];
+  }
+
+  /** The line block k's text starts at, blank lines before it included. */
+  start(k: number): number {
+    return this.from[k];
   }
 
   get done() {
@@ -217,15 +283,20 @@ export class DocModel {
     return this.lexer.done;
   }
 
+  /** Take what `other` (another version of the file) lexed already, where it reads the same. */
+  share(other: DocModel) {
+    this.lexer.share(other.lexer);
+  }
+
   /** Lines and anchors for the blocks just lexed. */
   private sync() {
     const all = this.lexer.tokens;
     if (this.lines.length < all.length) {
       for (let k = this.lines.length; k < all.length; k++) {
         const t = all[k];
-        this.from.push(this.line);
-        this.lines.push(blockLines([t], this.line)[0]);
-        this.line += newlines(t.raw);
+        this.from.push(this.at);
+        this.lines.push(blockLines([t], this.at)[0]);
+        this.at += newlines(t.raw);
         for (const [h, slug] of headingSlugs([t], new Map(), this.seen)) {
           this.slugs.set(h, slug);
           this.anchors.set(slug, k);

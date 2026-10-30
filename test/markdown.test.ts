@@ -181,3 +181,25 @@ test("a file's model gives lines, anchors and changes as the whole file's tokens
   assert.equal(JSON.stringify([...got]), JSON.stringify([...want]));
   assert.equal(DocModel.of(text), DocModel.of(text), 'a text is lexed once');
 });
+
+test("a version of a file takes the sections another lexed that read the same, and lexes as the whole does", () => {
+  const para = (k: number) => `Paragraph ${k} with **bold** and a [link](https://x.y/${k}).`;
+  const one = Array.from({ length: 60 }, (_, k) => `## Part ${k}\n\n${para(k)}\n\n> [!NOTE]\n> Note ${k}.\n`).join('\n');
+  const two = one.replace('Paragraph 30 with', 'Paragraph thirty with');
+  const a = new DocLexer(one, 200);
+  a.step(() => true);
+  const b = new DocLexer(two, 200);
+  b.share(a);
+  b.step(() => true);
+  assert.equal(JSON.stringify(b.tokens), JSON.stringify(lexDocument(two)));
+  const shared = b.tokens.filter((t) => a.tokens.includes(t)).length;
+  assert.ok(shared > b.tokens.length * 0.8, `${shared} of ${b.tokens.length} taken`);
+  assert.equal(new Set(b.tokens).size, b.tokens.length, 'none twice');
+  // A file that defines link references lexes each version whole.
+  const c = new DocLexer(`${one}\n[x]: https://x.y\n`, 200);
+  c.step(() => true);
+  const d = new DocLexer(`${two}\n[x]: https://x.y\n`, 200);
+  d.share(c);
+  d.step(() => true);
+  assert.equal(d.tokens.filter((t) => c.tokens.includes(t)).length, 0);
+});
