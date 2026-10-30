@@ -1,6 +1,6 @@
 {
   "name": "legit",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "A tiny, fast UI to edit, split, squash and reorder git commits.",
   "type": "module",
   "private": true,
