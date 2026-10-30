@@ -70,8 +70,8 @@ test("files' whole texts to render: each side, uncommitted ones from disk, docum
   git('commit', '-qm', 'texts');
   writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nMore. Café ✓\n');
   git('rm', '-q', 'gone.csv');
-  writeFileSync(join(t.dir, 'big.md'), 'x'.repeat(600 * 1024));
-  writeFileSync(join(t.dir, 'big.csv'), 'y'.repeat(600 * 1024));
+  writeFileSync(join(t.dir, 'big.md'), 'x'.repeat(1100 * 1024));
+  writeFileSync(join(t.dir, 'big.csv'), 'y'.repeat(1100 * 1024));
   git('add', '-A');
   git('commit', '-qm', 'more');
   const sha = git('rev-parse', 'HEAD');
@@ -93,7 +93,7 @@ test("files' whole texts to render: each side, uncommitted ones from disk, docum
     assert.equal(await text(sha, at('gone.csv'), 'new'), 404);
     // A document is laid out whole, so past a size it isn't rendered; a table only shows some of its rows.
     assert.equal(await text(sha, at('big.md'), 'new'), 413);
-    assert.equal(((await text(sha, at('big.csv'), 'new')) as string).length, 600 * 1024);
+    assert.equal(((await text(sha, at('big.csv'), 'new')) as string).length, 1100 * 1024);
 
     writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nOn disk.\n');
     const w: WorkState = await (await s.get('/api/work')).json();

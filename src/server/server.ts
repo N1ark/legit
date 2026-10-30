@@ -92,9 +92,9 @@ const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
 const DIFF_IMAGE = new RegExp(`^/api/diff/${KEY}/image$`);
 const DIFF_TEXT = new RegExp(`^/api/diff/${KEY}/text$`);
-/** Files bigger than this aren't rendered: a table shows some of its rows, but a document is laid out whole, all at once. */
+/** Files bigger than this aren't rendered: a table shows some of its rows, but a document's laid out whole (a slice a frame). */
 const MAX_TEXT = 5 * 1024 * 1024;
-const MAX_DOCUMENT = 512 * 1024;
+const MAX_DOCUMENT = 1024 * 1024;
 /** A diff key whose content never changes (a commit's, a stash's or a squash's), unlike a working-tree snapshot's. */
 const fixedKey = (key: string) => !/^w\d+$/.test(key);
 /** Images bigger than this aren't shown. */
