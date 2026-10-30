@@ -11,6 +11,10 @@ export const renderedPaths = new Set<string>();
 export const renderSide = (f: FileSummary): 'old' | 'new' | null =>
   renderKind(f.path) && !f.binary && (f.rows || f.status === 'R' || f.status === 'C') ? (f.status === 'D' ? 'old' : 'new') : null;
 
+/** Whether file f shows rendered as the diff of its two versions (an edited markdown file), rather than as one of them. */
+export const renderedDiff = (f: FileSummary): boolean =>
+  renderKind(f.path) === 'markdown' && !f.binary && f.rows > 0 && f.status !== 'A' && f.status !== 'D';
+
 const added = [new WeakMap<HunkData[], ReadonlySet<number>>(), new WeakMap<HunkData[], ReadonlySet<number>>()];
 
 /** New-side line numbers of the lines a file's hunks add, as its rows show them (`ws`: whitespace hidden, so a line

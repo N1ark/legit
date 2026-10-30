@@ -10,19 +10,20 @@ export interface Fence {
   text: string;
   /** A path of the block's language (`x.ts`). */
   path: string;
+  /** Its lines are elements of their own (a diff's), each filled with its own. */
+  lines?: boolean;
   done?: boolean;
 }
 
-/** Highlighted blocks lately seen, by language and text, to copy from: the same block in another version of the file shows at once. */
-const known = new Lru<string, DocumentFragment>(500, 4 << 20);
+/** Highlighted blocks lately seen (a fragment a line), by language and text, to copy from: the same block in another version of the file shows at once. */
+const known = new Lru<string, DocumentFragment[]>(500, 4 << 20);
 /** Blocks sent to the worker together are at most this much text. */
 const BATCH = 200_000;
 
-/** The highlighted lines of a block's text, from the rows of tokens `t` it starts at. */
-function lines(t: Parameters<typeof segments>[0], row: number, text: string): DocumentFragment {
-  const out = document.createDocumentFragment();
-  const list = text.split('\n');
-  list.forEach((line, k) => {
+/** The highlighted lines of a block's text, a fragment each, from the rows of tokens `t` it starts at. */
+function lines(t: Parameters<typeof segments>[0], row: number, text: string): DocumentFragment[] {
+  return text.split('\n').map((line, k) => {
+    const out = document.createDocumentFragment();
     for (const s of segments(t, row + k, line)) {
       if (!s.c) out.append(s.t);
       else {
@@ -32,10 +33,11 @@ function lines(t: Parameters<typeof segments>[0], row: number, text: string): Do
         out.append(span);
       }
     }
-    if (k < list.length - 1) out.append('\n');
+    return out;
   });
-  return out;
 }
+
+const copy = (parts: DocumentFragment[]) => parts.map((p) => p.cloneNode(true) as DocumentFragment);
 
 /** Highlights code blocks once they come within a screen or so of what `scroller` (the viewport if null) shows. */
 export class Fences {
@@ -60,8 +62,8 @@ export class Fences {
   /** Highlight `f` when it's near the view: at once when its text was highlighted lately. */
   add(f: Fence) {
     if (f.done) return;
-    const copy = known.get(`${f.path}\0${f.text}`);
-    if (copy) return this.fill(f, copy.cloneNode(true) as DocumentFragment);
+    const had = known.get(`${f.path}\0${f.text}`);
+    if (had) return this.fill(f, copy(had));
     this.fences.set(f.code, f);
     this.io.observe(f.code);
   }
@@ -72,9 +74,18 @@ export class Fences {
     this.fences.clear();
   }
 
-  private fill(f: Fence, frag: DocumentFragment) {
-    f.code.textContent = '';
-    f.code.append(frag);
+  private fill(f: Fence, parts: DocumentFragment[]) {
+    const last = parts.length - 1;
+    if (f.lines) {
+      const spans = f.code.children;
+      parts.forEach((p, k) => {
+        if (k < last) p.append('\n');
+        spans[k]?.replaceChildren(p);
+      });
+    } else {
+      f.code.textContent = '';
+      parts.forEach((p, k) => f.code.append(p, k < last ? '\n' : ''));
+    }
     f.done = true;
   }
 
@@ -117,10 +128,10 @@ export class Fences {
       // Each block's rows follow the ones before it, after a header row of its own.
       let row = 0;
       for (const f of batch) {
-        const frag = lines(t, row + 1, f.text);
-        row += f.text.split('\n').length + 1;
-        known.set(`${f.path}\0${f.text}`, frag.cloneNode(true) as DocumentFragment, f.text.length);
-        if (!f.done) this.fill(f, frag);
+        const parts = lines(t, row + 1, f.text);
+        row += parts.length + 1;
+        known.set(`${f.path}\0${f.text}`, copy(parts), f.text.length);
+        if (!f.done) this.fill(f, parts);
       }
     });
   }

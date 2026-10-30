@@ -138,6 +138,7 @@ let starts: { text: string; at: Uint32Array } | null = null;
  * The knots of a rendered file (`el`, showing `text`), from its elements' `data-line` (and a removed
  * block's `data-old-line`): a fenced code block's code starts the line after its fence, a markdown
  * table's rows are a line each, as a CSV row is (a gap row after one, rows not shown, stands for the lines after it).
+ * A code block or table whose lines or rows say their own lines (a diff's) is read by those.
  */
 export function readKnots(el: HTMLElement, text: string): Knot[] {
   if (starts?.text !== text) starts = { text, at: lineStarts(text) };
@@ -151,10 +152,12 @@ export function readKnots(el: HTMLElement, text: string): Knot[] {
     points.push(p);
   };
   for (const e of el.querySelectorAll<HTMLElement>('[data-line], [data-old-line]')) {
-    // A removed block (only the old side has it) sits where the text it's between is.
-    const line = e.dataset.line ? Number(e.dataset.line) : (points[points.length - 1]?.line ?? 1);
+    // A removed block (only the old side has it) sits before the line after it: the line above ends where it starts.
+    const line = e.dataset.line ? Number(e.dataset.line) : NaN;
     const old = e.dataset.oldLine === undefined ? undefined : Number(e.dataset.oldLine);
     point(e, line, old);
+    const own = (e.tagName === 'PRE' || e.tagName === 'TABLE') && e.querySelector('[data-line], [data-old-line]');
+    if (own) continue;
     if (e.tagName === 'PRE' && e.dataset.line) {
       const code = e.textContent ?? '';
       let n = 1;
@@ -175,6 +178,10 @@ export function readKnots(el: HTMLElement, text: string): Knot[] {
       for (let g = e.nextElementSibling; g && !g.hasAttribute('data-line'); g = g.nextElementSibling) point(g, line + 1);
       if (!e.nextElementSibling) point(e, line + 1, undefined, e.getBoundingClientRect().height);
     }
+  }
+  for (let k = points.length - 1, next = lines + 1; k >= 0; k--) {
+    if (Number.isNaN(points[k].line)) points[k].line = next;
+    next = points[k].line;
   }
   return knotList(points, el.getBoundingClientRect().height, lines + 1);
 }

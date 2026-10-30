@@ -1,14 +1,17 @@
 <script lang="ts">
   // A commit message rendered as markdown, built as elements from the lexer's tokens (never as
   // HTML, so a message's own tags show as text). `#123` links to the repository's GitHub issue.
-  // A markdown file (`file`) renders as GitHub shows it, with the blocks a diff changed marked:
-  // built by a view of its own (lib/md-view.ts), a slice at a time, however big it is.
+  // A markdown file (`file`) renders as GitHub shows it, with the blocks a diff changed marked, or, given
+  // its old version, as GitHub's rich diff (lib/md-diff.ts): built by a view of its own (lib/md-view.ts),
+  // a slice at a time, however big it is.
   import { isMac, tooltip } from 'purr';
   import { untrack } from 'svelte';
   import { app } from './lib/app.svelte.ts';
   import RefIcon from './gh/RefIcon.svelte';
   import { refCard } from './lib/gh-links.ts';
   import { refs } from './lib/gh-refs.svelte.ts';
+  import { joinRanges } from './lib/md-align.ts';
+  import { DocDiff, type Fold } from './lib/md-diff.ts';
   import { DocView } from './lib/md-view.ts';
   import type { IssueRef } from '../shared/gh-issues.ts';
   import { type RefToken, type Token, type Tokens, lexBlocks, lexInline, refUrl, safeHref } from './lib/markdown.ts';
@@ -20,6 +23,8 @@
     images = false,
     file,
     changed,
+    old,
+    fold,
     onprogress,
   }: {
     text: string;
@@ -33,6 +38,10 @@
     file?: string;
     /** A file's lines (1-based) a diff adds or changes, whose blocks are marked. */
     changed?: ReadonlySet<number>;
+    /** The file's old version: what's shown is the diff from it (the changes and a little around them). */
+    old?: string;
+    /** What the diff's view opened besides its changes, to open again in the next view of it. */
+    fold?: Fold;
     /** Told as a file is shown: the first line of the last top-level block shown, and whether that's all of them. */
     onprogress?: (line: number, done: boolean) => void;
   } = $props();
@@ -45,15 +54,27 @@
   let view: DocView | undefined;
   $effect(() => {
     if (!root || file === undefined) return;
-    const v = new DocView(root, {
+    const diff = old === undefined ? null : DocDiff.of(old, text);
+    const f = untrack(() => fold);
+    if (f && diff && (f.old !== old || f.text !== text)) Object.assign(f, { old, text, opened: [] });
+    const v: DocView = new DocView(root, {
       text,
       file,
       images,
       links,
       tip,
-      changed: untrack(() => changed),
-      key: `${file}\0${images}\0${links}\0${text}`,
+      changed: diff ? undefined : untrack(() => changed),
+      key: `${file}\0${images}\0${links}\0${diff ? `${old}\0diff\0` : ''}${text}`,
       onprogress: (line, done) => onprogress?.(line, done),
+      ...(diff && {
+        blocks: diff,
+        each: diff.each,
+        inline: diff.inline,
+        ranges: () => diff.fold(f?.opened ?? []),
+        gap: (from: number, to: number) => diff.gap(from, to, (a, b) => v.show(a, b)),
+        onopen: (from: number, to: number) => f && (f.opened = joinRanges(f.opened, [[from, to]])),
+        span: diff.span,
+      }),
     });
     view = v;
     return () => v.destroy();
@@ -427,5 +448,201 @@
     margin: 0 0 var(--gap-2);
     font-weight: 600;
     color: var(--alert);
+  }
+
+  /* ---- A diff, as GitHub's rich diff shows it (lib/md-diff.ts) ------------------------------- */
+
+  /* What changed is said, not only coloured: a block's state is read out before it, words added and removed
+     where they start and end (the labels take no room and are never copied). */
+  :global(.doc.md-file :is(.md-add, .md-del, .md-mod):not(tr)::before),
+  :global(.doc.md-file tr:is(.md-add, .md-del, .md-mod) > :first-child::before),
+  :global(.doc.md-file .md-w::before),
+  :global(.doc.md-file .md-w::after) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* A table row's goes in its first cell: a row can't hold it. */
+  :global(.doc.md-file :is(.md-add:not(tr), tr.md-add > :first-child)::before) {
+    content: 'Added: ';
+  }
+
+  :global(.doc.md-file :is(.md-del:not(tr), tr.md-del > :first-child)::before) {
+    content: 'Removed: ';
+  }
+
+  :global(.doc.md-file :is(.md-mod:not(tr), tr.md-mod > :first-child)::before) {
+    content: 'Changed: ';
+  }
+
+  :global(.doc.md-file ins.md-w::before) {
+    content: ' [added: ';
+  }
+
+  :global(.doc.md-file del.md-w::before) {
+    content: ' [removed: ';
+  }
+
+  :global(.doc.md-file .md-w::after) {
+    content: '] ';
+  }
+
+  /* A block added or removed is washed as a diff's line is, across the pane; a removed one's text is struck through. */
+  :global(.doc.md-file :is(.md-add, .md-del):not(pre, table, tr)) {
+    border-image-source: linear-gradient(var(--add-bg), var(--add-bg));
+    border-image-slice: 0 fill;
+    border-image-outset: var(--gap-2) 100vw;
+  }
+
+  :global(.doc.md-file .md-del:not(pre, table, tr)) {
+    border-image-source: linear-gradient(var(--del-bg), var(--del-bg));
+  }
+
+  :global(.doc.md-file li:is(.md-add, .md-del)) {
+    border-image-outset: 0 100vw;
+  }
+
+  :global(.doc.md-file .md-del:not(pre)),
+  :global(.doc.md-file tr.md-del > td) {
+    text-decoration: line-through;
+    text-decoration-color: var(--del);
+  }
+
+  /* A code block or table keeps its box, tinted. */
+  :global(.doc.md-file pre.md-add) {
+    background: linear-gradient(var(--add-bg), var(--add-bg)), var(--code-bg);
+  }
+
+  :global(.doc.md-file pre.md-del) {
+    background: linear-gradient(var(--del-bg), var(--del-bg)), var(--code-bg);
+  }
+
+  :global(.doc.md-file :is(table.md-add, tr.md-add) > * > tr > td),
+  :global(.doc.md-file tr.md-add > td) {
+    background: var(--add-bg);
+  }
+
+  :global(.doc.md-file :is(table.md-del) > * > tr > td),
+  :global(.doc.md-file tr.md-del > td) {
+    background: var(--del-bg);
+  }
+
+  :global(.doc.md-file table:is(.md-add, .md-del) th) {
+    background: linear-gradient(var(--add-bg), var(--add-bg)), var(--bg3);
+  }
+
+  :global(.doc.md-file table.md-del th) {
+    background: linear-gradient(var(--del-bg), var(--del-bg)), var(--bg3);
+  }
+
+  /* Words added and removed within an edited block. */
+  :global(.doc.md-file ins.md-w) {
+    border-radius: var(--radius-sm);
+    background: var(--add-sel);
+    text-decoration: none;
+  }
+
+  :global(.doc.md-file del.md-w) {
+    border-radius: var(--radius-sm);
+    background: var(--del-sel);
+    text-decoration: line-through;
+    text-decoration-color: var(--del);
+  }
+
+  /* An edited code block, a line an element: as wide as its longest, each marked as the code diff marks it. */
+  :global(.doc.md-file pre.md-lines > code) {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  :global(.doc.md-file .md-ln) {
+    position: relative;
+    display: block;
+    margin: 0 calc(-1 * var(--sp-4));
+    padding: 0 var(--sp-4);
+  }
+
+  :global(.doc.md-file .md-ln.add) {
+    background: var(--add-bg);
+  }
+
+  :global(.doc.md-file .md-ln.del) {
+    background: var(--del-bg);
+  }
+
+  :global(.doc.md-file .md-ln:is(.add, .del)::before) {
+    position: absolute;
+    left: var(--gap-2);
+    user-select: none;
+  }
+
+  :global(.doc.md-file .md-ln.add::before) {
+    content: '+';
+    content: '+' / 'Added: ';
+    color: var(--add);
+  }
+
+  :global(.doc.md-file .md-ln.del::before) {
+    content: '−';
+    content: '−' / 'Removed: ';
+    color: var(--del);
+  }
+
+  /* An unchanged stretch folded away: a bar across the pane, its arrows as the code diff's hunk headers have them. */
+  :global(.doc.md-file .md-gap) {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-4);
+    margin: var(--md-block) calc(-1 * var(--md-pad-x, 0px));
+    padding: var(--gap-1) var(--md-pad-x, 0px) var(--gap-1) var(--sp-4);
+    background: var(--bg3);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+  }
+
+  :global(.doc.md-file .md-gap.first) {
+    margin-top: calc(-1 * var(--md-pad-y, 0px));
+  }
+
+  :global(.doc.md-file .md-gap.last) {
+    margin-bottom: calc(-1 * var(--md-pad-y, 0px));
+  }
+
+  :global(.doc.md-file .md-xp) {
+    display: flex;
+    gap: var(--gap-1);
+  }
+
+  :global(.doc.md-file .md-xp button) {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 17px;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  :global(.doc.md-file .md-xp button:hover) {
+    color: var(--theme2);
+    background: var(--theme-soft);
+  }
+
+  :global(.doc.md-file .md-xp button:focus-visible) {
+    outline: 2px solid var(--theme2);
+    outline-offset: -2px;
+  }
+
+  :global(.doc.md-file .md-gap-text) {
+    user-select: none;
   }
 </style>

@@ -1,9 +1,11 @@
 <script lang="ts">
-  // A file shown as it reads rather than as lines: markdown as a document, CSV and TSV as a table.
-  // Its height is its content's: the diff measures it, and the view scrolls past it as past a diff.
+  // A file shown as it reads rather than as lines: markdown as a document (an edited one as the diff of its
+  // versions), CSV and TSV as a table. Its height is its content's: the diff measures it, and the view
+  // scrolls past it as past a diff.
   import type { RenderKind } from '../shared/files.ts';
   import Markdown from './Markdown.svelte';
   import { type CsvIndex, indexDelimited, laterRows, numericColumns } from './lib/csv.ts';
+  import type { Fold } from './lib/md-diff.ts';
   import { TABLE_ROWS } from './lib/tables.ts';
 
   interface Props {
@@ -12,12 +14,18 @@
     text: string;
     /** Line numbers (1-based, in `text`) the diff adds or changes, to mark what changed. */
     changed?: ReadonlySet<number>;
+    /** A markdown file's old version: shown is the diff from it, rather than `text` marked. */
+    old?: string;
+    /** What that diff's view opened besides its changes (see Markdown). */
+    fold?: Fold;
+    /** The file is gone: `text`, its old version, is all removed. */
+    removed?: boolean;
     /** Told as a markdown file is shown, a slice at a time: the first line of the last block shown, and whether that's all. */
     onprogress?: (line: number, done: boolean) => void;
     /** A CSV's or TSV's rows, read ahead (see `readTable`); read from `text` here otherwise. */
     table?: CsvIndex;
   }
-  let { kind, path, text, changed, onprogress, table }: Props = $props();
+  let { kind, path, text, changed, old, fold, removed = false, onprogress, table }: Props = $props();
 
   /** A table shows its header and this many rows at most, fewer when wide (no more than MAX_CELLS cells, but
    *  50 rows), then up to MAX_AFTER changed rows after them, saying how many are left out between. */
@@ -131,8 +139,9 @@
 </script>
 
 {#if kind === 'markdown'}
-  <div class="rendered">
-    <Markdown {text} file={path} {changed} {onprogress} images />
+  <div class="rendered md-page" class:removed>
+    {#if removed}<span class="sr-only">Removed:</span>{/if}
+    <Markdown {text} file={path} {changed} {old} {fold} {onprogress} images />
   </div>
 {:else if index}
   <div class="rendered csv">
@@ -189,6 +198,17 @@
     /* A changed block's wash reaches the pane's edges and no further. */
     overflow-x: clip;
     font-size: var(--fs-lg);
+  }
+
+  /* A diff's gaps reach the pane's edges (Markdown). */
+  .md-page {
+    --md-pad-x: calc(var(--sp-5) * 2);
+    --md-pad-y: var(--sp-5);
+  }
+
+  /* A file deleted: all of it removed. */
+  .removed {
+    background: var(--del-bg);
   }
 
   .csv {

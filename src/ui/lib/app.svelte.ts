@@ -6,7 +6,8 @@ import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
 import type { CsvIndex } from './csv.ts';
-import { renderSide, renderedPaths } from './rendered.ts';
+import { DocDiff } from './md-diff.ts';
+import { renderSide, renderedDiff, renderedPaths } from './rendered.ts';
 import { readTable } from './tables.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
@@ -440,7 +441,14 @@ class App {
           const side = renderedPaths.has(f.path) ? renderSide(f) : null;
           if (!side) return;
           rendered.add(i);
-          this.renderedText(d, i, side).catch(() => {});
+          const text = this.renderedText(d, i, side);
+          text.catch(() => {});
+          // An edited markdown file shows as the diff of its versions: worked out ahead, when the page is idle.
+          if (renderedDiff(f))
+            Promise.all([this.renderedText(d, i, 'old'), text]).then(
+              ([a, b]) => DocDiff.warm(a.text, b.text),
+              () => {},
+            );
         });
         for (let i = 0; i < d.files.length && y < 2000; i++) {
           const f = d.files[i];

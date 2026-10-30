@@ -1,12 +1,34 @@
 // A markdown file shown as a document, built a few milliseconds at a time in the file's order, so however
 // big it is the thread is never held long and the first blocks show at once; what's shown above never
 // moves. A file's lexed blocks are kept by text, and the elements built for it by a key (the file at that
-// version), so coming back to it shows it again without building anything.
+// version), so coming back to it shows it again without building anything. The blocks are a file's (a
+// DocModel) or any others that read as such: a diff of two versions (md-diff.ts) shows its rows so.
 
 import { Lru } from './cache.ts';
 import { type Fence, Fences } from './md-code.ts';
 import { DomBuilder, type DomOptions } from './md-dom.ts';
-import { DocModel } from './markdown.ts';
+import { DocModel, type Token } from './markdown.ts';
+
+/** The top-level blocks a view shows, as far as they're known. */
+export interface Blocks {
+  readonly length: number;
+  /** Whether all are known. */
+  readonly done: boolean;
+  /** Learn more of them while `more()` says so; whether they're all known. */
+  step(more: () => boolean): boolean;
+  token(k: number): Token;
+  /** The line block k starts at (its `data-line`), if the text shown has it. */
+  line(k: number): number | undefined;
+  /** The line block k's text starts at, blank lines before it included: never less than the one before's. */
+  start(k: number): number;
+  readonly slugs: DomOptions['slugs'];
+  /** The block each heading's anchor is in. */
+  readonly anchors: ReadonlyMap<string, number>;
+  /** The blocks of block k (it, or its list items or table rows) that lines `changed` touch. */
+  changed?(k: number, changed: ReadonlySet<number>): Set<object>;
+  /** Builds block k, saying where it is, instead of the view. */
+  build?(k: number, dom: DomBuilder): HTMLElement | null;
+}
 
 /** What's been built for a file: each top-level block's element (null when it has none), kept for the next view of it. */
 interface Built {
@@ -28,16 +50,24 @@ const built = new Lru<string, Built>(6, 2 << 20);
 
 export interface ViewOptions extends Omit<DomOptions, 'slugs' | 'fence'> {
   text: string;
+  /** What to show rather than `text`'s blocks. */
+  blocks?: Blocks;
   /** Lines (1-based) a diff adds or changes, whose blocks are marked `.changed`. */
   changed?: ReadonlySet<number>;
   /** What the elements built are kept under, to show again at once: the file's path, version and how it's shown. */
   key?: string;
   /** Told, as blocks are shown, the first line of the last one, and whether all that will be shown is. */
   onprogress?: (line: number, done: boolean) => void;
-  /** Which top-level blocks to show, as [from, to) ranges in order (to may be Infinity); all of them by default. */
-  ranges?: [number, number][];
-  /** The element standing for blocks `from` to `to` not shown, between ranges (to is Infinity at the end until it's known). */
+  /** Which top-level blocks to show, as [from, to) ranges in order (to may be Infinity); all of them by default. Told
+   *  once all the blocks are known, as a function: nothing's shown till then. */
+  ranges?: [number, number][] | ((blocks: Blocks) => [number, number][]);
+  /** The element standing for blocks `from` to `to` not shown, between ranges (`to` is the end's once it's known).
+   *  Its buttons' `data-dir`, the one focused, is focused again in the gap replacing it. */
   gap?: (from: number, to: number) => HTMLElement;
+  /** Told of the blocks shown besides `ranges`, as they are. */
+  onopen?: (from: number, to: number) => void;
+  /** The blocks to show to reveal block k, in the gap [from, to) (block k alone by default). */
+  span?: (k: number, gap: [number, number]) => [number, number];
 }
 
 /** A stretch of blocks shown, [from, to): those before `done` are in place. */
@@ -69,6 +99,18 @@ function nextFrame(f: () => void) {
   else requestAnimationFrame(() => channel!.port2.postMessage(null));
 }
 
+let soonChannel: MessageChannel | null = null;
+const soonTasks: (() => void)[] = [];
+/** `f` as a task of its own, as soon as may be: work that draws nothing needn't wait for a frame. */
+function nextTask(f: () => void) {
+  if (!soonChannel) {
+    soonChannel = new MessageChannel();
+    soonChannel.port1.onmessage = () => soonTasks.shift()?.();
+  }
+  soonTasks.push(f);
+  soonChannel.port2.postMessage(null);
+}
+
 /** What a slice's blocks go in, together: a frame then lays out the parts before as they were, rather than every
  *  block. It has no box of its own (margins collapse through it), so the blocks show as if they were the document's.
  *  While the document grows it's a paint layer too (`md-layer`), so a frame checks the new part alone before
@@ -90,7 +132,7 @@ function scroller(el: Element): Element | null {
 
 /** Shows a markdown file's blocks in `root`, as much of it as `ranges` says, in slices of time. */
 export class DocView {
-  readonly model: DocModel;
+  readonly model: Blocks;
   private o: ViewOptions;
   private b: Built;
   private dom: DomBuilder;
@@ -100,6 +142,10 @@ export class DocView {
   private queued = false;
   private destroyed = false;
   private reported = 0;
+  /** The ranges to show, until the blocks are all known. */
+  private pending: ((blocks: Blocks) => [number, number][]) | null = null;
+  /** The `data-dir` of the end's gap's button that was focused, to focus again once it's made anew. */
+  private refocus: string | undefined;
 
   constructor(
     private root: HTMLElement,
@@ -110,7 +156,7 @@ export class DocView {
     // this one is all shown: what's below doesn't jump up and back down as the file changes.
     if (root.firstChild) root.style.minHeight = `${root.offsetHeight}px`;
     root.replaceChildren(this.end);
-    this.model = DocModel.of(o.text);
+    this.model = o.blocks ?? DocModel.of(o.text);
     this.changed = o.changed;
     const kept = o.key === undefined ? undefined : built.get(o.key);
     // Elements another view still shows can't be shown here too.
@@ -133,22 +179,37 @@ export class DocView {
         if ('type' in t ? t.type === 'list_item' : Array.isArray(t)) this.b.elements.set(t, el);
         o.each?.(t, el);
       },
-      fence: (code, text, path) => (at ??= []).push({ code, text, path }),
+      fence: (code, text, path, lines) => (at ??= []).push({ code, text, path, lines }),
     });
     this.build = (k) => {
       at = undefined;
-      const e = this.dom.block(this.model.tokens[k], this.model.lines[k][0]);
-      if (e) this.b.elements.set(this.model.tokens[k], e);
+      const m = this.model;
+      let e: HTMLElement | null;
+      if (m.build) e = m.build(k, this.dom);
+      else {
+        e = this.dom.block(m.token(k), m.line(k));
+        if (e) this.b.elements.set(m.token(k), e);
+      }
       if (at) this.b.fences.set(k, at);
       return e;
     };
-    this.runs = (o.ranges ?? [[0, Infinity]]).map(([from, to]) => ({ from, to, done: from, gap: null }));
-    for (const r of this.runs) this.placeGap(r);
-    this.work(-1, FIRST_TEXT);
+    const ranges = o.ranges ?? [[0, Infinity]];
+    this.runs = [];
+    if (typeof ranges === 'function') this.pending = ranges;
+    else this.start(ranges);
+    // Blocks still to be worked out are, after this task (which is showing the view): a frame or so.
+    if (this.pending && !this.model.done) this.schedule(true);
+    else this.work(-1, FIRST_TEXT);
   }
 
   /** Builds top-level block k (the model has it). */
   private build: (k: number) => HTMLElement | null;
+
+  /** Shows `ranges`. */
+  private start(ranges: [number, number][]) {
+    this.runs = ranges.map(([from, to]) => ({ from, to, done: from, gap: null }));
+    for (const r of this.runs) this.placeGap(r);
+  }
 
   /** Mark the blocks lines `changed` touch, rather than those the view started with. */
   mark(changed: ReadonlySet<number> | undefined) {
@@ -162,7 +223,8 @@ export class DocView {
   /** Show blocks [from, to) too, besides those shown: joined to the stretches they touch, the ones above
    *  at once (they're few: a gap opened), the ones below as the rest are. */
   show(from: number, to: number) {
-    if (this.destroyed || from >= to) return;
+    if (this.destroyed || this.pending || from >= to) return;
+    this.o.onopen?.(from, to);
     let k = this.runs.findIndex((r) => r.to >= from);
     if (k < 0) k = this.runs.length;
     const r = this.runs[k];
@@ -178,15 +240,17 @@ export class DocView {
         if (r.done < from) r.done = from;
         this.refreshGap(k);
       }
-      r.to = Math.max(r.to, to);
+      if (to > r.to) {
+        r.to = to;
+        // What's below it shows more of the gap after it, which is less.
+        if (k === this.runs.length - 1) this.dropTail();
+        else this.refreshGap(k + 1);
+      }
     } else {
       const run = { from, to, done: from, gap: null };
       this.runs.splice(k, 0, run);
-      if (!this.runs[k + 1]) {
-        // The end's gap is made again, for what's after it now.
-        this.tail?.remove();
-        this.tail = null;
-      }
+      // The end's gap is made again, for what's after it now.
+      if (!this.runs[k + 1]) this.dropTail();
       this.placeGap(run, this.runs[k + 1]);
       this.refreshGap(k + 1);
     }
@@ -197,12 +261,14 @@ export class DocView {
   /** Shows at once (if it's to be shown) the block line `line` is in, and those before it; its element. */
   reach(line: number): HTMLElement | null {
     const m = this.model;
+    if (this.pending) return null;
     // Lexed a step at a time until a block starts past the line.
-    while (!m.done && !((m.from.at(-1) ?? 0) > line)) {
+    while (!m.done && !(m.length && m.start(m.length - 1) > line)) {
       let once = true;
       m.step(() => once && !(once = false));
     }
-    let k = m.from.findLastIndex((at) => at <= line);
+    let k = m.length - 1;
+    while (k >= 0 && m.start(k) > line) k--;
     if (k < 0) return null;
     this.work(k);
     while (k >= 0 && !this.b.nodes[k]) k--;
@@ -213,13 +279,26 @@ export class DocView {
   reveal(slug: string): HTMLElement | null {
     const sel = `[data-anchor="${CSS.escape(slug)}"]`;
     const at = this.root.querySelector<HTMLElement>(sel);
-    if (at || this.destroyed) return at;
+    if (at || this.destroyed || this.pending) return at;
     this.model.step(() => true);
     const k = this.model.anchors.get(slug);
     if (k === undefined) return null;
-    this.show(k, k + 1);
+    const gap = this.gapAround(k);
+    const [from, to] = gap && this.o.span ? this.o.span(k, gap) : [k, k + 1];
+    this.show(Math.min(from, k), Math.max(to, k + 1));
     this.work(k);
     return this.root.querySelector<HTMLElement>(sel);
+  }
+
+  /** The blocks not shown, [from, to), that block k is among; null when it's to be shown. */
+  private gapAround(k: number): [number, number] | null {
+    let start = 0;
+    for (const r of this.runs) {
+      if (k < r.from) return [start, r.from];
+      if (k < r.to) return null;
+      start = r.to;
+    }
+    return [start, this.model.length];
   }
 
   destroy() {
@@ -230,11 +309,11 @@ export class DocView {
 
   /** Lexes until block k is, or all is. */
   private need(k: number) {
-    while (this.model.tokens.length <= k && !this.model.done) this.model.step(() => this.model.tokens.length <= k);
+    while (this.model.length <= k && !this.model.done) this.model.step(() => this.model.length <= k);
   }
 
   private markBlock(k: number) {
-    if (!this.changed?.size) return;
+    if (!this.changed?.size || !this.model.changed) return;
     for (const t of this.model.changed(k, this.changed)) {
       const e = this.b.elements.get(t);
       if (!e) continue;
@@ -270,6 +349,14 @@ export class DocView {
 
   /** The gap after the last run, once the file's end is known. */
   private tail: HTMLElement | null = null;
+
+  /** The end's gap goes, to be made again once the blocks before it are in. */
+  private dropTail() {
+    if (!this.tail) return;
+    this.refocus = focusedDir(this.tail);
+    this.tail.remove();
+    this.tail = null;
+  }
   /** Always the root's last child, so adding a part never changes which is (purr's `.md > :last-child` would
    *  restyle all of the part before). */
   private end = Object.assign(document.createElement('div'), { hidden: true });
@@ -290,8 +377,11 @@ export class DocView {
     const old = r.gap;
     r.gap = null;
     const start = i > 0 ? this.runs[i - 1].to : 0;
-    if (r.from > start && this.o.gap) old.replaceWith((r.gap = this.o.gap(start, r.from)));
-    else old.remove();
+    const dir = focusedDir(old);
+    if (r.from > start && this.o.gap) {
+      old.replaceWith((r.gap = this.o.gap(start, r.from)));
+      refocus(r.gap, dir);
+    } else old.remove();
   }
 
   /** Joins runs that meet, once the first is in place up to the second. */
@@ -307,11 +397,11 @@ export class DocView {
     }
   }
 
-  /** Marks the last block shown as such, once all are. */
+  /** Marks the last block shown as such, once all are (unless a gap follows it). */
   private lastBlock() {
     this.b.last?.classList.remove('md-last');
     this.b.last = null;
-    const r = this.runs.at(-1);
+    const r = this.tail ? undefined : this.runs.at(-1);
     for (let k = (r?.done ?? 0) - 1; r && k >= r.from && !this.b.last; k--) this.b.last = this.b.nodes[k];
     this.b.last?.classList.add('md-last');
   }
@@ -324,10 +414,11 @@ export class DocView {
     if (layers.length) nextFrame(() => this.settle());
   }
 
-  private schedule() {
+  /** The next slice of work, after the next frame (or `soon`, when it draws nothing). */
+  private schedule(soon = false) {
     if (this.queued || this.destroyed) return;
     this.queued = true;
-    nextFrame(() => {
+    (soon ? nextTask : nextFrame)(() => {
       this.queued = false;
       this.work();
     });
@@ -344,6 +435,11 @@ export class DocView {
     const end = performance.now() + SLICE;
     let text = 0;
     const more = () => (upTo >= 0 && this.due(upTo)) || (text < most && performance.now() < end);
+    if (this.pending) {
+      if (!this.model.step(more)) return this.schedule(true);
+      this.start(this.pending(this.model));
+      this.pending = null;
+    }
     let i = 0;
     let into: HTMLElement | null = null;
     let last = -1;
@@ -361,23 +457,27 @@ export class DocView {
         continue;
       }
       if (!more()) break;
-      if (r.done >= this.model.tokens.length) {
+      if (r.done >= this.model.length) {
         if (this.model.done) {
-          r.to = this.model.tokens.length;
+          r.to = this.model.length;
           continue;
         }
-        this.model.step(() => more() && this.model.tokens.length <= r.done);
+        this.model.step(() => more() && this.model.length <= r.done);
         continue;
       }
       this.place(r.done, (into ??= part()));
-      text += this.model.tokens[r.done].raw.length;
+      text += this.model.token(r.done).raw.length;
       last = r.done++;
     }
     flush();
     const done = i >= this.runs.length;
     if (done && this.model.done && this.o.gap && !this.tail) {
-      const r = this.runs.at(-1);
-      if (r && r.to < this.model.tokens.length) this.end.before((this.tail = this.o.gap(r.to, this.model.tokens.length)));
+      const from = this.runs.at(-1)?.to ?? 0;
+      if (from < this.model.length) {
+        this.end.before((this.tail = this.o.gap(from, this.model.length)));
+        refocus(this.tail, this.refocus);
+      }
+      this.refocus = undefined;
     }
     if (done) {
       this.lastBlock();
@@ -385,10 +485,22 @@ export class DocView {
       this.settle();
     }
     if (last >= 0 || done) {
-      const line = last >= 0 ? this.model.lines[last][0] : this.reported;
+      const line = last >= 0 ? (this.model.line(last) ?? this.model.start(last)) : this.reported;
       this.reported = line;
       this.o.onprogress?.(line, done);
     }
     if (!done) this.schedule();
   }
+}
+
+/** The `data-dir` of the button focused in `gap`, if one is. */
+function focusedDir(gap: HTMLElement): string | undefined {
+  const a = document.activeElement;
+  return a instanceof HTMLElement && gap.contains(a) ? (a.dataset.dir ?? '') : undefined;
+}
+
+/** Focus `gap`'s button `dir` (or its first) when one of the gap it replaced was. */
+function refocus(gap: HTMLElement, dir: string | undefined) {
+  if (dir === undefined) return;
+  (gap.querySelector<HTMLElement>(`[data-dir="${dir}"]`) ?? gap.querySelector<HTMLElement>('button'))?.focus();
 }

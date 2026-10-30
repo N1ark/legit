@@ -5,7 +5,7 @@
   /** The code font's character width, as the last view measured it: the next one starts with it. */
   let knownCharWidth = 0;
   /** What each rendered file showed last, by path: a view opening on a newer version shows it until that's in. */
-  const lastShown = new Lru<string, RenderedText & { changed?: ReadonlySet<number> }>(10, 12_000_000);
+  const lastShown = new Lru<string, RenderedText & { changed?: ReadonlySet<number>; old?: string }>(10, 12_000_000);
   /** Rendered files' heights as last measured, by path, version and width, and by path and width alone (any version's,
    *  about as tall), so a view opening on one starts at (or near) its height. */
   const knownHeights = new Map<string, number>();
@@ -49,7 +49,8 @@
   import ImageDiff from './ImageDiff.svelte';
   import RenderedFile from './RenderedFile.svelte';
   import type { CsvIndex } from './lib/csv.ts';
-  import { addedLines, renderSide, renderedPaths } from './lib/rendered.ts';
+  import { addedLines, renderSide, renderedDiff, renderedPaths } from './lib/rendered.ts';
+  import { DocDiff, type Fold } from './lib/md-diff.ts';
   import Composer from './gh/Composer.svelte';
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
@@ -370,6 +371,10 @@
   const anyRendered = $derived(Object.values(rendered).some(Boolean));
   /** Rendered files' texts once loaded, or why they can't be shown; a table's rows, read with its text. */
   let renderTexts = $state.raw<Record<number, string | { error: string }>>({});
+  /** The old texts of the files shown as the diff of their versions (an edited markdown file), once loaded; null when they can't be. */
+  let renderOlds = $state.raw<Record<number, string | null>>({});
+  /** What each of those diffs opened besides its changes, while this view lives (as the code diff's expansions). */
+  const folds: Record<number, Fold> = {};
   const renderTables = new Map<number, CsvIndex>();
   let renderHeights = $state.raw<Record<number, number>>({});
   function heightKeys(i: number): [string, string] {
@@ -406,11 +411,14 @@
     else renderedPaths.delete(files[i].path);
     if (editing?.i === i) editing = null;
     if (hoverBlock?.i === i) hoverBlock = null;
-    if (on && typeof renderTexts[i] === 'object') {
+    if (on && (typeof renderTexts[i] === 'object' || renderOlds[i] === null)) {
       textAsked.delete(i);
       const t = { ...renderTexts };
       delete t[i];
       renderTexts = t;
+      const o = { ...renderOlds };
+      delete o[i];
+      renderOlds = o;
     }
     const above = collapsed[i] ? 0 : view.top - tops[i];
     const stuck = above > 0 && above < fileHeight(i);
@@ -541,10 +549,11 @@
     if (p && placed && knotsOf.get(p.i)?.some((k, j, all) => j < all.length - 1 && k.line > p.at.line)) placing = null;
   }
 
-  type RenderedView = RenderedText & { changed?: ReadonlySet<number> };
+  type RenderedView = RenderedText & { changed?: ReadonlySet<number>; old?: string };
   /**
-   * What file i shows rendered: its text (a table's rows read with it) and the lines its diff adds, once both are in,
-   * here or already loaded; until then, what it showed last (in an earlier view), if anything; or why it can't be.
+   * What file i shows rendered: its text (a table's rows read with it) and the lines its diff adds, or for an edited
+   * markdown file its old text, once both are in, here or already loaded; until then, what it showed last (in an
+   * earlier view), if anything; or why it can't be. (Without its old text, an edited file shows its new one marked.)
    */
   function renderedView(i: number, rows: FileRows | undefined): RenderedView | { error: string } | undefined {
     const f = files[i];
@@ -552,14 +561,15 @@
     shownText.delete(i);
     if (typeof t === 'object') return t;
     const got = t === undefined ? app.renderedTextIn(summary, i, renderSide(f)!) : { text: t, table: renderTables.get(i) };
+    const old = renderedDiff(f) ? (renderOlds[i] !== undefined ? renderOlds[i] : app.renderedTextIn(summary, i, 'old')?.text) : null;
     // A new file is all new: marking every line of it would mark nothing.
-    const hunks = f.status === 'A' || !f.rows ? null : (rows?.hunks ?? app.contentsIn(summary, i));
-    if (!got || hunks === undefined) {
+    const hunks = f.status === 'A' || !f.rows || typeof old === 'string' ? null : (rows?.hunks ?? app.contentsIn(summary, i));
+    if (!got || hunks === undefined || old === undefined) {
       const last = lastShown.get(f.path);
       if (last) shownText.set(i, last.text);
       return last;
     }
-    const view = { ...got, changed: hunks ? addedLines(hunks, hideWhitespace.value) : undefined };
+    const view = { ...got, changed: hunks ? addedLines(hunks, hideWhitespace.value) : undefined, old: old ?? undefined };
     lastShown.set(f.path, view, view.text.length);
     shownText.set(i, view.text);
     return view;
@@ -567,10 +577,17 @@
   /** The text each rendered file shows now (it may be an earlier version's, until its own is in): what places in it are read against. */
   const shownText = new Map<number, string>();
 
-  /** Fetch file i's text (and read its table) as the pointer comes to its button, so it shows rendered as it's clicked. */
+  /** Fetch file i's text (and read its table, or diff its versions) as the pointer comes to its button, so it shows rendered as it's clicked. */
   function warmRendered(i: number) {
     const side = renderSide(files[i]);
-    if (side && !rendered[i]) app.renderedText(summary, i, side).catch(() => {});
+    if (!side || rendered[i]) return;
+    const text = app.renderedText(summary, i, side);
+    text.catch(() => {});
+    if (renderedDiff(files[i]))
+      Promise.all([app.renderedText(summary, i, 'old'), text]).then(
+        ([a, b]) => DocDiff.warm(a.text, b.text),
+        () => {},
+      );
   }
 
   /** Height of what comes before each file's lines: its images. */
@@ -736,6 +753,12 @@
         },
         (e: Error) => done({ error: e.message || "Can't show it rendered" }),
       );
+      // Its old version, to show the diff of the two; without it (too big, say), the new one marked.
+      if (renderedDiff(files[i]))
+        app.renderedText(summary, i, 'old').then(
+          (r) => alive && (renderOlds = { ...renderOlds, [i]: r.text }),
+          () => alive && (renderOlds = { ...renderOlds, [i]: null }),
+        );
     }
   });
 
@@ -1542,8 +1565,17 @@
               {:else}
                 <div {@attach measureRendered(i)} {@attach renderedBody(i)}>
                   {#if 'text' in page}
-                    {@const { text, table, changed } = page}
-                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} {table} {changed} />
+                    {@const { text, table, changed, old } = page}
+                    <RenderedFile
+                      kind={renderKind(f.path)!}
+                      path={f.path}
+                      {text}
+                      {table}
+                      {changed}
+                      {old}
+                      fold={(folds[i] ??= { opened: [] })}
+                      removed={f.status === 'D'}
+                    />
                   {:else}
                     <div class="note status">{page.error}</div>
                   {/if}

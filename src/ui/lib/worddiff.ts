@@ -19,7 +19,7 @@ const SPACE = /^\s/;
 export const tokenize = (s: string): string[] => s.match(TOKEN) ?? [];
 
 /** Share of their non-whitespace text two token lists have in common, ignoring order (at least the in-order share). */
-function overlap(a: string[], b: string[]): number {
+export function overlap(a: string[], b: string[]): number {
   const count = new Map<string, number>();
   let total = 0;
   for (const t of a) {

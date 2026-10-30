@@ -6,6 +6,7 @@ import { tooltip } from 'purr';
 import { ChatCenteredTextRegular, ImageRegular, InfoRegular, LightbulbRegular, WarningOctagonRegular, WarningRegular } from 'purr/glyphs';
 import { type Component, mount } from 'svelte';
 import { fencePath } from './languages.ts';
+import type { CodeDiff } from './md-align.ts';
 import { type Alert, type DocLink, type Token, type Tokens, docLink, safeHref } from './markdown.ts';
 
 export interface DomOptions {
@@ -18,12 +19,13 @@ export interface DomOptions {
   /** The text of a link's tooltip when it has no title. */
   tip: (href: string) => string;
   /** Each heading's anchor, as `headingSlugs` makes them over the whole file. */
-  slugs: ReadonlyMap<Token, string>;
+  slugs: { get(t: Token): string | undefined };
   /** Called with each block, list item and table row built (a table's header row is its `header` array)
    *  and its element: to mark what a diff changed, say. */
   each?: (t: object, el: HTMLElement) => void;
-  /** Called with each code block whose language can be highlighted: its `<code>`, text and a path of that language. */
-  fence?: (code: HTMLElement, text: string, path: string) => void;
+  /** Called with each code block whose language can be highlighted: its `<code>`, text and a path of that language, and
+   *  whether its lines are elements of their own (a diff's). */
+  fence?: (code: HTMLElement, text: string, path: string, lines: boolean) => void;
   /** Builds inline tokens of types this module doesn't know (a diff's insertions, say) into `into`: false to show their text. */
   inline?: (t: Token, into: Node, spans: (list: Token[], into: Node) => void) => boolean;
 }
@@ -38,7 +40,7 @@ const ALERTS = {
 
 /** Each icon drawn once, then cloned. */
 const icons = new Map<unknown, Element>();
-function icon(c: Component): Node {
+export function icon(c: Component): Node {
   let svg = icons.get(c);
   if (!svg) {
     const host = document.createElement('span');
@@ -100,9 +102,11 @@ export class DomBuilder {
       case 'code': {
         e = el('pre');
         const code = el('code', e);
-        code.textContent = t.text;
+        const marks = (t as CodeDiff).marks;
+        if (marks) this.lines(t as CodeDiff, e, code);
+        else code.textContent = t.text;
         const path = fencePath((t as Tokens.Code).lang);
-        if (path) o.fence?.(code, t.text, path);
+        if (path) o.fence?.(code, t.text, path, !!marks);
         break;
       }
       case 'blockquote':
@@ -168,6 +172,19 @@ export class DomBuilder {
     o.each?.(t, e);
     into?.appendChild(e);
     return e;
+  }
+
+  /** A diff's code block, a line an element: added, removed or kept, saying which line it is on each side when that's known. */
+  private lines(t: CodeDiff, pre: HTMLElement, code: HTMLElement) {
+    pre.classList.add('md-lines');
+    const list = t.text.split('\n');
+    list.forEach((line, k) => {
+      const m = t.marks[k];
+      const e = el('span', code, m === '+' ? 'md-ln add' : m === '-' ? 'md-ln del' : 'md-ln');
+      e.textContent = k < list.length - 1 ? `${line}\n` : line;
+      if (t.lines?.[k]) e.dataset.line = String(t.lines[k]);
+      if (t.olds?.[k]) e.dataset.oldLine = String(t.olds[k]);
+    });
   }
 
   private cell(tag: 'th' | 'td', c: Tokens.TableCell, row: HTMLElement) {
