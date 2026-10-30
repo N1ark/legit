@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 — 2026-10-30
 
 - Markdown, CSV and TSV files can be shown rendered instead of as a diff: the eye button in a file's header (or its menu) shows markdown as GitHub does (code highlighted, tables, task lists, alerts) and CSV/TSV as a table, with what the commit changed washed green. The choice sticks to the file as you go through commits.
 - Inline code in commit messages is monospace again.
