@@ -205,11 +205,14 @@ export class DocView {
   /** Builds top-level block k (the model has it). */
   private build: (k: number) => HTMLElement | null;
 
-  /** Shows `ranges`. */
+  /** Shows `ranges`; each one's gap as the blocks before it are in (until then, a place past them isn't laid out yet). */
   private start(ranges: [number, number][]) {
     this.runs = ranges.map(([from, to]) => ({ from, to, done: from, gap: null }));
-    for (const r of this.runs) this.placeGap(r);
+    this.ungapped = new Set(this.runs);
   }
+
+  /** Runs whose gap isn't placed yet. */
+  private ungapped = new Set<Run>();
 
   /** Mark the blocks lines `changed` touch, rather than those the view started with. */
   mark(changed: ReadonlySet<number> | undefined) {
@@ -230,7 +233,8 @@ export class DocView {
     const r = this.runs[k];
     if (r && r.from <= to) {
       if (from < r.from) {
-        // Above it: built now, put before its first block.
+        // Above it: built now, put before its first block (after its gap).
+        if (this.ungapped.delete(r)) this.placeGap(r, this.runs[k + 1]);
         const before = this.firstNode(r);
         const p = part();
         this.need(r.from - 1);
@@ -390,6 +394,7 @@ export class DocView {
       const [r, n] = [this.runs[i], this.runs[i + 1]];
       if (r.to < n.from || r.done < n.from) continue;
       n.gap?.remove();
+      this.ungapped.delete(n);
       this.runs.splice(i + 1, 1);
       r.to = Math.max(r.to, n.to);
       r.done = n.done;
@@ -465,6 +470,7 @@ export class DocView {
         this.model.step(() => more() && this.model.length <= r.done);
         continue;
       }
+      if (this.ungapped.delete(r)) this.placeGap(r, next);
       this.place(r.done, (into ??= part()));
       text += this.model.token(r.done).raw.length;
       last = r.done++;
