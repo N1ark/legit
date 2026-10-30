@@ -16,6 +16,7 @@
     type RefToken,
     type Token,
     type Tokens,
+    blockLines,
     changedBlocks,
     docLink,
     headingSlugs,
@@ -51,6 +52,8 @@
   const tokens = $derived(doc ? lexDocument(text) : inline ? lexInline(text) : lexBlocks(text));
   const marks = $derived(doc && changed?.size ? changedBlocks(tokens, changed) : null);
   const slugs = $derived(doc ? headingSlugs(tokens) : null);
+  /** Each top-level block's first line in the file, as `data-line`: where the diff and the rendered file meet. */
+  const starts = $derived(doc ? new Map<object, number>(blockLines(tokens).map(([s], k) => [tokens[k], s])) : null);
   const MOD = isMac ? '⌘' : 'Ctrl';
   let root = $state<HTMLElement>();
 
@@ -177,34 +180,34 @@
 {#snippet blocks(list: Token[])}
   {#each list as t, k (k)}
     {#if t.type === 'paragraph'}
-      <p class:changed={marks?.has(t)}>{@render spans((t as Tokens.Paragraph).tokens)}</p>
+      <p class:changed={marks?.has(t)} data-line={starts?.get(t)}>{@render spans((t as Tokens.Paragraph).tokens)}</p>
     {:else if t.type === 'heading'}
       {@const h = t as Tokens.Heading}
-      <svelte:element this={`h${h.depth}`} class:changed={marks?.has(t)} data-anchor={slugs?.get(t)}
+      <svelte:element this={`h${h.depth}`} class:changed={marks?.has(t)} data-anchor={slugs?.get(t)} data-line={starts?.get(t)}
         >{@render spans(h.tokens)}</svelte:element
       >
     {:else if t.type === 'code' && file !== undefined}
-      <pre class:changed={marks?.has(t)}><CodeBlock text={t.text} lang={(t as Tokens.Code).lang} /></pre>
+      <pre class:changed={marks?.has(t)} data-line={starts?.get(t)}><CodeBlock text={t.text} lang={(t as Tokens.Code).lang} /></pre>
     {:else if t.type === 'code'}
       <pre><code>{t.text}</code></pre>
     {:else if t.type === 'blockquote' && (t as Alert).alert}
       {@const [label, Icon] = ALERTS[(t as Alert).alert]}
-      <div class="alert {(t as Alert).alert}" class:changed={marks?.has(t)}>
+      <div class="alert {(t as Alert).alert}" class:changed={marks?.has(t)} data-line={starts?.get(t)}>
         <p class="alert-title"><Icon />{label}</p>
         {@render blocks((t as Alert).tokens)}
       </div>
     {:else if t.type === 'blockquote'}
-      <blockquote class:changed={marks?.has(t)}>{@render blocks((t as Tokens.Blockquote).tokens)}</blockquote>
+      <blockquote class:changed={marks?.has(t)} data-line={starts?.get(t)}>{@render blocks((t as Tokens.Blockquote).tokens)}</blockquote>
     {:else if t.type === 'list'}
       {@const l = t as Tokens.List}
-      <svelte:element this={l.ordered ? 'ol' : 'ul'} start={l.ordered && l.start !== '' ? Number(l.start) : undefined}>
+      <svelte:element this={l.ordered ? 'ol' : 'ul'} start={l.ordered && l.start !== '' ? Number(l.start) : undefined} data-line={starts?.get(t)}>
         {#each l.items as item, j (j)}
           <li class:task-item={item.task} class:changed={marks?.has(item)}>{@render blocks(item.tokens)}</li>
         {/each}
       </svelte:element>
     {:else if t.type === 'table'}
       {@const tb = t as Tokens.Table}
-      <table>
+      <table data-line={starts?.get(t)}>
         <thead
           ><tr class:changed={marks?.has(tb.header)}
             >{#each tb.header as c, j (j)}<th style:text-align={c.align}>{@render spans(c.tokens)}</th>{/each}</tr
@@ -219,10 +222,10 @@
         </tbody>
       </table>
     {:else if t.type === 'hr'}
-      <hr class:changed={marks?.has(t)} />
+      <hr class:changed={marks?.has(t)} data-line={starts?.get(t)} />
     {:else if t.type === 'html' && file !== undefined}
       <!-- Shown as the text it is, never as HTML. -->
-      <pre class="html" class:changed={marks?.has(t)}><code>{t.raw.trim()}</code></pre>
+      <pre class="html" class:changed={marks?.has(t)} data-line={starts?.get(t)}><code>{t.raw.trim()}</code></pre>
     {:else if t.type === 'html'}
       <p>{t.raw.trim()}</p>
     {:else if t.type === 'text'}

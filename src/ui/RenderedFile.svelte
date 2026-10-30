@@ -56,7 +56,7 @@
       <div class="scroll">
         <table>
           <thead>
-            <tr class:changed={hit(...table.lines[0])}>
+            <tr class:changed={hit(...table.lines[0])} data-line={table.lines[0][0]}>
               <th class="n"></th>
               {#each columns as c (c)}<th class:num={numeric[c]}>{table.rows[0][c] ?? ''}</th>{/each}
             </tr>
@@ -68,7 +68,7 @@
               {#if skipped}
                 <tr class="gap"><td class="n"></td><td colspan={columns.length}>{more(skipped)}</td></tr>
               {/if}
-              <tr class:changed={hit(...table.lines[k])}>
+              <tr class:changed={hit(...table.lines[k])} data-line={table.lines[k][0]}>
                 <td class="n">{table.index[k]}</td>
                 {#each columns as c (c)}<td class:num={numeric[c]}>{row[c] ?? ''}</td>{/each}
               </tr>
