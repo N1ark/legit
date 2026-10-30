@@ -22,8 +22,10 @@
   const MAX_ROWS = TABLE_ROWS - 1;
   const MAX_CELLS = 25_000;
   const MAX_AFTER = 100;
-  /** Rows are added this many cells' worth a frame, so a big table never holds a frame up for long. */
-  const FRAME_CELLS = 600;
+  /** Rows are added this many cells' worth a frame (a row costing as much as a few cells), so a big table never holds a
+   *  frame up for long. */
+  const FRAME_CELLS = 800;
+  const ROW_CELLS = 4;
   /** Cells per column the table is sized by from the start (see `sizers`). */
   const SIZERS = 3;
 
@@ -67,11 +69,12 @@
   const left = $derived(shown.length ? (index?.total ?? 0) - 1 - shown[shown.length - 1].n : 0);
   const more = (n: number) => `${n.toLocaleString('en-US')} more ${n === 1 ? 'row' : 'rows'}`;
 
-  /** How many of the rows shown are in yet (the table is busy until all are): a frame's at once, then more each frame. */
-  const step = $derived(Math.max(20, Math.floor(FRAME_CELLS / (width + 1))));
+  /** Rows added a frame. */
+  const step = $derived(Math.max(10, Math.floor(FRAME_CELLS / (width + 1 + ROW_CELLS))));
   // Counted afresh for a new text: its table is made anew, a frame's rows at a time again.
   let added = $state.raw<{ of: CsvIndex | null; rows: number }>({ of: null, rows: 0 });
-  const upTo = $derived(Math.min(shown.length, Math.max(added.of === index ? added.rows : 0, step)));
+  /** How many of the rows shown are in yet (the table is busy until all are): a frame's at once, then more each frame. */
+  const upTo = $derived(Math.min(shown.length, Math.max(added.of === index ? added.rows : 0, 1 + step)));
   /** Where each frame's rows start in `shown`. */
   const sections = $derived(Array.from({ length: Math.ceil((upTo - 1) / step) }, (_, k) => 1 + k * step));
   $effect(() => {
@@ -80,6 +83,9 @@
     const id = requestAnimationFrame(() => (added = next));
     return () => cancelAnimationFrame(id);
   });
+
+  /** The table scrolled sideways, if it is. */
+  let sideways = $state.raw<CsvIndex | null>(null);
 
   /** A row's cells, made here rather than by the template: a table has thousands, made and dropped with the view. */
   function cells(row: Row) {
@@ -99,8 +105,8 @@
     };
   }
 
-  /** Rows of each column's longest cells (and the biggest row number), collapsed: while rows are still coming in, the
-   *  columns are already as wide as they'll be, so a frame adding rows lays out and paints those, not the whole table. */
+  /** Rows of each column's longest cells (and the biggest row number), collapsed: the columns are as wide as they'll be
+   *  from the first frame, so rows coming in don't widen one, which would lay the whole table out and paint it again. */
   const sizers = $derived.by(() => {
     if (shown.length <= step) return [];
     const best = Array.from({ length: width }, () => [] as { len: number; text: string }[]);
@@ -131,7 +137,7 @@
     {#if shown.length}
       {@const top = shown[0]}
       {#key index}
-        <div class="scroll">
+        <div class="scroll" class:sideways={sideways === index} onscroll={(e) => (sideways = e.currentTarget.scrollLeft ? index : null)}>
           <table aria-busy={upTo < shown.length}>
             <thead>
               <tr class:changed={hit(...top.lines)} data-line={top.lines[0]}>
@@ -236,11 +242,8 @@
     text-align: right;
   }
 
-  /* The row numbers stay in view as the table scrolls sideways. */
   th.n,
   tbody :global(.n) {
-    position: sticky;
-    left: 0;
     min-width: 3ch;
     background: var(--surface);
     color: var(--muted);
@@ -252,6 +255,14 @@
 
   th.n {
     background: var(--bg3);
+  }
+
+  /* The row numbers stay in view as the table scrolls sideways (sticky only then: hundreds of sticky cells make every
+     frame that adds rows dearer). */
+  .sideways th.n,
+  .sideways tbody :global(.n) {
+    position: sticky;
+    left: 0;
   }
 
   .changed > :global(*) {
