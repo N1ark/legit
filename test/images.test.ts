@@ -68,7 +68,7 @@ test("files' whole texts to render: each side, uncommitted ones from disk, docum
   writeFileSync(join(t.dir, 'gone.csv'), 'a,b\n1,2\n');
   git('add', '-A');
   git('commit', '-qm', 'texts');
-  writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nMore.\n');
+  writeFileSync(join(t.dir, 'notes.md'), '# Notes\n\nMore. Café ✓\n');
   git('rm', '-q', 'gone.csv');
   writeFileSync(join(t.dir, 'big.md'), 'x'.repeat(600 * 1024));
   writeFileSync(join(t.dir, 'big.csv'), 'y'.repeat(600 * 1024));
@@ -81,10 +81,14 @@ test("files' whole texts to render: each side, uncommitted ones from disk, docum
     const at = (path: string) => d.files.findIndex((f) => f.path === path);
     const text = async (key: string, i: number, side: string) => {
       const r = await s.get(`/api/diff/${key}/text?i=${i}&side=${side}`);
-      return r.ok ? ((await r.json()) as { text: string }).text : r.status;
+      if (r.ok) assert.equal(r.headers.get('content-type'), 'text/plain; charset=utf-8');
+      return r.ok ? r.text() : r.status;
     };
     assert.equal(await text(sha, at('notes.md'), 'old'), '# Notes\n');
-    assert.equal(await text(sha, at('notes.md'), 'new'), '# Notes\n\nMore.\n');
+    assert.equal(await text(sha, at('notes.md'), 'new'), '# Notes\n\nMore. Café ✓\n');
+    const url = `/api/diff/${sha}/text?i=${at('notes.md')}&side=new`;
+    const again = await s.get(url, { 'if-none-match': (await s.get(url)).headers.get('etag')! });
+    assert.equal(again.status, 304, "a commit's text is kept by the page");
     assert.equal(await text(sha, at('gone.csv'), 'old'), 'a,b\n1,2\n');
     assert.equal(await text(sha, at('gone.csv'), 'new'), 404);
     // A document is laid out whole, so past a size it isn't rendered; a table only shows some of its rows.
@@ -95,7 +99,7 @@ test("files' whole texts to render: each side, uncommitted ones from disk, docum
     const w: WorkState = await (await s.get('/api/work')).json();
     const k = w.changes.files.findIndex((f) => f.path === 'notes.md');
     assert.equal(await text(w.changes.sha, k, 'new'), '# Notes\n\nOn disk.\n');
-    assert.equal(await text(w.changes.sha, k, 'old'), '# Notes\n\nMore.\n');
+    assert.equal(await text(w.changes.sha, k, 'old'), '# Notes\n\nMore. Café ✓\n');
   } finally {
     s.close();
   }

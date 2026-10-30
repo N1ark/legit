@@ -1,9 +1,13 @@
 import { IS_TAURI, copyText, persisted, toast } from 'purr';
 import { expandable } from '../../shared/context.ts';
+import { renderKind } from '../../shared/files.ts';
 import { highlight, prepare } from './highlighter.ts';
 import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
+import type { CsvIndex } from './csv.ts';
+import { renderSide, renderedPaths } from './rendered.ts';
+import { readTable } from './tables.ts';
 import { recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
@@ -43,9 +47,11 @@ class App {
   // Bounded by what they hold too (files, rows, lines), so a few huge diffs can't take all the memory.
   private diffs = new Lru<string, Promise<DiffSummary>>(200, 20_000);
   private contents = new Lru<string, Promise<HunkData[]>>(4000, 200_000);
+  private contentsResolved = new WeakMap<Promise<HunkData[]>, HunkData[]>();
   private olds = new Lru<string, Promise<FileLines>>(50, 200_000);
-  /** Whole files shown rendered, weighed by characters. */
-  private texts = new Lru<string, Promise<string>>(20, 20_000_000);
+  /** Whole files shown rendered, weighed by characters, with a table's rows read once; and those in, to show at once. */
+  private texts = new Lru<string, Promise<RenderedText>>(20, 20_000_000);
+  private textsIn = new WeakMap<Promise<RenderedText>, RenderedText>();
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
@@ -358,7 +364,7 @@ class App {
       const batch = request<FileContents>(`/api/diff/${d.sha}/files?i=${missing.join(',')}`);
       for (const i of missing) {
         const p = batch.then((r) => r[i] ?? []);
-        p.catch(() => this.contents.delete(key(i), p));
+        p.then((h) => this.contentsResolved.set(p, h), () => this.contents.delete(key(i), p));
         this.contents.set(key(i), p, Math.max(1, d.files[i].rows));
         got.set(i, p);
       }
@@ -379,16 +385,40 @@ class App {
     return p;
   }
 
-  /** File i's whole text on one side (rejecting when that side has none, or it's too big), to show it rendered. */
-  fileText(d: DiffSummary, i: number, side: 'old' | 'new'): Promise<string> {
+  /** File i's whole text on one side (rejecting when that side has none, or it's too big), to show it rendered; a
+   *  CSV's or TSV's table too (see `readTable`). */
+  renderedText(d: DiffSummary, i: number, side: 'old' | 'new'): Promise<RenderedText> {
     // By the file's token in a snapshot: the next snapshot, made as another file changes, has the same text.
     const key = `${fileKey(d, i)}:${side}`;
     const had = this.texts.get(key);
     if (had) return had;
-    const p = request<{ text: string }>(`/api/diff/${d.sha}/text?i=${i}&side=${side}`).then((r) => r.text);
-    p.then((t) => this.texts.weigh(key, p, t.length), () => this.texts.delete(key, p));
+    const kind = renderKind(d.files[i].path);
+    const p = fetch(`/api/diff/${d.sha}/text?i=${i}&side=${side}`).then(async (res): Promise<RenderedText> => {
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? res.statusText);
+      const text = await res.text();
+      return kind === 'csv' || kind === 'tsv' ? { text, table: await readTable(text, kind === 'tsv' ? '\t' : ',') } : { text };
+    });
+    p.then(
+      (r) => {
+        this.textsIn.set(p, r);
+        this.texts.weigh(key, p, r.text.length);
+      },
+      () => this.texts.delete(key, p),
+    );
     this.texts.set(key, p);
     return p;
+  }
+
+  /** File i's rendered text (as `renderedText`) if it's already in. */
+  renderedTextIn(d: DiffSummary, i: number, side: 'old' | 'new'): RenderedText | undefined {
+    const p = this.texts.get(`${fileKey(d, i)}:${side}`);
+    return p && this.textsIn.get(p);
+  }
+
+  /** File i's contents, if they're already in. */
+  contentsIn(d: DiffSummary, i: number): HunkData[] | undefined {
+    const p = this.contents.get(fileKey(d, i));
+    return p && this.contentsResolved.get(p);
   }
 
   /** The commits prefetched last, whose highlighting is still worth working out. */
@@ -396,22 +426,31 @@ class App {
 
   /**
    * Warm the caches for a commit: its file list, and the files on its first screen (generated ones
-   * start collapsed) and their highlighting, which the worker does when the diff shown leaves it free.
+   * start collapsed) and their highlighting, which the worker does when the diff shown leaves it free;
+   * files it shows rendered, their text and lines.
    */
   prefetch(sha: string): Promise<unknown> {
     this.prefetched = [sha, ...this.prefetched.filter((s) => s !== sha)].slice(0, 4);
     return this.diff(sha)
       .then(async (d) => {
         const first: number[] = [];
+        const rendered = new Set<number>();
         let y = 0;
+        d.files.forEach((f, i) => {
+          const side = renderedPaths.has(f.path) ? renderSide(f) : null;
+          if (!side) return;
+          rendered.add(i);
+          this.renderedText(d, i, side).catch(() => {});
+        });
         for (let i = 0; i < d.files.length && y < 2000; i++) {
           const f = d.files[i];
-          if (f.rows && !f.generated) first.push(i);
+          if (f.rows && !f.generated && !rendered.has(i)) first.push(i);
           y += f.generated ? 44 : 40 + f.rows * 19;
         }
-        if (!first.length) return;
+        const want = [...first, ...[...rendered].filter((i) => d.files[i].rows)];
+        if (!want.length) return;
         prepare(first.map((i) => d.files[i].path));
-        const res = await this.fileContents(d, first);
+        const res = await this.fileContents(d, want);
         for (const i of first) {
           const f = d.files[i];
           if (f.rows > PREHIGHLIGHT_ROWS) continue;
@@ -421,6 +460,12 @@ class App {
         }
       })
       .catch(() => {});
+  }
+
+  /** Warm the caches for the commits either side of the one selected, as stepping to one wants them. */
+  prefetchAround() {
+    const i = this.selected.length === 1 ? this.commits.findIndex((x) => x.sha === this.selected[0]) : -1;
+    if (i >= 0) for (const n of [this.commits[i - 1], this.commits[i + 1]]) if (n) this.prefetch(n.sha);
   }
 
   /**
@@ -554,11 +599,7 @@ class App {
     } else {
       this.selected = [sha];
       // Its neighbours once its own first screen is in, so their requests don't hold it up.
-      this.prefetch(sha).then(() => {
-        if (this.selected.length !== 1 || this.selected[0] !== sha) return;
-        const i = this.commits.findIndex((x) => x.sha === sha);
-        for (const n of [this.commits[i - 1], this.commits[i + 1]]) if (n) this.prefetch(n.sha);
-      });
+      this.prefetch(sha).then(() => this.selected.length === 1 && this.selected[0] === sha && this.prefetchAround());
     }
     this.anchor = sha;
   }
@@ -906,6 +947,12 @@ interface View {
 
 /** Selection key of the "Uncommitted changes" entry. */
 export const WORK = 'work';
+
+/** A file's whole text, to show it rendered; a CSV's or TSV's rows too, read once. */
+export interface RenderedText {
+  text: string;
+  table?: CsvIndex;
+}
 /** What identifies file i's diff: its token in a working-tree snapshot (unchanged files keep it across snapshots), else its place in the diff. */
 export const fileKey = (d: DiffSummary, i: number) => (d.files[i].token ? `${d.files[i].token}:${d.files[i].path}` : `${d.sha}:${i}`);
 

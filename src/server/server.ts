@@ -369,7 +369,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       if (!f) return send(res, 404, { error: 'Not found' });
       return send(res, 200, await oldLines(repo.git, f), etag);
     }
-    // /api/diff/<sha>/text?i=3&side=new: a file's whole text as it was or is, to show it rendered.
+    // /api/diff/<sha>/text?i=3&side=new: a file's whole text as it was or is (as text/plain), to show it rendered.
     const whole = DIFF_TEXT.exec(path);
     if (whole) {
       const side = query.get('side') === 'old' ? 'old' : 'new';
@@ -379,7 +379,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       const data = f && !f.binary ? await fileBytes(repo.git, f, side) : null;
       if (!data) return send(res, 404, { error: 'Not found' });
       if (data.length > (renderKind(f.path) === 'markdown' ? MAX_DOCUMENT : MAX_TEXT)) return send(res, 413, { error: 'Too big to render' });
-      return send(res, 200, { text: data.toString('utf8') }, etag);
+      // The bytes as they are: decoded by the page, never escaped into JSON and parsed out of it.
+      const cache = etag ? { 'cache-control': 'private, no-cache', etag } : { 'cache-control': 'no-store' };
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', ...cache });
+      return void res.end(data);
     }
     // /api/diff/<sha>/image?i=3&side=old: an image file as it was or is, for an <img> of this page only.
     const image = DIFF_IMAGE.exec(path);
