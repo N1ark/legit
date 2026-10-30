@@ -11,8 +11,10 @@
     text: string;
     /** Line numbers (1-based, in `text`) the diff adds or changes, to mark what changed. */
     changed?: ReadonlySet<number>;
+    /** Told as a markdown file is shown, a slice at a time: the first line of the last block shown, and whether that's all. */
+    onprogress?: (line: number, done: boolean) => void;
   }
-  let { kind, path, text, changed }: Props = $props();
+  let { kind, path, text, changed, onprogress }: Props = $props();
 
   /** A table shows its header and this many rows at most, fewer when wide (no more than MAX_CELLS cells, but
    *  50 rows), then up to MAX_AFTER changed rows after them, saying how many are left out between. */
@@ -48,7 +50,7 @@
 
 {#if kind === 'markdown'}
   <div class="rendered">
-    <Markdown {text} file={path} {changed} images />
+    <Markdown {text} file={path} {changed} {onprogress} images />
   </div>
 {:else if table}
   <div class="rendered csv">

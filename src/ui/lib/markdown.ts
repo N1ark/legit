@@ -1,6 +1,7 @@
 // Commit messages as markdown, plus `#123`-style references to GitHub issues and pull requests,
-// and markdown files as GitHub shows them. Only lexed here: Markdown.svelte builds elements from
-// the tokens, so a message's or a file's HTML is never injected, it shows as text.
+// and markdown files as GitHub shows them. Only lexed here: Markdown.svelte (a file's, md-dom.ts) builds
+// elements from the tokens, so a message's or a file's HTML is never injected, it shows as text. A file is lexed
+// a section at a time (DocLexer), so a big one never holds the thread for long.
 
 import { Lexer, Marked, type Token, type Tokens, type TokenizerExtension } from 'marked';
 import { Lru } from './cache.ts';
@@ -80,20 +81,192 @@ const ALERT = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i;
 
 /** A markdown file's blocks: YAML front matter as a code block, GitHub's alerts marked as such. */
 export function lexDocument(text: string): Token[] {
-  const src = text.replace(/\r\n/g, '\n');
-  const front = FRONT_MATTER.exec(src);
-  const tokens = files.lexer(front ? src.slice(front[0].length) : src);
-  for (const t of tokens) {
-    if (t.type !== 'blockquote') continue;
-    const q = t as Tokens.Blockquote;
-    const a = ALERT.exec(q.text);
-    if (a) Object.assign(q, { alert: a[1].toLowerCase(), tokens: files.lexer(q.text.slice(a[0].length)) });
-  }
-  if (front) tokens.unshift({ type: 'code', raw: front[0], text: front[1], lang: 'yaml' } satisfies Tokens.Code);
-  return tokens;
+  const lexer = new DocLexer(text);
+  lexer.step(() => true);
+  return lexer.tokens;
 }
 
-const newlines = (s: string) => {
+/** A line that may define a link reference (`[x]: url`), maybe in a quote or a list: then a section's
+ *  links can't be resolved until the whole file's blocks are lexed. */
+const DEF = /^[ \t>*+\-\d.)]*\[(?:\\.|[^\\\]\n])*\]:/m;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const RAW_HTML = /^ {0,3}(?:<(script|pre|style|textarea)(?=[\s>]|$)|(<!--)|(<\?)|(<!\[CDATA\[)|(<![a-z]))/i;
+/** A section may start with a line that can't continue anything above it across a blank line. */
+const SECTION = /^[a-z#]/i;
+
+/** Where `src` can be cut so its parts lex as the whole does: before a line that starts a heading or a
+ *  paragraph after a blank line, outside fences and raw HTML, the parts `size` characters or more. */
+export function sections(src: string, size: number): number[] {
+  const cuts: number[] = [];
+  let from = 0;
+  let blank = true;
+  let fence: RegExp | null = null;
+  let html: string | null = null;
+  for (let at = 0; at < src.length; ) {
+    let end = src.indexOf('\n', at);
+    if (end < 0) end = src.length;
+    const line = src.slice(at, end);
+    if (fence) {
+      if (fence.test(line)) fence = null;
+    } else if (html) {
+      if (line.toLowerCase().includes(html)) html = null;
+    } else {
+      const f = FENCE.exec(line);
+      const h = f ? null : RAW_HTML.exec(line);
+      if (f && !(f[1][0] === '`' && f[2].includes('`'))) fence = new RegExp(`^ {0,3}${f[1][0]}{${f[1].length},}[ \\t]*$`);
+      else if (h) {
+        const close = h[1] ? `</${h[1].toLowerCase()}>` : h[2] ? '-->' : h[3] ? '?>' : h[4] ? ']]>' : '>';
+        if (!line.slice(h[0].length).toLowerCase().includes(close)) html = close;
+      } else if (blank && at - from >= size && SECTION.test(line)) {
+        cuts.push(at);
+        from = at;
+      }
+    }
+    blank = !fence && !html && /^[ \t]*$/.test(line);
+    at = end + 1;
+  }
+  return cuts;
+}
+
+/** Lexes a file in steps, a section at a time, so a big one never holds the thread for long; the blocks
+ *  come out as `lexDocument`'s would. Each section's links are resolved as soon as it's lexed, unless the
+ *  file may define link references: then once all the blocks are. */
+export class DocLexer {
+  /** The top-level blocks lexed so far, in order. */
+  readonly tokens: Token[] = [];
+  done = false;
+  private lexer = new Lexer(files.defaults);
+  private parts: string[];
+  private next = 0;
+  /** Sections whose blocks are lexed, with where their inline work ends in the lexer's queue. */
+  private blocked: { tokens: Token[]; queued: number }[] = [];
+  private emitted = 0;
+  private inlined = 0;
+  private defer: boolean;
+
+  constructor(text: string, size = 16384) {
+    const src = text.replace(/\r\n/g, '\n');
+    const front = FRONT_MATTER.exec(src);
+    if (front) this.tokens.push({ type: 'code', raw: front[0], text: front[1], lang: 'yaml' } satisfies Tokens.Code);
+    const body = (front ? src.slice(front[0].length) : src).replace(/\r/g, '\n');
+    const cuts = sections(body, size);
+    this.parts = [0, ...cuts].map((at, k) => body.slice(at, cuts[k] ?? body.length));
+    this.defer = DEF.test(body);
+  }
+
+  /** Lex more while `more()` says so; whether it's all lexed. */
+  step(more: () => boolean): boolean {
+    const queue = this.lexer.inlineQueue;
+    while (!this.done && more()) {
+      const b = this.blocked[this.emitted];
+      if (b && this.inlined >= b.queued) {
+        for (const t of b.tokens) this.tokens.push(alert(t));
+        this.emitted++;
+      } else if (this.inlined < queue.length && (!this.defer || this.next === this.parts.length)) {
+        // A few paragraphs before asking again whether there's time: they're quick.
+        const end = Math.min(b ? b.queued : queue.length, this.inlined + 8);
+        while (this.inlined < end) {
+          const q = queue[this.inlined++];
+          this.lexer.inlineTokens(q.src, q.tokens);
+        }
+      } else if (this.next < this.parts.length) {
+        const tokens: Token[] = [];
+        this.lexer.blockTokens(this.parts[this.next++], tokens);
+        this.blocked.push({ tokens, queued: queue.length });
+      } else {
+        this.lexer.inlineQueue = [];
+        this.done = true;
+      }
+    }
+    return this.done;
+  }
+}
+
+/** A file's text lexed as far as it got, with each block's lines and anchors: shared by every view of that text. */
+export class DocModel {
+  private lexer: DocLexer;
+  /** Each top-level block's first and last line. */
+  readonly lines: [number, number][] = [];
+  /** The line each top-level block's raw text starts at, blank lines before it included. */
+  readonly from: number[] = [];
+  /** Every heading's anchor, as GitHub makes them. */
+  readonly slugs = new Map<Token, string>();
+  /** The top-level block each anchor is in. */
+  readonly anchors = new Map<string, number>();
+  private seen = new Set<string>();
+  private line = 1;
+
+  constructor(text: string) {
+    this.lexer = new DocLexer(text);
+    this.sync();
+  }
+
+  /** The top-level blocks lexed so far. */
+  get tokens(): readonly Token[] {
+    return this.lexer.tokens;
+  }
+
+  get done() {
+    return this.lexer.done;
+  }
+
+  /** Lex more while `more()` says so; whether it's all lexed. */
+  step(more: () => boolean): boolean {
+    this.lexer.step(more);
+    this.sync();
+    return this.lexer.done;
+  }
+
+  /** Lines and anchors for the blocks just lexed. */
+  private sync() {
+    const all = this.lexer.tokens;
+    if (this.lines.length < all.length) {
+      for (let k = this.lines.length; k < all.length; k++) {
+        const t = all[k];
+        this.from.push(this.line);
+        this.lines.push(blockLines([t], this.line)[0]);
+        this.line += newlines(t.raw);
+        for (const [h, slug] of headingSlugs([t], new Map(), this.seen)) {
+          this.slugs.set(h, slug);
+          this.anchors.set(slug, k);
+        }
+      }
+    }
+  }
+
+  /** The blocks of block `k` (it, or its list items or table rows) that lines `changed` touch. */
+  changed(k: number, changed: ReadonlySet<number>): Set<object> {
+    return changedBlocks([this.lexer.tokens[k]], changed, this.from[k]);
+  }
+
+  /** Files lexed lately, by text: a few, 3 MB of it in all. */
+  private static kept = new Lru<string, DocModel>(8, 3 << 20);
+
+  /** The model of `text`, lexed as far as any view got. */
+  static of(text: string): DocModel {
+    let m = DocModel.kept.get(text);
+    if (!m) DocModel.kept.set(text, (m = new DocModel(text)), text.length);
+    return m;
+  }
+
+  /** The model of `text`, all of it lexed. */
+  static whole(text: string): DocModel {
+    const m = DocModel.of(text);
+    m.step(() => true);
+    return m;
+  }
+}
+
+/** A `> [!NOTE]` blockquote as an alert, its text lexed again without the marker. */
+function alert(t: Token): Token {
+  if (t.type !== 'blockquote') return t;
+  const a = ALERT.exec(t.text);
+  if (a) Object.assign(t, { alert: a[1].toLowerCase(), tokens: files.lexer(t.text.slice(a[0].length)) });
+  return t;
+}
+
+/** How many line breaks `s` has. */
+export const newlines = (s: string) => {
   let n = 0;
   for (let k = s.indexOf('\n'); k >= 0; k = s.indexOf('\n', k + 1)) n++;
   return n;
@@ -113,7 +286,7 @@ export function blockLines(tokens: readonly { raw: string }[], first = 1): [numb
 /** What a diff changed, as the blocks to mark: top-level blocks with a changed line, but in a list
  *  the items with one (in their own text, a nested list marking its own items) and in a table the
  *  rows (the header's cells, or a row's, which are one line each). */
-export function changedBlocks(tokens: Token[], changed: ReadonlySet<number>): Set<object> {
+export function changedBlocks(tokens: Token[], changed: ReadonlySet<number>, first = 1): Set<object> {
   const out = new Set<object>();
   const hit = (s: number, e: number) => {
     for (let l = s; l <= e; l++) if (changed.has(l)) return true;
@@ -132,7 +305,7 @@ export function changedBlocks(tokens: Token[], changed: ReadonlySet<number>): Se
       } else if (t.type !== 'space' && t.type !== 'def' && hit(s, e)) out.add(item ?? t);
     });
   };
-  if (changed.size) walk(tokens, 1, null);
+  if (changed.size) walk(tokens, first, null);
   return out;
 }
 
@@ -147,10 +320,9 @@ export function plainText(tokens: readonly Token[]): string {
   return out;
 }
 
-/** GitHub's anchor for each heading (`## Getting started` → `getting-started`, repeats numbered `-1`, `-2`). */
-export function headingSlugs(tokens: Token[]): Map<Token, string> {
-  const out = new Map<Token, string>();
-  const seen = new Set<string>();
+/** GitHub's anchor for each heading (`## Getting started` → `getting-started`, repeats numbered `-1`, `-2`);
+ *  given the anchors of the blocks before (`out`, and the anchors taken in `seen`), the next blocks'. */
+export function headingSlugs(tokens: readonly Token[], out = new Map<Token, string>(), seen = new Set<string>()): Map<Token, string> {
   const walk = (list: readonly Token[]) => {
     for (const t of list) {
       if (t.type === 'heading') {

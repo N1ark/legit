@@ -1,31 +1,17 @@
 <script lang="ts">
   // A commit message rendered as markdown, built as elements from the lexer's tokens (never as
   // HTML, so a message's own tags show as text). `#123` links to the repository's GitHub issue.
-  // A markdown file (`file`) renders as GitHub shows it, with the blocks a diff changed marked.
+  // A markdown file (`file`) renders as GitHub shows it, with the blocks a diff changed marked:
+  // built by a view of its own (lib/md-view.ts), a slice at a time, however big it is.
   import { isMac, tooltip } from 'purr';
-  import { ChatCenteredTextRegular, ImageRegular, InfoRegular, LightbulbRegular, WarningOctagonRegular, WarningRegular } from 'purr/glyphs';
+  import { untrack } from 'svelte';
   import { app } from './lib/app.svelte.ts';
-  import CodeBlock from './CodeBlock.svelte';
   import RefIcon from './gh/RefIcon.svelte';
   import { refCard } from './lib/gh-links.ts';
   import { refs } from './lib/gh-refs.svelte.ts';
+  import { DocView } from './lib/md-view.ts';
   import type { IssueRef } from '../shared/gh-issues.ts';
-  import {
-    type Alert,
-    type DocLink,
-    type RefToken,
-    type Token,
-    type Tokens,
-    blockLines,
-    changedBlocks,
-    docLink,
-    headingSlugs,
-    lexBlocks,
-    lexDocument,
-    lexInline,
-    refUrl,
-    safeHref,
-  } from './lib/markdown.ts';
+  import { type RefToken, type Token, type Tokens, lexBlocks, lexInline, refUrl, safeHref } from './lib/markdown.ts';
 
   let {
     text,
@@ -34,6 +20,7 @@
     images = false,
     file,
     changed,
+    onprogress,
   }: {
     text: string;
     /** A title: inline markdown on one line. */
@@ -46,32 +33,45 @@
     file?: string;
     /** A file's lines (1-based) a diff adds or changes, whose blocks are marked. */
     changed?: ReadonlySet<number>;
+    /** Told as a file is shown: the first line of the last top-level block shown, and whether that's all of them. */
+    onprogress?: (line: number, done: boolean) => void;
   } = $props();
 
-  const doc = $derived(file !== undefined);
-  const tokens = $derived(doc ? lexDocument(text) : inline ? lexInline(text) : lexBlocks(text));
-  const marks = $derived(doc && changed?.size ? changedBlocks(tokens, changed) : null);
-  const slugs = $derived(doc ? headingSlugs(tokens) : null);
-  /** Each top-level block's first line in the file, as `data-line`: where the diff and the rendered file meet. */
-  const starts = $derived(doc ? new Map<object, number>(blockLines(tokens).map(([s], k) => [tokens[k], s])) : null);
+  const tokens = $derived(file !== undefined ? [] : inline ? lexInline(text) : lexBlocks(text));
   const MOD = isMac ? '⌘' : 'Ctrl';
   let root = $state<HTMLElement>();
 
-  const ALERTS = {
-    note: ['Note', InfoRegular],
-    tip: ['Tip', LightbulbRegular],
-    important: ['Important', ChatCenteredTextRegular],
-    warning: ['Warning', WarningRegular],
-    caution: ['Caution', WarningOctagonRegular],
-  } as const;
+  // Each top-level block of a file says which line it starts at (`data-line`): where the diff and the rendered file meet.
+  let view: DocView | undefined;
+  $effect(() => {
+    if (!root || file === undefined) return;
+    const v = new DocView(root, {
+      text,
+      file,
+      images,
+      links,
+      tip,
+      changed: untrack(() => changed),
+      key: `${file}\0${images}\0${links}\0${text}`,
+      onprogress: (line, done) => onprogress?.(line, done),
+    });
+    view = v;
+    return () => v.destroy();
+  });
+  $effect(() => {
+    const c = changed;
+    untrack(() => view?.mark(c));
+  });
 
-  /** A link to one of the file's headings: scrolled to, not navigated to. */
-  function jump(e: MouseEvent, slug: string) {
+  /** A file's link followed, or one to its headings scrolled to rather than navigated to. */
+  function click(e: MouseEvent) {
+    const a = (e.target as Element).closest('a');
+    if (!a || !root?.contains(a)) return;
+    const href = a.getAttribute('href') ?? '';
+    if (!href.startsWith('#')) return follow(e, href);
     e.preventDefault();
-    root?.querySelector(`[data-anchor="${CSS.escape(slug)}"]`)?.scrollIntoView({ block: 'center' });
+    view?.reveal(href.slice(1))?.scrollIntoView({ block: 'center' });
   }
-
-  const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
   function follow(e: MouseEvent, href: string) {
     e.preventDefault();
@@ -80,7 +80,7 @@
     app.openUrl(href);
   }
 
-  const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+  const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
   const decode = (s: string) => s.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENTITIES[e]);
   const plain = (s: string): Token => ({ type: 'text', raw: s, text: s, escaped: true });
   const tip = (href: string) => (links === 'mod' ? `${MOD}-click to open ${href}` : href);
@@ -103,35 +103,6 @@
   {/if}
 {/snippet}
 
-<!-- A file's link: to a web page, one of its headings, or one of the repository's files, which can't be opened from here. -->
-{#snippet fileLink(to: DocLink | null, title: string | null | undefined, inner: Token[])}
-  {#if to?.kind === 'url'}
-    {@render link(to.href, title, inner)}
-  {:else if to?.kind === 'anchor'}
-    <a href="#{to.slug}" onclick={(e) => jump(e, to.slug)}>{@render spans(inner)}</a>
-  {:else if to}
-    <span class="file-link" role="link" aria-disabled="true" tabindex="0" use:tooltip={`${to.path || '/'}, in the repository`}
-      >{@render spans(inner)}</span
-    >
-  {:else}
-    {@render spans(inner)}
-  {/if}
-{/snippet}
-
-<!-- A file's image: a web one is shown, one of the repository's can't be loaded yet. -->
-{#snippet fileImage(l: Tokens.Image, at: string)}
-  {@const src = safeHref(l.href)}
-  {#if images && src?.startsWith('https:')}
-    <img class="img" {src} alt={l.text} title={l.title ?? undefined} loading="lazy" referrerpolicy="no-referrer" />
-  {:else}
-    {@const to = docLink(l.href, at)}
-    {@const where = to?.kind === 'file' ? `${to.path}, in the repository: not shown` : `${l.href}: not shown`}
-    <span class="img-missing" role="img" aria-label={l.text || where} use:tooltip={where}
-      ><ImageRegular />{l.text || fileName(to?.kind === 'file' ? to.path : l.href)}</span
-    >
-  {/if}
-{/snippet}
-
 {#snippet spans(list: Token[])}
   {#each list as t, k (k)}
     {#if t.type === 'text'}
@@ -148,14 +119,9 @@
       <code>{t.text}</code>
     {:else if t.type === 'br'}
       <br />
-    {:else if t.type === 'link' && file !== undefined}
-      {@const l = t as Tokens.Link}
-      {@render fileLink(docLink(l.href, file), l.title, l.tokens)}
     {:else if t.type === 'link'}
       {@const l = t as Tokens.Link}
       {@render link(safeHref(l.href), l.title, l.tokens)}
-    {:else if t.type === 'image' && file !== undefined}
-      {@render fileImage(t as Tokens.Image, file)}
     {:else if t.type === 'image' && images && safeHref((t as Tokens.Image).href)?.startsWith('https:')}
       {@const l = t as Tokens.Image}
       <img class="img" src={safeHref(l.href)} alt={l.text} title={l.title ?? undefined} loading="lazy" referrerpolicy="no-referrer" />
@@ -180,52 +146,32 @@
 {#snippet blocks(list: Token[])}
   {#each list as t, k (k)}
     {#if t.type === 'paragraph'}
-      <p class:changed={marks?.has(t)} data-line={starts?.get(t)}>{@render spans((t as Tokens.Paragraph).tokens)}</p>
+      <p>{@render spans((t as Tokens.Paragraph).tokens)}</p>
     {:else if t.type === 'heading'}
-      {@const h = t as Tokens.Heading}
-      <svelte:element this={`h${h.depth}`} class:changed={marks?.has(t)} data-anchor={slugs?.get(t)} data-line={starts?.get(t)}
-        >{@render spans(h.tokens)}</svelte:element
-      >
-    {:else if t.type === 'code' && file !== undefined}
-      <pre class:changed={marks?.has(t)} data-line={starts?.get(t)}><CodeBlock text={t.text} lang={(t as Tokens.Code).lang} /></pre>
+      <svelte:element this={`h${(t as Tokens.Heading).depth}`}>{@render spans((t as Tokens.Heading).tokens)}</svelte:element>
     {:else if t.type === 'code'}
       <pre><code>{t.text}</code></pre>
-    {:else if t.type === 'blockquote' && (t as Alert).alert}
-      {@const [label, Icon] = ALERTS[(t as Alert).alert]}
-      <div class="alert {(t as Alert).alert}" class:changed={marks?.has(t)} data-line={starts?.get(t)}>
-        <p class="alert-title"><Icon />{label}</p>
-        {@render blocks((t as Alert).tokens)}
-      </div>
     {:else if t.type === 'blockquote'}
-      <blockquote class:changed={marks?.has(t)} data-line={starts?.get(t)}>{@render blocks((t as Tokens.Blockquote).tokens)}</blockquote>
+      <blockquote>{@render blocks((t as Tokens.Blockquote).tokens)}</blockquote>
     {:else if t.type === 'list'}
       {@const l = t as Tokens.List}
-      <svelte:element this={l.ordered ? 'ol' : 'ul'} start={l.ordered && l.start !== '' ? Number(l.start) : undefined} data-line={starts?.get(t)}>
+      <svelte:element this={l.ordered ? 'ol' : 'ul'} start={l.ordered && l.start !== '' ? Number(l.start) : undefined}>
         {#each l.items as item, j (j)}
-          <li class:task-item={item.task} class:changed={marks?.has(item)}>{@render blocks(item.tokens)}</li>
+          <li class:task-item={item.task}>{@render blocks(item.tokens)}</li>
         {/each}
       </svelte:element>
     {:else if t.type === 'table'}
       {@const tb = t as Tokens.Table}
-      <table data-line={starts?.get(t)}>
-        <thead
-          ><tr class:changed={marks?.has(tb.header)}
-            >{#each tb.header as c, j (j)}<th style:text-align={c.align}>{@render spans(c.tokens)}</th>{/each}</tr
-          ></thead
-        >
+      <table>
+        <thead><tr>{#each tb.header as c, j (j)}<th style:text-align={c.align}>{@render spans(c.tokens)}</th>{/each}</tr></thead>
         <tbody>
           {#each tb.rows as row, j (j)}
-            <tr class:changed={marks?.has(row)}
-              >{#each row as c, x (x)}<td style:text-align={c.align}>{@render spans(c.tokens)}</td>{/each}</tr
-            >
+            <tr>{#each row as c, x (x)}<td style:text-align={c.align}>{@render spans(c.tokens)}</td>{/each}</tr>
           {/each}
         </tbody>
       </table>
     {:else if t.type === 'hr'}
-      <hr class:changed={marks?.has(t)} data-line={starts?.get(t)} />
-    {:else if t.type === 'html' && file !== undefined}
-      <!-- Shown as the text it is, never as HTML. -->
-      <pre class="html" class:changed={marks?.has(t)} data-line={starts?.get(t)}><code>{t.raw.trim()}</code></pre>
+      <hr />
     {:else if t.type === 'html'}
       <p>{t.raw.trim()}</p>
     {:else if t.type === 'text'}
@@ -241,8 +187,12 @@
 
 {#if inline}
   <span class="md-inline">{@render spans(tokens)}</span>
+{:else if file !== undefined}
+  <!-- Filled by its view (`md-file` styles what that builds); a link's click is handled here, for all of them. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="md doc md-file" bind:this={root} onclick={click}></div>
 {:else}
-  <div class="md" class:doc bind:this={root}>{@render blocks(tokens)}</div>
+  <div class="md">{@render blocks(tokens)}</div>
 {/if}
 
 <style>
@@ -304,6 +254,72 @@
 
   /* ---- A file, as GitHub's file view shows it -------------------------------------------- */
 
+  /* What a file's view builds has no scoping class: these are the rules above, and the file's own,
+     under `.md-file`, each as specific as it would be scoped, so they win and lose where those would. */
+  /* A file's blocks are in parts (lib/md-view.ts): its first has no margin above, its last none below, as
+     `.md > :first-child` and `:last-child` (purr) would make them, and as specific. */
+  :global(:where(.md-file) > .md-part:where(:first-child) > :first-child) {
+    margin-top: 0;
+  }
+
+  :global(.md-file .md-last) {
+    margin-bottom: 0;
+  }
+
+  /* Positioned, a part is a paint layer while the file is shown a part at a time (lib/md-view.ts). It doesn't
+     move, and margins still collapse through it. */
+  :global(.md-file > .md-layer) {
+    position: relative;
+  }
+
+  :global(.md-file a) {
+    color: var(--theme2);
+    text-decoration: none;
+  }
+
+  :global(.md-file a:hover) {
+    text-decoration: underline;
+  }
+
+  :global(.md-file code) {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    padding: 0.05em 0.3em;
+    border-radius: var(--radius-sm, 4px);
+    background: var(--bg3);
+  }
+
+  :global(.md-file pre code) {
+    padding: 0;
+    background: none;
+  }
+
+  :global(.md-file .task) {
+    margin: 0 0.4em 0 0;
+    vertical-align: middle;
+  }
+
+  :global(.md.md-file ul) {
+    list-style-type: disc;
+  }
+
+  :global(.md.md-file :is(ul, ol) ul) {
+    list-style-type: circle;
+  }
+
+  :global(.md.md-file :is(ul, ol) :is(ul, ol) ul) {
+    list-style-type: square;
+  }
+
+  :global(.md-file .task-item) {
+    list-style: none;
+  }
+
+  :global(.md-file .img) {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+  }
+
   .doc {
     --md-block: 0.9em;
     --md-h1: 1.9em;
@@ -312,56 +328,56 @@
     --md-heading-weight: 600;
   }
 
-  .doc :is(h1, h2) {
+  :global(.doc.md-file :is(h1, h2)) {
     padding-bottom: 0.3em;
     border-bottom: 1px solid var(--border);
   }
 
-  .doc code {
+  :global(.doc.md-file code) {
     font-family: var(--mono);
     background: var(--code-inline-bg);
   }
 
-  .doc pre code {
+  :global(.doc.md-file pre code) {
     background: none;
   }
 
-  .doc pre.html {
+  :global(.doc.md-file pre.html) {
     color: var(--muted);
     white-space: pre-wrap;
   }
 
   /* A changed block is washed as a diff's added line, across the whole pane (whoever shows it clips
      the overflow): a border image paints outside the box without taking room or following its corners. */
-  .doc .changed {
+  :global(.doc.md-file .changed) {
     border-image-source: linear-gradient(var(--add-bg), var(--add-bg));
     border-image-slice: 0 fill;
     border-image-outset: var(--gap-2) 100vw;
   }
 
-  .doc li.changed {
+  :global(.doc.md-file li.changed) {
     border-image-outset: 0 100vw;
   }
 
-  .doc th {
+  :global(.doc.md-file th) {
     background: var(--bg3);
   }
 
-  .doc tr.changed > td {
+  :global(.doc.md-file tr.changed > td) {
     background: var(--add-bg);
   }
 
-  .doc tr.changed > th {
+  :global(.doc.md-file tr.changed > th) {
     background: linear-gradient(var(--add-bg), var(--add-bg)), var(--bg3);
   }
 
-  .file-link {
+  :global(.md-file .file-link) {
     color: var(--theme2);
     text-decoration: underline dotted;
     text-underline-offset: 0.2em;
   }
 
-  .img-missing {
+  :global(.md-file .img-missing) {
     display: inline-flex;
     align-items: center;
     gap: var(--gap-2);
@@ -373,38 +389,38 @@
     vertical-align: bottom;
   }
 
-  .alert {
+  :global(.md-file .alert) {
     --alert: var(--info);
     margin: var(--md-block) 0;
     padding: 0 0 0 0.75em;
     border-left: 2px solid var(--border-strong);
   }
 
-  .alert.tip {
+  :global(.md-file .alert.tip) {
     --alert: var(--success);
   }
 
-  .alert.important {
+  :global(.md-file .alert.important) {
     --alert: var(--theme2);
   }
 
-  .alert.warning {
+  :global(.md-file .alert.warning) {
     --alert: var(--warn);
   }
 
-  .alert.caution {
+  :global(.md-file .alert.caution) {
     --alert: var(--danger);
   }
 
-  .alert > :nth-child(2) {
+  :global(.md-file .alert > :nth-child(2)) {
     margin-top: 0;
   }
 
-  .alert > :last-child {
+  :global(.md-file .alert > :last-child) {
     margin-bottom: 0;
   }
 
-  .alert-title {
+  :global(.md-file .alert-title) {
     display: flex;
     align-items: center;
     gap: var(--gap-3);

@@ -2,7 +2,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fencePath, language } from '../src/ui/lib/languages.ts';
-import { blockLines, changedBlocks, docLink, headingSlugs, lexBlocks, lexDocument, lexInline, refUrl, safeHref } from '../src/ui/lib/markdown.ts';
+import { Marked } from 'marked';
+import {
+  DocLexer,
+  DocModel,
+  blockLines,
+  changedBlocks,
+  docLink,
+  headingSlugs,
+  lexBlocks,
+  lexDocument,
+  lexInline,
+  refUrl,
+  safeHref,
+  sections,
+} from '../src/ui/lib/markdown.ts';
 
 const kinds = (text: string) => lexInline(text).map((t) => `${t.type}:${t.raw}`);
 
@@ -110,4 +124,60 @@ test('code block languages', () => {
   assert.equal(fencePath('mermaid'), null);
   assert.equal(fencePath(''), null);
   assert.equal(fencePath(undefined), null);
+});
+
+/** Files whose sections could lex differently from the whole, if cut in the wrong place. */
+const TRICKY = [
+  ['Use [the docs][docs] and [x].', '', '- a', '', '  still a', '- b', '', 'After the list.', '', '> [docs]: https://d.x', '', '[x]: https://x.y "X"'],
+  ['```md', '# not a heading', '', 'Para in a fence', '```', '', '~~~', '```', '', 'Text', '~~~~~', '', 'Out.'],
+  ['<!-- a comment', '', '# not a heading', '', '-->', '', '<pre>', '', 'Kept', '', '</pre>', '', 'Text', '===', '', 'Para'],
+  ['1. one', '', '   two', '', '2. three', '', 'Para', '', '    indented code', '', '    # still code', '', '| a | b |', '|---|---|', '| 1 | 2 |', '', 'Next'],
+  ['> quote', 'lazy line', '', 'Para ``` not a fence ``` here', '', '* x', '', '  * y', '', 'Para', '---', '', 'Last <b>html</b>.'],
+];
+
+/** Lexed in sections as small as can be, a step at a time. */
+function stepwise(text: string, size: number) {
+  const l = new DocLexer(text, size);
+  while (!l.step(((go) => () => go && !(go = false))(true)));
+  return l.tokens;
+}
+
+test('a file lexed in sections, a step at a time, lexes as the whole does', () => {
+  const whole = new Marked({ gfm: true, breaks: false });
+  for (const lines of TRICKY) {
+    const text = lines.join('\n');
+    assert.ok(sections(text, 1).length > 0, 'it is cut');
+    const want = JSON.stringify(whole.lexer(text));
+    for (const size of [1, 30]) assert.equal(JSON.stringify(stepwise(text, size)), want, `${lines[0]}, sections of ${size}`);
+  }
+  // Front matter and alerts too, as the whole file is lexed.
+  const text = ['---', 'a: 1', '---', '# T', '', '> [!TIP]', '> Hi', '', 'End'].join('\n');
+  assert.equal(JSON.stringify(stepwise(text, 1)), JSON.stringify(lexDocument(text)));
+  assert.equal((stepwise(text, 1)[0] as any).lang, 'yaml');
+});
+
+test('sections start at headings and paragraphs after a blank line, outside fences and comments', () => {
+  const text = 'a\n\n# b\n\n- c\n\n```\n\nd\n```\n\n<!--\n\ne\n-->\n\nf\n';
+  const cuts = sections(text, 1);
+  assert.deepEqual(
+    cuts.map((at) => text.slice(at).split('\n')[0]),
+    ['# b', 'f'],
+  );
+  assert.deepEqual(sections(text, 1000), [], 'none smaller than asked');
+});
+
+test("a file's model gives lines, anchors and changes as the whole file's tokens do", () => {
+  const text = ['# A', '', 'p', '', '> ## A', '', '- x', '  # In a list', '', '# A', ...Array.from({ length: 40 }, (_, k) => `\nPara ${k}\n\n## A`)].join('\n');
+  const all = lexDocument(text);
+  const m = new DocModel(text);
+  while (!m.step(((go) => () => go && !(go = false))(true)));
+  assert.deepEqual(m.lines, blockLines(all));
+  assert.deepEqual([...m.slugs.values()], [...headingSlugs(all).values()]);
+  assert.equal(m.anchors.get('a-1'), all.findIndex((t) => t.type === 'blockquote'), 'an anchor in a quote is its block');
+  assert.equal(m.anchors.get('in-a-list'), all.findIndex((t) => t.type === 'list'));
+  const changed = new Set([5, 8, 14]);
+  const want = changedBlocks(all, changed);
+  const got = new Set(m.tokens.flatMap((_, k) => [...m.changed(k, changed)]));
+  assert.equal(JSON.stringify([...got]), JSON.stringify([...want]));
+  assert.equal(DocModel.of(text), DocModel.of(text), 'a text is lexed once');
 });
