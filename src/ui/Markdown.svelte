@@ -554,6 +554,19 @@
     text-decoration-color: var(--del);
   }
 
+  /* Inline code takes its change's tint, not its grey box: deeper in a block added or removed, the word's own in an edit. */
+  :global(.doc.md-file :is(.md-add, tr.md-add > td) code:not(pre code)) {
+    background: var(--add-bg);
+  }
+
+  :global(.doc.md-file :is(.md-del, tr.md-del > td) code:not(pre code)) {
+    background: var(--del-bg);
+  }
+
+  :global(.doc.md-file .md-w code) {
+    background: none;
+  }
+
   /* An edited code block, a line an element: as wide as its longest, each marked as the code diff marks it. */
   :global(.doc.md-file pre.md-lines > code) {
     display: block;

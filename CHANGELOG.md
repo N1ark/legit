@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- In a rendered markdown diff, inline code is tinted green or red with what was added or removed, instead of keeping its grey box.
+
 ## 0.18.0 — 2026-10-30
 
 - A rendered markdown file shows what the commit changed, as GitHub's rich diff does: added blocks green, removed ones red where they were, edited paragraphs, list items, table cells and code lines marked word by word or line by line. Only the changes show, with a little around them; the rest folds into gaps that open with the arrows, as in a code diff.
