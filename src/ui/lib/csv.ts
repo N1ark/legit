@@ -3,18 +3,29 @@
 // unquoted field is kept, text after a closing quote joins the field, an unclosed quote runs to
 // the end, rows may have any number of fields. Blank lines aren't rows.
 
-export interface Table {
-  /** The rows kept, each its fields: the first ones, then any others asked for. */
+export interface CsvIndex {
+  /** The first rows (as many as asked for), each its fields. */
   rows: string[][];
-  /** Each kept row's place among all rows (0 for the first). */
-  index: number[];
-  /** Each kept row's first and last line in the text (1-based): a quoted field can span lines. */
+  /** Each of those rows' first and last line in the text (1-based): a quoted field can span lines. */
   lines: [number, number][];
   /** How many rows the text has in all. */
   total: number;
-  /** The most fields a kept row has. */
+  /** The most fields one of `rows` has. */
   columns: number;
+  /** Where rows past `rows` can be read from (see `laterRows`), every so often: [row, offset, line] for each, ascending. */
+  marks: number[];
 }
+
+/** Rows past those kept, by their place among all rows. */
+export interface LaterRows {
+  rows: string[][];
+  index: number[];
+  lines: [number, number][];
+}
+
+/** How far apart marks are, in rows or characters, whichever comes first: reading from one to a row is quick. */
+const MARK_ROWS = 64;
+const MARK_CHARS = 4096;
 
 const QUOTE = 34;
 const LF = 10;
@@ -60,42 +71,100 @@ function readRow(text: string, i: number, d: number, keep: boolean): { end: numb
   }
 }
 
-/** The rows of `text`, keeping the fields of the first `limit`, and of any later row whose lines
- *  `also` wants (up to `limit` of them); the rest are just counted. */
-export function parseDelimited(
-  text: string,
-  delimiter = ',',
-  limit = Infinity,
-  also?: (first: number, last: number) => boolean,
-): Table {
+const isBreak = (text: string, i: number) => {
+  const c = text.charCodeAt(i);
+  return c === LF ? 1 : c === CR && text.charCodeAt(i + 1) === LF ? 2 : 0;
+};
+
+/** The rows of `text`: the fields of the first `limit`; the rest are counted, and marked to be read later. */
+export function indexDelimited(text: string, delimiter = ',', limit = Infinity): CsvIndex {
   const d = delimiter.charCodeAt(0);
   const n = text.length;
-  const out: Table = { rows: [], index: [], lines: [], total: 0, columns: 0 };
+  const out: CsvIndex = { rows: [], lines: [], total: 0, columns: 0, marks: [] };
   let line = 1;
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let since = Infinity;
+  let at = 0;
   while (i < n) {
-    const c = text.charCodeAt(i);
-    if (c === LF || (c === CR && text.charCodeAt(i + 1) === LF)) {
+    const b = isBreak(text, i);
+    if (b) {
       // A blank line.
-      i += c === LF ? 1 : 2;
+      i += b;
       line++;
       continue;
     }
+    const keep = out.total < limit;
+    if (!keep && (since >= MARK_ROWS || i - at >= MARK_CHARS)) {
+      out.marks.push(out.total, i, line);
+      since = 0;
+      at = i;
+    }
     const first = line;
-    let r = readRow(text, i, d, out.total < limit);
+    const r = readRow(text, i, d, keep);
     line += r.breaks;
-    if (out.total >= limit && also && out.rows.length < 2 * limit && also(first, line)) r = readRow(text, i, d, true);
-    if (r.row.length) {
+    if (keep) {
       out.rows.push(r.row);
-      out.index.push(out.total);
       out.lines.push([first, line]);
       if (r.row.length > out.columns) out.columns = r.row.length;
     }
     out.total++;
+    since++;
     i = r.end;
     if (i < n) {
-      i += text.charCodeAt(i) === LF ? 1 : 2;
+      i += isBreak(text, i);
       line++;
+    }
+  }
+  return out;
+}
+
+/** The rows past `index`'s own that hold any of the lines `wanted` (ascending), the first `max` of them. */
+export function laterRows(text: string, index: CsvIndex, delimiter: string, wanted: ArrayLike<number>, max: number): LaterRows {
+  const out: LaterRows = { rows: [], index: [], lines: [] };
+  const d = delimiter.charCodeAt(0);
+  const n = text.length;
+  const m = index.marks;
+  // Where reading goes on from: the start of row `row` (or blank lines before it), at `line`.
+  let row = -1;
+  let i = 0;
+  let line = 0;
+  for (let w = 0; w < wanted.length && out.rows.length < max; ) {
+    const l = wanted[w];
+    let lo = 0;
+    let hi = m.length / 3 - 1;
+    let k = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (m[mid * 3 + 2] <= l) lo = (k = mid) + 1;
+      else hi = mid - 1;
+    }
+    if (k < 0) {
+      w++;
+      continue;
+    }
+    // From the last mark before the line, unless reading on from here is shorter.
+    if (m[k * 3] > row) [row, i, line] = [m[k * 3], m[k * 3 + 1], m[k * 3 + 2]];
+    for (;;) {
+      for (let b; i < n && (b = isBreak(text, i)); i += b) line++;
+      if (i >= n) return out;
+      const r = readRow(text, i, d, false);
+      const last = line + r.breaks;
+      const hit = last >= l && line <= l;
+      if (hit) {
+        out.rows.push(readRow(text, i, d, true).row);
+        out.index.push(row);
+        out.lines.push([line, last]);
+        while (w < wanted.length && wanted[w] <= last) w++;
+      } else if (last >= l) {
+        // The line is a blank one, before this row.
+        while (w < wanted.length && wanted[w] < line) w++;
+        break;
+      }
+      row++;
+      i = r.end;
+      if (i < n) i += isBreak(text, i);
+      line = last + 1;
+      if (hit) break;
     }
   }
   return out;

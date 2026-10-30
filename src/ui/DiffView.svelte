@@ -1,8 +1,11 @@
 <script module lang="ts">
+  import type { RenderedText } from './lib/app.svelte.ts';
+  import { Lru } from './lib/cache.ts';
+
   /** The code font's character width, as the last view measured it: the next one starts with it. */
   let knownCharWidth = 0;
-  /** Files shown rendered rather than as their diff, by path, for the session: the next commit's view shows them so too. */
-  const renderedPaths = new Set<string>();
+  /** What each rendered file showed last, by path: a view opening on a newer version shows it until that's in. */
+  const lastShown = new Lru<string, RenderedText & { changed?: ReadonlySet<number> }>(10, 12_000_000);
   /** Rendered files' heights as last measured, by path, version and width, and by path and width alone (any version's,
    *  about as tall), so a view opening on one starts at (or near) its height. */
   const knownHeights = new Map<string, number>();
@@ -45,6 +48,8 @@
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
   import RenderedFile from './RenderedFile.svelte';
+  import type { CsvIndex } from './lib/csv.ts';
+  import { addedLines, renderSide, renderedPaths } from './lib/rendered.ts';
   import Composer from './gh/Composer.svelte';
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
@@ -357,17 +362,15 @@
   // A rendered file is as tall as it was laid out, measured as it shows (and as it changes: images
   // loading, the width); until then, as it was last measured, or as its lines. Its rows aren't shown,
   // so nothing that works on them (picking, editing, gaps, threads, ⌘F) reaches it.
-  /** The side of file f to show rendered (the old one of a deleted file), when it can be. */
-  const renderSide = (f: FileSummary): 'old' | 'new' | null =>
-    renderKind(f.path) && !f.binary && (f.rows || f.status === 'R' || f.status === 'C') ? (f.status === 'D' ? 'old' : 'new') : null;
   let rendered = $state<Record<number, boolean>>(
     untrack(() =>
       Object.fromEntries(summary.files.flatMap((f, i) => (renderSide(f) && renderedPaths.has(f.path) ? [[i, true]] : []))),
     ),
   );
   const anyRendered = $derived(Object.values(rendered).some(Boolean));
-  /** Rendered files' texts once loaded, or why they can't be shown. */
+  /** Rendered files' texts once loaded, or why they can't be shown; a table's rows, read with its text. */
   let renderTexts = $state.raw<Record<number, string | { error: string }>>({});
+  const renderTables = new Map<number, CsvIndex>();
   let renderHeights = $state.raw<Record<number, number>>({});
   function heightKeys(i: number): [string, string] {
     const f = files[i];
@@ -384,8 +387,9 @@
 
   function measureRendered(i: number) {
     return (el: HTMLElement) => {
-      const ro = new ResizeObserver(() => {
-        const h = el.offsetHeight;
+      // Its size as observed, not read back, which would lay the view out again after an earlier observer changed it.
+      const ro = new ResizeObserver(([e]) => {
+        const h = Math.round(e.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
         if (!h || h === renderHeights[i]) return;
         renderHeights = { ...renderHeights, [i]: h };
         if (knownHeights.size > 500) knownHeights.clear();
@@ -473,7 +477,7 @@
   function placeIn(i: number, above: number): Anchor | null {
     if (rendered[i]) {
       const el = renderEls.get(i);
-      const text = renderTexts[i];
+      const text = shownText.get(i);
       return el && typeof text === 'string' ? anchorAt(readKnots(el, text), above) : null;
     }
     const rows = contents[i];
@@ -488,7 +492,7 @@
     let y: number;
     if (rendered[i]) {
       const el = renderEls.get(i);
-      const text = renderTexts[i];
+      const text = shownText.get(i);
       // Until its height is measured, the view's layout (which files are shown) doesn't have it.
       if (!el || typeof text !== 'string' || Math.abs(el.offsetHeight - renderedHeight(i)) > 1) return false;
       const knots = readKnots(el, text);
@@ -524,7 +528,7 @@
     const top = p ? p.i : (held?.k ?? -1);
     let placed = false;
     for (const [i, el] of renderEls) {
-      const text = renderTexts[i];
+      const text = shownText.get(i);
       if (typeof text !== 'string') continue;
       const above = view.top - tops[i];
       const at = i !== top ? null : p ? p.at : reading?.i === i && above > 0 && above < fileHeight(i) ? reading.at : null;
@@ -537,17 +541,36 @@
     if (p && placed && knotsOf.get(p.i)?.some((k, j, all) => j < all.length - 1 && k.line > p.at.line)) placing = null;
   }
 
-  /** New-side line numbers of the lines `rows` adds, for the renderer to mark. */
-  const addedCache = new WeakMap<FileRows, ReadonlySet<number>>();
-  function addedLines(rows: FileRows | undefined): ReadonlySet<number> | undefined {
-    if (!rows) return;
-    let set = addedCache.get(rows);
-    if (!set) {
-      const s = new Set<number>();
-      for (let r = 0; r < rows.kind.length; r++) if (rows.kind[r] === ADDED) s.add(rows.n[r]);
-      addedCache.set(rows, (set = s));
+  type RenderedView = RenderedText & { changed?: ReadonlySet<number> };
+  /**
+   * What file i shows rendered: its text (a table's rows read with it) and the lines its diff adds, once both are in,
+   * here or already loaded; until then, what it showed last (in an earlier view), if anything; or why it can't be.
+   */
+  function renderedView(i: number, rows: FileRows | undefined): RenderedView | { error: string } | undefined {
+    const f = files[i];
+    const t = renderTexts[i];
+    shownText.delete(i);
+    if (typeof t === 'object') return t;
+    const got = t === undefined ? app.renderedTextIn(summary, i, renderSide(f)!) : { text: t, table: renderTables.get(i) };
+    // A new file is all new: marking every line of it would mark nothing.
+    const hunks = f.status === 'A' || !f.rows ? null : (rows?.hunks ?? app.contentsIn(summary, i));
+    if (!got || hunks === undefined) {
+      const last = lastShown.get(f.path);
+      if (last) shownText.set(i, last.text);
+      return last;
     }
-    return set;
+    const view = { ...got, changed: hunks ? addedLines(hunks, hideWhitespace.value) : undefined };
+    lastShown.set(f.path, view, view.text.length);
+    shownText.set(i, view.text);
+    return view;
+  }
+  /** The text each rendered file shows now (it may be an earlier version's, until its own is in): what places in it are read against. */
+  const shownText = new Map<number, string>();
+
+  /** Fetch file i's text (and read its table) as the pointer comes to its button, so it shows rendered as it's clicked. */
+  function warmRendered(i: number) {
+    const side = renderSide(files[i]);
+    if (side && !rendered[i]) app.renderedText(summary, i, side).catch(() => {});
   }
 
   /** Height of what comes before each file's lines: its images. */
@@ -703,8 +726,16 @@
       const side = rendered[i] && !collapsed[i] && !textAsked.has(i) ? renderSide(files[i]) : null;
       if (!side) continue;
       textAsked.add(i);
+      // A file shown rendered is shown so in the commits either side too: their texts are wanted.
+      app.prefetchAround();
       const done = (t: string | { error: string }) => alive && (renderTexts = { ...renderTexts, [i]: t });
-      app.fileText(summary, i, side).then(done, (e: Error) => done({ error: e.message || "Can't show it rendered" }));
+      app.renderedText(summary, i, side).then(
+        (r) => {
+          if (r.table) renderTables.set(i, r.table);
+          done(r.text);
+        },
+        (e: Error) => done({ error: e.message || "Can't show it rendered" }),
+      );
     }
   });
 
@@ -1493,6 +1524,8 @@
                 pressed={!!rendered[i]}
                 tip={rendered[i] ? 'Show diff' : 'Show rendered'}
                 onclick={() => setRendered(i, !rendered[i])}
+                onpointerenter={() => warmRendered(i)}
+                onfocus={() => warmRendered(i)}
               >
                 {#if rendered[i]}<CodeRegular />{:else}<EyeRegular />{/if}
               </IconButton>
@@ -1502,17 +1535,17 @@
           </div>
 
           {#if !collapsed[i] && rendered[i]}
-            {@const text = renderTexts[i]}
+            {@const page = renderedView(i, rows)}
             <div class="body page" style:height="{bodyHeight(i)}px">
-              {#if text === undefined}
+              {#if page === undefined}
                 <div class="note status">Loading…</div>
               {:else}
                 <div {@attach measureRendered(i)} {@attach renderedBody(i)}>
-                  {#if typeof text === 'string'}
-                    <!-- A new file is all new: marking every line of it would mark nothing. -->
-                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} changed={f.status === 'A' ? undefined : addedLines(rows)} />
+                  {#if 'text' in page}
+                    {@const { text, table, changed } = page}
+                    <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} {table} {changed} />
                   {:else}
-                    <div class="note status">{text.error}</div>
+                    <div class="note status">{page.error}</div>
                   {/if}
                 </div>
               {/if}
