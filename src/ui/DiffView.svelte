@@ -74,6 +74,7 @@
     rowOfChange,
     rowsIn,
   } from './lib/rows.ts';
+  import { type Anchor, type Knot, anchorAt, readKnots, rowAnchor, rowOfAnchor, yOf } from './lib/place.ts';
 
   let {
     summary,
@@ -395,7 +396,7 @@
     };
   }
 
-  /** Show file i rendered, or as its diff again: a header stuck at the top stays, over the file's start; else the view stays. */
+  /** Show file i rendered, or as its diff again: a header stuck at the top stays, over the same place; else the view stays. */
   function setRendered(i: number, on: boolean) {
     if (on) renderedPaths.add(files[i].path);
     else renderedPaths.delete(files[i].path);
@@ -409,12 +410,131 @@
     }
     const above = collapsed[i] ? 0 : view.top - tops[i];
     const stuck = above > 0 && above < fileHeight(i);
+    const at = stuck ? placeIn(i, above) : null;
     rendered[i] = on;
     collapsed[i] = false;
-    if (stuck && scroller) {
-      scroller.scrollTop -= above;
+    knotsOf.delete(i);
+    placing = reading = null;
+    if (!stuck || !scroller) return keepHeld();
+    flushSync();
+    if (!at || !showPlace(i, at)) {
+      scroller.scrollTop += tops[i] - view.top;
       measure();
-    } else keepHeld();
+    }
+    // Shown before it's laid out (or as it lays out): placed again as it is.
+    if (on && at) placing = { i, at, until: performance.now() + 2000 };
+  }
+
+  // The place at the top of the view stays there as a file switches between its diff and rendered
+  // view, and as a rendered file's layout changes (laid out, images loading, the width): see lib/place.ts.
+  const renderEls = new Map<number, HTMLElement>();
+  /** Rendered files' layouts, as last read. */
+  const knotsOf = new Map<number, Knot[]>();
+  let bodies = $state(0);
+  /** File i just switched to rendered at place `at`: placed again as it lays out, until the reader scrolls or it's all there. */
+  let placing: { i: number; at: Anchor; until: number } | null = null;
+  /** Where the view was in the rendered file at its top, as of the last scroll: what a layout change keeps there. */
+  let reading: { i: number; at: Anchor } | null = null;
+
+  function renderedBody(i: number) {
+    return (el: HTMLElement) => {
+      renderEls.set(i, el);
+      untrack(() => bodies++);
+      return () => {
+        if (renderEls.get(i) === el) renderEls.delete(i);
+        knotsOf.delete(i);
+      };
+    };
+  }
+
+  onMount(() => {
+    const el = filesEl.closest('[data-scroller]') as HTMLElement;
+    // Read as the reader scrolls, not as the view's measured: a layout change can scroll it (scroll anchoring) before it's held.
+    const read = () => {
+      if (!anyRendered) return;
+      const top = el.getBoundingClientRect().top + inset - filesEl.getBoundingClientRect().top;
+      const i = top > 0 && top < tops[files.length] ? rowAt(tops, top) : -1;
+      const k = knotsOf.get(i);
+      reading = k && rendered[i] && !collapsed[i] ? { i, at: anchorAt(k, top - tops[i]) } : null;
+    };
+    const drop = () => (placing = null);
+    const input = ['wheel', 'touchstart', 'pointerdown'] as const;
+    el.addEventListener('scroll', read, { passive: true });
+    for (const t of input) el.addEventListener(t, drop, { passive: true });
+    document.addEventListener('keydown', drop);
+    return () => {
+      el.removeEventListener('scroll', read);
+      for (const t of input) el.removeEventListener(t, drop);
+      document.removeEventListener('keydown', drop);
+    };
+  });
+
+  /** The place in file i's text `above` px into its body, as it shows now; null when that isn't known yet. */
+  function placeIn(i: number, above: number): Anchor | null {
+    if (rendered[i]) {
+      const el = renderEls.get(i);
+      const text = renderTexts[i];
+      return el && typeof text === 'string' ? anchorAt(readKnots(el, text), above) : null;
+    }
+    const rows = contents[i];
+    if (!rows) return null;
+    const y = above - lead(i);
+    const [r] = rowsIn(rows.kind.length, (k) => rowY(i, k), y, y + 1);
+    return rowAnchor(rows, r, r < rows.kind.length ? (y - rowY(i, r)) / (rowSpan(i, r) * ROW) : 0, renderSide(files[i]) ?? 'new');
+  }
+
+  /** Scroll place `at` of file i to the top of the view, as file i shows now; false when it can't be found yet. */
+  function showPlace(i: number, at: Anchor): boolean {
+    let y: number;
+    if (rendered[i]) {
+      const el = renderEls.get(i);
+      const text = renderTexts[i];
+      // Until its height is measured, the view's layout (which files are shown) doesn't have it.
+      if (!el || typeof text !== 'string' || Math.abs(el.offsetHeight - renderedHeight(i)) > 1) return false;
+      const knots = readKnots(el, text);
+      knotsOf.set(i, knots);
+      y = yOf(knots, at);
+    } else {
+      const rows = contents[i];
+      if (!rows) return false;
+      const { r, frac } = rowOfAnchor(rows, at, renderSide(files[i]) ?? 'new');
+      y = lead(i) + rowY(i, r) + frac * rowSpan(i, r) * ROW;
+    }
+    const drift = tops[i] + y - view.top;
+    if (Math.abs(drift) >= 0.5) {
+      scroller.scrollTop += drift;
+      measure();
+    }
+    return true;
+  }
+
+  $effect(() => {
+    void renderHeights;
+    void paneWidth;
+    void bodies;
+    untrack(holdPlace);
+  });
+
+  /** Rendered files' layouts changed: read them again, and keep the place at the top of the view there. */
+  function holdPlace() {
+    if (!scroller) return;
+    measure();
+    if (placing && (performance.now() > placing.until || !rendered[placing.i])) placing = null;
+    const p = placing;
+    const top = p ? p.i : (held?.k ?? -1);
+    let placed = false;
+    for (const [i, el] of renderEls) {
+      const text = renderTexts[i];
+      if (typeof text !== 'string') continue;
+      const above = view.top - tops[i];
+      const at = i !== top ? null : p ? p.at : reading?.i === i && above > 0 && above < fileHeight(i) ? reading.at : null;
+      if (at && showPlace(i, at)) {
+        placed = true;
+        reading = { i, at };
+      } else knotsOf.set(i, readKnots(el, text));
+    }
+    // Its block is laid out, and the next one: nothing left to wait for.
+    if (p && placed && knotsOf.get(p.i)?.some((k, j, all) => j < all.length - 1 && k.line > p.at.line)) placing = null;
   }
 
   /** New-side line numbers of the lines `rows` adds, for the renderer to mark. */
@@ -1387,7 +1507,7 @@
               {#if text === undefined}
                 <div class="note status">Loading…</div>
               {:else}
-                <div {@attach measureRendered(i)}>
+                <div {@attach measureRendered(i)} {@attach renderedBody(i)}>
                   {#if typeof text === 'string'}
                     <!-- A new file is all new: marking every line of it would mark nothing. -->
                     <RenderedFile kind={renderKind(f.path)!} path={f.path} {text} changed={f.status === 'A' ? undefined : addedLines(rows)} />
