@@ -4,8 +4,8 @@
   // editor; "Mark resolved" stages one ("Mark all resolved" every one), and asks again while it still has conflict markers.
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
-  import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, tooltip } from 'purr';
-  import { ArrowCounterClockwiseRegular, CheckBold, CheckRegular, ChecksRegular, FileArrowUpRegular } from 'purr/glyphs';
+  import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, menu, tooltip } from 'purr';
+  import { ArrowCounterClockwiseRegular, CheckBold, CheckRegular, ChecksRegular, CopyRegular, FileArrowUpRegular } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
@@ -71,6 +71,30 @@
     app.sync('resolveBlock', { path, line, side, id }, undefined, false, { label: 'Undo', run: () => app.sync('unresolveBlock', { path, id }) });
   }
 
+  /** A listed file's menu: open it, mark it resolved (or stage it again), copy its path. */
+  function fileMenu(e: MouseEvent, path: string, o: { line?: number | null; exists?: boolean; markers?: boolean; stage?: boolean } = {}) {
+    e.preventDefault();
+    menu.show(e, [
+      {
+        label: 'Open in Zed',
+        icon: FileArrowUpRegular,
+        disabled: o.exists === false,
+        note: o.line ? `At line ${o.line}` : undefined,
+        run: () => app.openInZed(path, o.line ?? undefined),
+      },
+      {
+        label: o.stage ? 'Stage' : 'Mark resolved',
+        icon: CheckRegular,
+        disabled: app.busy,
+        confirm: o.markers ? 'It still has conflict markers. Click again' : undefined,
+        run: () => resolve(path, !!o.markers),
+      },
+      'separator',
+      { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${path}`, 'path') },
+      { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(path, 'relative path') },
+    ]);
+  }
+
   /** A path split into its folder (with the trailing slash) and the file's name. */
   const split = (path: string) => {
     const k = path.lastIndexOf('/') + 1;
@@ -113,13 +137,6 @@
         <ul class="files">
           {#each c.files as f (f.path)}
             <li>
-              <span class="path mono" use:tooltip={f.path}>{f.path}</span>
-              <Tag label={f.status} />
-              {#if f.markers}<span use:tooltip={'<<<<<<<, ======= or >>>>>>> at a line start'}><Tag color="var(--warn)" label="conflict markers" /></span>{/if}
-              <span class="spacer"></span>
-              <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
-                <FileArrowUpRegular /> Open in Zed
-              </Button>
               {#if f.markers}
                 <ConfirmButton
                   size="sm"
@@ -138,6 +155,18 @@
                   <CheckRegular /> Mark resolved{f.exists ? '' : ' (deleted)'}
                 </Button>
               {/if}
+              <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
+                <FileArrowUpRegular /> Open in Zed
+              </Button>
+              <span class="spacer"></span>
+              {#if f.markers}<span use:tooltip={'<<<<<<<, ======= or >>>>>>> at a line start'}><Tag color="var(--warn)" label="conflict markers" /></span>{/if}
+              <Tag label={f.status} />
+              <button
+                class="path mono"
+                use:tooltip={`${f.path}${f.exists ? '\nDouble-click to open in Zed' : ''}`}
+                ondblclick={() => f.exists && app.openInZed(f.path, f.line ?? undefined)}
+                oncontextmenu={(e) => fileMenu(e, f.path, f)}>{f.path}</button
+              >
             </li>
           {/each}
         </ul>
@@ -147,13 +176,18 @@
         <ul class="files">
           {#each c.unstaged as path (path)}
             <li>
-              <span class="path mono" use:tooltip={path}>{path}</span>
-              <Tag color="var(--warn)" label="changed since staged" />
-              <span class="spacer"></span>
-              <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUpRegular /> Open in Zed</Button>
               <Button size="sm" onclick={() => resolve(path)} disabled={app.busy} {@attach tip('Stage the file as it is now (git add)')}>
                 <CheckRegular /> Stage
               </Button>
+              <Button size="sm" variant="ghost" onclick={() => app.openInZed(path)}><FileArrowUpRegular /> Open in Zed</Button>
+              <span class="spacer"></span>
+              <Tag color="var(--warn)" label="changed since staged" />
+              <button
+                class="path mono"
+                use:tooltip={`${path}\nDouble-click to open in Zed`}
+                ondblclick={() => app.openInZed(path)}
+                oncontextmenu={(e) => fileMenu(e, path, { stage: true })}>{path}</button
+              >
             </li>
           {/each}
         </ul>
@@ -334,6 +368,7 @@
   }
 
   .path {
+    cursor: default;
     color: var(--color2);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -343,6 +378,12 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .path:focus-visible {
+    outline: 2px solid var(--theme2);
+    outline-offset: 2px;
+    border-radius: var(--radius);
   }
 
   .actions {

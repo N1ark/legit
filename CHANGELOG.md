@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- In the conflict view's file list, **Mark resolved** and **Open in Zed** come first, on the left, with the file's path and tags on the right. Double-click a path to open it in Zed, or right-click it for **Open in Zed**, **Mark resolved**, **Copy path** and **Copy relative path**.
 - Resolve conflicts right in the conflict view's diff: each conflict's `<<<<<<<` line has **Keep HEAD**, **Keep *feature*** (named as its markers name the sides) and **Keep both**. The file is rewritten at once, and marked resolved when no conflict is left in it; the toast's **Undo** puts it back.
 
 ## 0.19.0 — 2026-10-31
