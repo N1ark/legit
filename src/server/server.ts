@@ -164,7 +164,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     blind = true;
     for (const c of clients) c.write('data: blind\n\n');
   };
-  const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG)/;
+  const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG|legit-stash$)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
   const watchers = dirs.map((d) =>
     watchTree(

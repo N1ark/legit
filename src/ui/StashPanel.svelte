@@ -26,6 +26,11 @@
     if (open) await load();
   }
 
+  /** Restore or apply, offering to go ahead with conflicts when it would conflict; the conflict view then takes over. */
+  function restore(op: 'stashPop' | 'stashApply', sha: string, done: string) {
+    app.applyStash(op, sha, done, () => (app.repo?.conflict ? (open = false) : open && load()));
+  }
+
   /** What a stash is called in the list. */
   const title = (s: { message: string; branch?: string | null }) =>
     s.branch ? `Left on ${s.branch}` : s.message.replace(/^(WIP on|On) [^:]+: /, '') || s.message;
@@ -75,15 +80,15 @@
               <Button
                 size="sm"
                 variant="primary"
-                {@attach tip("Apply it, then remove it from the list; only if it can't conflict with your files")}
+                {@attach tip('Apply it, then remove it from the list; if it conflicts with your files, it asks first')}
                 disabled={app.busy}
-                onclick={() => run('stashPop', { sha: s.sha }, 'Restored the stashed changes')}>Restore</Button
+                onclick={() => restore('stashPop', s.sha, 'Restored the stashed changes')}>Restore</Button
               >
               <Button
                 size="sm"
-                {@attach tip("Apply it and keep it in the list; only if it can't conflict with your files")}
+                {@attach tip('Apply it and keep it in the list; if it conflicts with your files, it asks first')}
                 disabled={app.busy}
-                onclick={() => run('stashApply', { sha: s.sha }, 'Applied the stash; it stays in the list')}>Apply</Button
+                onclick={() => restore('stashApply', s.sha, 'Applied the stash; it stays in the list')}>Apply</Button
               >
               <ConfirmButton
                 size="sm"
@@ -110,7 +115,7 @@
                 size="sm"
                 {@attach tip('Apply these changes again')}
                 disabled={app.busy}
-                onclick={() => run('stashApply', { sha: d.sha }, 'Applied the dropped stash')}>Apply</Button
+                onclick={() => restore('stashApply', d.sha, 'Applied the dropped stash')}>Apply</Button
               >
             </li>
           {/each}

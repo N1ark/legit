@@ -1,6 +1,6 @@
 // Syncing with other branches and remotes: fetch, pull (fast-forward, rebase or merge), merging
 // another branch in or rebasing onto it (or rebuilding on it from some commits), and finishing or
-// aborting a merge, rebase, cherry-pick or revert that stopped halfway.
+// aborting a merge, rebase, cherry-pick or revert that stopped halfway, or a stash applied with conflicts.
 //
 // Fast-forwards and rebases happen in memory and move HEAD once, carrying uncommitted changes
 // along like `git switch` (git refuses, changing nothing, if they'd be overwritten). A rebase
@@ -8,9 +8,9 @@
 // it only starts from a clean working tree, so aborting it can always get back.
 
 import { existsSync } from 'node:fs';
-import { lstat, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { CommitDiff, Conflict, ConflictFile, EditStop, RebuildPlan, RepoState, SyncResult } from '../shared/types.ts';
 import { DIFF_ARGS, parseDiff } from './diff.ts';
@@ -64,13 +64,49 @@ export function inProgress(git: Git): Kind | null {
   if (has('MERGE_HEAD')) return 'merge';
   if (has('CHERRY_PICK_HEAD')) return 'cherry-pick';
   if (has('REVERT_HEAD')) return 'revert';
+  if (has(STASH_NOTE)) return 'stash';
   return null;
 }
+
+/** `inProgress`, or 'stash' for unmerged files with nothing in progress (a `git stash pop` that conflicted in a terminal, say). */
+async function currentKind(git: Git): Promise<Kind | null> {
+  return inProgress(git) ?? ((await unmergedPaths(git)).size ? 'stash' : null);
+}
+
+/** What legit notes about a stash it applied with conflicts (see stash.ts): while it's there, that's in progress. */
+export const STASH_NOTE = 'legit-stash';
+
+export interface StashNote {
+  sha: string;
+  /** The stash's message, e.g. "On main: legit: on main". */
+  message: string;
+  /** Restored: it was removed from the stash list (and saved as `kept`), so aborting puts it back. */
+  pop: boolean;
+  kept: string | null;
+  /** Paths (byte strings) applying it changed, and the untracked files it created. */
+  tracked: string[];
+  untracked: string[];
+}
+
+export const readStashNote = (git: Git): Promise<StashNote | null> =>
+  readFile(join(git.gitDir, STASH_NOTE), 'utf8').then((s) => JSON.parse(s) as StashNote, () => null);
+export const writeStashNote = (git: Git, note: StashNote) => writeFile(join(git.gitDir, STASH_NOTE), JSON.stringify(note));
+export const removeStashNote = (git: Git) => unlink(join(git.gitDir, STASH_NOTE)).catch(() => {});
+
+/** A stash as messages name it: "the changes left on main", or its own message. */
+const stashName = (message: string) => {
+  const branch = /: legit: on ([^:]+)$/.exec(message)?.[1];
+  return branch ? `the changes left on ${branch}` : `the stash "${message.replace(/^(WIP on|On) [^:]+: /, '')}"`;
+};
 
 export const readGitFile = (git: Git, f: string) => readFile(join(git.gitDir, f), 'utf8').then((s) => s.trim(), () => '');
 const rebaseDir = (git: Git) => (existsSync(join(git.gitDir, 'rebase-merge')) ? 'rebase-merge' : 'rebase-apply');
 
 async function describe(git: Git, kind: Kind): Promise<string> {
+  if (kind === 'stash') {
+    const note = await readStashNote(git);
+    return note ? `${note.pop ? 'Restoring' : 'Applying'} ${stashName(note.message)}` : 'Files git left conflicted, with no merge or rebase in progress (a git stash pop, say)';
+  }
   if (kind === 'merge') return (await readGitFile(git, 'MERGE_MSG')).split('\n')[0] || 'Merge';
   if (kind === 'am') return 'Applying patches (git am)';
   if (kind === 'rebase') {
@@ -133,12 +169,13 @@ async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exis
 }
 
 async function conflictState(git: Git): Promise<Conflict | null> {
-  const kind = inProgress(git);
+  const unmerged = await unmergedPaths(git);
+  const kind = inProgress(git) ?? (unmerged.size ? 'stash' : null);
   if (!kind) return null;
-  const [title, unmerged, staged] = await Promise.all([
+  const [title, staged, note] = await Promise.all([
     describe(git, kind),
-    unmergedPaths(git),
     git.run(['diff-index', '--cached', '--name-only', '-z', 'HEAD'], { env: NO_LOCKS, allowFail: true }),
+    kind === 'stash' ? readStashNote(git) : null,
   ]);
   const files: ConflictFile[] = await Promise.all(
     [...unmerged].map(async ([path, stages]) => ({
@@ -147,10 +184,14 @@ async function conflictState(git: Git): Promise<Conflict | null> {
       ...(await inspect(git, path)),
     })),
   );
-  const resolved = [...new Set(staged.out.toString('latin1').split('\0'))].filter((p) => p && !unmerged.has(p)).map(toUtf8);
+  // A stash's: only its own files, not the other changes staged before it was applied.
+  const mine = note && new Set(note.tracked);
+  const resolved = [...new Set(staged.out.toString('latin1').split('\0'))]
+    .filter((p) => p && !unmerged.has(p) && (!mine || mine.has(p)))
+    .map(toUtf8);
   const edit = kind === 'rebase' && !unmerged.size ? await editStop(git) : null;
   const unstaged = kind === 'rebase' && !edit ? (await unstagedPaths(git, unmerged)).map(toUtf8) : [];
-  return { kind, title, files, resolved, unstaged, edit };
+  return { kind, title, files, resolved, unstaged, edit, stash: note && { sha: note.sha, pop: note.pop } };
 }
 
 /** What legit notes about an edit it started (see edit.ts), inside git's rebase dir so it goes with it. */
@@ -632,7 +673,7 @@ export function markResolved(repo: Repo, req: { path?: string; paths?: string[];
   });
 }
 
-const CONTINUE: Record<Kind, string[]> = {
+const CONTINUE: Record<Exclude<Kind, 'stash'>, string[]> = {
   merge: ['merge', '--continue'],
   rebase: ['rebase', '--continue'],
   'cherry-pick': ['cherry-pick', '--continue'],
@@ -652,12 +693,13 @@ export function continueOp(repo: Repo): Promise<SyncResult> {
 /** `continueOp`, for a caller already holding the repo's lock. `label` names the undo step. */
 export async function continueNow(repo: Repo, label?: string): Promise<SyncResult> {
     const git = repo.git;
-    const kind = inProgress(git);
+    const kind = await currentKind(git);
     if (!kind) throw new GitError('There is no merge, rebase, cherry-pick or revert to continue.');
     const unmerged = [...(await unmergedPaths(git)).keys()].map(toUtf8);
     if (unmerged.length) {
       throw new GitError(`Still conflicted: ${unmerged.join(', ')}. Resolve and mark them resolved first. Nothing was changed.`);
     }
+    if (kind === 'stash') return finishStash(repo);
     if (kind === 'rebase') {
       const unstaged = (await unstagedPaths(git, new Map())).map(toUtf8);
       if (unstaged.length) {
@@ -712,29 +754,10 @@ export function abortOp(repo: Repo): Promise<SyncResult> {
 /** `abortOp`, for a caller already holding the repo's lock. `untracked`: new files to save too. */
 export async function abortNow(repo: Repo, untracked: string[] = []): Promise<SyncResult> {
     const git = repo.git;
-    const kind = inProgress(git);
+    const kind = await currentKind(git);
     if (!kind) throw new GitError('There is no merge, rebase, cherry-pick or revert to abort.');
-    const head = await repo.head();
-    let saved: string | null = null;
-    let changed = false;
-    if (head) {
-      const tree = await worktreeTree(git, head, [...new Set([...(await changedPaths(git)), ...untracked])]);
-      changed = tree !== (await git.treeOf(head));
-      let sha = head;
-      if (changed) {
-        const ident = await git.committerIdent().catch(() => `legit <legit@localhost> ${Math.floor(Date.now() / 1000)} +0000`);
-        const title = await describe(git, kind);
-        sha = git.writeCommit({
-          tree, parents: [head], author: ident, committer: ident, extra: [],
-          message: fromUtf8(`Work in progress before aborting the ${kind}\n\n${title}\n`),
-        });
-        await git.flush();
-      }
-      // HEAD itself is kept too (it's the parent): an aborted rebase or cherry-pick moves it back.
-      saved = `${ABORTED}/${(await opBranch(repo, kind)) ?? '_detached'}/${Date.now()}-${kind}`;
-      await git.run(['update-ref', '-m', `legit: before aborting the ${kind}`, saved, sha, '']);
-      await pruneRefs(git);
-    }
+    if (kind === 'stash') return abortStash(repo);
+    const { saved, changed } = await saveWork(repo, kind, untracked);
     const r = await git.run([kind, '--abort'], { allowFail: true, timeout: 120_000 });
     if (r.code !== 0) {
       throw new GitError(`Couldn't abort the ${kind}.${saved ? ` (Your work in progress is saved as ${saved}.)` : ''}\n${r.err.trim()}`);
@@ -745,6 +768,111 @@ export async function abortNow(repo: Repo, untracked: string[] = []): Promise<Sy
         ? `Aborted the ${kind}. Your files as they were (resolutions included) were saved first, as ${saved}; \`git restore -s ${saved} -- <file>\` brings one back.`
         : `Aborted the ${kind}.`,
     );
+}
+
+/**
+ * Before an abort: the working tree's version of every changed file (and of `untracked`), committed
+ * on top of HEAD in a throwaway index, kept as refs/legit/aborted/<branch>/<time>-<kind>.
+ */
+async function saveWork(repo: Repo, kind: Kind, untracked: string[]): Promise<{ saved: string | null; changed: boolean }> {
+  const git = repo.git;
+  const head = await repo.head();
+  if (!head) return { saved: null, changed: false };
+  const tree = await worktreeTree(git, head, [...new Set([...(await changedPaths(git)), ...untracked])]);
+  const changed = tree !== (await git.treeOf(head));
+  let sha = head;
+  if (changed) {
+    const ident = await git.committerIdent().catch(() => `legit <legit@localhost> ${Math.floor(Date.now() / 1000)} +0000`);
+    const title = await describe(git, kind);
+    sha = git.writeCommit({
+      tree, parents: [head], author: ident, committer: ident, extra: [],
+      message: fromUtf8(`Work in progress before aborting the ${kind}\n\n${title}\n`),
+    });
+    await git.flush();
+  }
+  // HEAD itself is kept too (it's the parent): an aborted rebase or cherry-pick moves it back.
+  const saved = `${ABORTED}/${(await opBranch(repo, kind)) ?? '_detached'}/${Date.now()}-${kind}`;
+  await git.run(['update-ref', '-m', `legit: before aborting the ${kind}`, saved, sha, '']);
+  await pruneRefs(git);
+  return { saved, changed };
+}
+
+// ---- a stash applied with conflicts ----
+
+/**
+ * Done resolving a stash applied with conflicts: its changes stay as uncommitted changes, unstaged
+ * as a clean apply leaves them (new files stay added), and the note goes.
+ */
+async function finishStash(repo: Repo): Promise<SyncResult> {
+  const git = repo.git;
+  const note = await readStashNote(git);
+  if (!note) return done(repo, 'Nothing is conflicted any more.');
+  const out = (await git.run(['diff-index', '--cached', '--name-status', '-z', 'HEAD'], { allowFail: true })).out.toString('latin1').split('\0');
+  const staged = new Map<string, string>();
+  for (let i = 0; i + 1 < out.length; i += 2) staged.set(out[i + 1], out[i]);
+  const unstage = note.tracked.filter((p) => staged.has(p) && staged.get(p) !== 'A');
+  if (unstage.length) {
+    await git.run(['--literal-pathspecs', 'reset', '-q', 'HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: nul(unstage), allowFail: true });
+  }
+  await removeStashNote(git);
+  return done(
+    repo,
+    note.pop
+      ? `Restored ${stashName(note.message)}; the stash stays under "Dropped or restored" for two weeks.`
+      : `Applied ${stashName(note.message)}; the stash is still in the list.`,
+  );
+}
+
+/**
+ * Undo a stash applied with conflicts: its files go back to HEAD's version (those it created are
+ * removed), after the working tree is saved as for any abort. Other uncommitted changes are on
+ * other files (the apply checked), so they stay. A restored stash goes back in the stash list.
+ */
+async function abortStash(repo: Repo): Promise<SyncResult> {
+  const git = repo.git;
+  const note = await readStashNote(git);
+  if (!note) {
+    throw new GitError(
+      "These conflicts weren't left by legit, so it can't tell what to put back. Resolve them, or put a file back with `git checkout HEAD -- <file>`. Nothing was changed.",
+    );
+  }
+  const head = await repo.head();
+  if (!head) throw new GitError('This branch has no commits yet; nothing was changed.');
+  const { saved, changed } = await saveWork(repo, 'stash', note.untracked);
+  const paths = [...new Set([...note.tracked, ...note.untracked])];
+  const inHead = new Set<string>();
+  for (let i = 0; i < paths.length; i += 500) {
+    const out = await git.run(['--literal-pathspecs', 'ls-tree', '-r', '-z', '--name-only', head, '--', ...paths.slice(i, i + 500).map(toUtf8)]);
+    for (const p of out.out.toString('latin1').split('\0')) if (p) inHead.add(p);
+  }
+  const back = paths.filter((p) => inHead.has(p));
+  const created = paths.filter((p) => !inHead.has(p));
+  if (back.length) {
+    await git.run(['--literal-pathspecs', 'checkout', head, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: nul(back) });
+  }
+  if (created.length) {
+    await git.run(['--literal-pathspecs', 'rm', '--cached', '-q', '-f', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: nul(created) });
+    for (const p of created) {
+      const file = join(git.root, toUtf8(p));
+      await unlink(file).catch(() => {});
+      // Folders it created, once empty.
+      for (let d = dirname(file); d.length > git.root.length && d.startsWith(git.root); d = dirname(d)) {
+        if (!(await rmdir(d).then(() => true, () => false))) break;
+      }
+    }
+  }
+  let where = 'The stash is still in the list.';
+  if (note.pop) {
+    const r = await git.run(['stash', 'store', '-m', note.message, note.sha], { allowFail: true });
+    if (r.code === 0 && note.kept) await git.run(['update-ref', '-d', note.kept, note.sha], { allowFail: true });
+    where = r.code === 0 ? 'The stash is back in the list.' : `The stash is kept as ${note.kept ?? note.sha}; it couldn't go back in the list.`;
+  }
+  await removeStashNote(git);
+  return done(
+    repo,
+    `Undid ${note.pop ? 'restoring' : 'applying'} ${stashName(note.message)}: the files it changed are as they were. ${where}` +
+      (changed ? ` Your files as they were (resolutions included) were saved first, as ${saved}.` : ''),
+  );
 }
 
 /** Paths (byte strings) whose index or working-tree version differs from HEAD, or that are unmerged. */
@@ -789,8 +917,10 @@ export async function conflictDiff(repo: Repo): Promise<CommitDiff> {
   await repo.idle();
   const git = repo.git;
   const head = await repo.head();
-  if (!head || !inProgress(git)) throw new GitError('Nothing is being merged.');
-  const tree = await worktreeTree(git, head, await changedPaths(git));
+  if (!head || !(await currentKind(git))) throw new GitError('Nothing is being merged.');
+  // A stash's: its own files, without the other changes that were there before it.
+  const note = await readStashNote(git);
+  const tree = await worktreeTree(git, head, note ? [...new Set([...note.tracked, ...note.untracked])] : await changedPaths(git));
   const { out } = await git.run(['diff-tree', ...DIFF_ARGS, await git.treeOf(head), tree]);
   return repo.snapshot('conflict', parseDiff(out.toString('latin1'), ''));
 }

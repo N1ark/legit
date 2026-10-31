@@ -264,7 +264,8 @@
               <span class="subject">Editing "{app.repo.conflict.edit.subject}"</span>
             {:else if app.repo.conflict}
               {@const c = app.repo.conflict}
-              <span class="subject">{c.kind === 'am' ? 'Patch series' : c.kind[0].toUpperCase() + c.kind.slice(1)} in progress</span>
+              {@const what = c.kind === 'am' ? 'Patch series' : c.kind === 'stash' ? `Stash ${c.stash?.pop === false ? 'apply' : 'restore'}` : c.kind[0].toUpperCase() + c.kind.slice(1)}
+              <span class="subject">{c.kind === 'stash' && !c.stash ? 'Conflicts' : `${what} in progress`}</span>
               {#if c.files.length}<span use:tooltip={'Files with conflicts'}><Tag color="var(--warn)" label="{c.files.length} conflicted" /></span>{/if}
             {:else}
               <span class="subject">Uncommitted changes</span>

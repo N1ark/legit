@@ -344,7 +344,8 @@ export interface RestoreDiscardedResult {
 }
 
 export interface Conflict {
-  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am';
+  /** 'stash': a stash applied with conflicts, or unmerged files with nothing else in progress. */
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am' | 'stash';
   /** What's going on, e.g. "Merge branch 'feature'" or "Rebasing main onto 1a2b3c4 (2 of 5)". */
   title: string;
   /** Files with unmerged entries. */
@@ -355,6 +356,8 @@ export interface Conflict {
   unstaged: string[];
   /** A rebase that stopped to edit a commit (not on a conflict); null otherwise. */
   edit: EditStop | null;
+  /** The stash legit applied with conflicts (it can be aborted); null otherwise, unmerged files left by git included. */
+  stash: { sha: string; pop: boolean } | null;
 }
 
 /** A commit checked out to edit its files, in the middle of a rebase that replays the ones after it. */

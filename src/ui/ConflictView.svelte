@@ -1,6 +1,6 @@
 <script lang="ts">
-  // A merge, rebase, cherry-pick or revert that stopped halfway (from legit or a terminal):
-  // what's still conflicted, what's merged, and Continue or Abort. Files are resolved in an
+  // A merge, rebase, cherry-pick or revert that stopped halfway (from legit or a terminal), or a
+  // stash applied with conflicts: what's still conflicted, what's merged, and Continue or Abort. Files are resolved in an
   // editor; "Mark resolved" stages one ("Mark all resolved" every one), and asks again while it still has conflict markers.
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
@@ -13,8 +13,11 @@
   import { tip } from './lib/tip.ts';
 
   const c = $derived(app.repo?.conflict ?? null);
-  const NAME = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-pick', revert: 'Revert', am: 'git am' };
-  const CONTINUE = { merge: 'Commit merge', rebase: 'Continue rebase', 'cherry-pick': 'Continue cherry-pick', revert: 'Continue revert', am: 'Continue' };
+  const NAME = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-pick', revert: 'Revert', am: 'git am', stash: 'Stash restore' };
+  const CONTINUE = { merge: 'Commit merge', rebase: 'Continue rebase', 'cherry-pick': 'Continue cherry-pick', revert: 'Continue revert', am: 'Continue', stash: 'Done' };
+  const name = $derived(c?.stash && !c.stash.pop ? 'Stash apply' : c ? NAME[c.kind] : '');
+  // Unmerged files git left with nothing in progress: legit can't tell what aborting would put back.
+  const abortable = $derived(!!c && (c.kind !== 'stash' || !!c.stash));
 
   // What finishing would change on top of HEAD, straight from the working tree (markers included).
   let diff = $state.raw<DiffSummary | null>(null);
@@ -73,7 +76,7 @@
   const blocked = $derived(!!c && (c.files.length > 0 || c.unstaged.length > 0));
 
   function onkeydown(e: KeyboardEvent) {
-    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay() && c && !blocked && !app.busy) {
+    if (matches('⌘↩', e) && !e.isComposing && !hasOverlay() && c && abortable && !blocked && !app.busy) {
       e.preventDefault();
       app.sync('continue');
     }
@@ -85,7 +88,7 @@
 {#if c}
   <div class="view">
     <div class="top">
-      <h2 use:tooltip={"History can't be rewritten until it's finished or aborted"}>{NAME[c.kind]} in progress</h2>
+      <h2 use:tooltip={"History can't be rewritten until it's finished or aborted"}>{abortable ? `${name} in progress` : 'Conflicts'}</h2>
       <span class="muted title" use:tooltip={c.title}>{c.title}</span>
     </div>
 
@@ -182,26 +185,33 @@
             </Button>
           {/if}
         {/if}
-        <Button
-          variant="primary"
-          onclick={() => app.sync('continue')}
-          disabled={blocked || app.busy}
-          {@attach tip(
-            c.files.length ? 'Mark every file resolved first'
-            : c.unstaged.length ? 'Stage the files changed since they were staged first'
-            : 'Commits with the prepared message; hooks run as usual',
-          )}
-        >
-          <CheckBold /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
-        </Button>
-        <ConfirmButton
-          confirmLabel="Click to abort. What you resolved is saved first"
-          onconfirm={() => app.sync('abort')}
-          disabled={app.busy}
-          {@attach tip(`Go back to before the ${NAME[c.kind].toLowerCase()}; your work in progress is saved under refs/legit/aborted first`)}
-        >
-          <ArrowCounterClockwiseRegular /> Abort {NAME[c.kind].toLowerCase()}
-        </ConfirmButton>
+        {#if abortable}
+          <Button
+            variant="primary"
+            onclick={() => app.sync('continue')}
+            disabled={blocked || app.busy}
+            {@attach tip(
+              c.files.length ? 'Mark every file resolved first'
+              : c.unstaged.length ? 'Stage the files changed since they were staged first'
+              : c.kind === 'stash' ? 'Keep the result as uncommitted changes (unstaged, like a stash restored without conflicts)'
+              : 'Commits with the prepared message; hooks run as usual',
+            )}
+          >
+            <CheckBold /> {CONTINUE[c.kind]} <Kbd hint="⌘↩" />
+          </Button>
+          <ConfirmButton
+            confirmLabel="Click to abort. What you resolved is saved first"
+            onconfirm={() => app.sync('abort')}
+            disabled={app.busy}
+            {@attach tip(
+              c.stash
+                ? `Put the files the stash changed back as they were${c.stash.pop ? ', and the stash back in the list' : ''}; your other changes stay, and your files are saved under refs/legit/aborted first`
+                : `Go back to before the ${name.toLowerCase()}; your work in progress is saved under refs/legit/aborted first`,
+            )}
+          >
+            <ArrowCounterClockwiseRegular /> Abort {name.toLowerCase()}
+          </ConfirmButton>
+        {/if}
       </div>
     </div>
 

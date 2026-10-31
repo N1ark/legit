@@ -19,7 +19,7 @@ import { pickGithubRepo } from './github.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
-import { fetchFrom, networkEnv, syncState } from './sync.ts';
+import { STASH_NOTE, fetchFrom, networkEnv, syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
 import { stagingOf, workCounts, workDiff } from './work.ts';
 import { emit, restage } from './staging.ts';
@@ -150,6 +150,7 @@ export class Repo {
     if (existsSync(join(d, 'CHERRY_PICK_HEAD'))) return 'A cherry-pick is in progress.';
     if (existsSync(join(d, 'REVERT_HEAD'))) return 'A revert is in progress.';
     if (existsSync(join(d, 'BISECT_LOG'))) return 'A bisect is in progress.';
+    if (existsSync(join(d, STASH_NOTE))) return 'A stash is being restored, with conflicts.';
     return null;
   }
 

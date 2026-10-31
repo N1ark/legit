@@ -511,6 +511,32 @@ class App {
     }
   }
 
+  /**
+   * Restore (`stashPop`) or apply a stash, toasting `done`, then run `then`. One that conflicts with
+   * your files is refused, and the error offers to go ahead anyway, leaving the conflicts to resolve.
+   */
+  applyStash(op: 'stashPop' | 'stashApply', sha: string, done: string, then?: () => void): Promise<boolean> {
+    const verb = op === 'stashPop' ? 'Restore' : 'Apply';
+    const go = async (conflicts: boolean): Promise<boolean> => {
+      const offer = (e: Error & { code?: string }) => {
+        if (e.code !== 'stash-conflicts') return false;
+        toast(e.message, { kind: 'error', timeout: 20_000, action: { label: `${verb} anyway`, run: () => go(true) } });
+        return true;
+      };
+      if (!(await this.op(op, conflicts ? { sha, conflicts } : { sha }, undefined, undefined, offer))) return false;
+      const c = this.repo?.conflict;
+      if (c?.kind === 'stash') {
+        // The conflict view shows in place of the stash.
+        this.stash = null;
+        const n = c.files.length;
+        toast(`${verb === 'Restore' ? 'Restored' : 'Applied'} with conflicts in ${n} file${n === 1 ? '' : 's'}: resolve them, then Done. Abort puts your files back${verb === 'Restore' ? ' and the stash in the list' : ''}.`, { timeout: 15_000 });
+      } else toast(done);
+      then?.();
+      return true;
+    };
+    return go(false);
+  }
+
   /** Where to put the diff of a commit that was just rewritten from its own view (see `rewriteInPlace`). */
   diffPosition: { sha: string; at: DiffPosition } | null = null;
 

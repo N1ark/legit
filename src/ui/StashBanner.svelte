@@ -1,6 +1,6 @@
 <script lang="ts">
   // Changes left on this branch (stashed when switching away), offered back on return.
-  import { Banner, Button, formatRelative, toast } from 'purr';
+  import { Banner, Button, formatRelative } from 'purr';
   import { ArchiveRegular } from 'purr/glyphs';
   import { app } from './lib/app.svelte.ts';
 
@@ -8,10 +8,12 @@
   const s = $derived(app.repo?.stashed);
   const n = $derived(s?.files.length ?? 0);
 
-  async function restore() {
-    if (!s || !(await app.op('stashPop', { sha: s.sha }))) return;
-    if (app.stash?.sha === s.sha) app.stash = null;
-    toast('Restored your stashed changes');
+  function restore() {
+    if (!s) return;
+    const sha = s.sha;
+    app.applyStash('stashPop', sha, 'Restored your stashed changes', () => {
+      if (app.stash?.sha === sha) app.stash = null;
+    });
   }
 </script>
 

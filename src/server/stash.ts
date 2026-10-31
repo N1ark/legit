@@ -1,6 +1,7 @@
-// Stashes: leave uncommitted changes on a branch and bring them back later. A stash is only
-// applied when it can't conflict, and before an entry leaves the stash list (pop or drop) its
-// commit is saved under refs/legit/stashes, so a dropped stash can always be applied again.
+// Stashes: leave uncommitted changes on a branch and bring them back later. A stash is applied
+// when it can't conflict, or, when asked, with conflicts to resolve in the conflict view (see
+// sync.ts). Before an entry leaves the stash list (pop or drop) its commit is saved under
+// refs/legit/stashes, so a dropped stash can always be applied again.
 
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import { DIFF_ARGS, parseDiff, sortFiles } from './diff.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
+import { type StashNote, changedPaths, removeStashNote, unmergedPaths, writeStashNote } from './sync.ts';
 
 export const DROPPED = 'refs/legit/stashes';
 /** Our stash message is `legit: on <branch>`; git puts `On <branch>: ` in front. */
@@ -94,11 +96,12 @@ export async function stashPush(git: Git, branch: string | null): Promise<string
 }
 
 /**
- * Refuse unless applying stash `sha` can't conflict: no uncommitted changes to the files it
- * touches, none of its files already on disk where it would create them, and its changes
- * merge cleanly onto HEAD (checked in memory with `git merge-tree`).
+ * Refuse unless stash `sha` can be applied: no unresolved conflicts, no uncommitted changes to
+ * the files it touches, and none of its files already on disk where it would create them.
+ * Returns the files where its changes would conflict with HEAD's (checked in memory with
+ * `git merge-tree`).
  */
-async function checkApply(git: Git, sha: string) {
+async function checkApply(git: Git, sha: string): Promise<string[]> {
   const c = await git.commit(sha);
   const { tracked, untracked } = await stashPaths(git, sha);
   const unmerged = await git.text(['ls-files', '-u']);
@@ -137,22 +140,26 @@ async function checkApply(git: Git, sha: string) {
     );
   }
 
-  if (head && head !== c.parents[0]) {
-    const r = await git.run(
-      ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${c.parents[0]}`, head, sha],
-      { allowFail: true },
-    );
-    if (r.code !== 0) {
-      const [, ...conflicts] = r.out.toString('latin1').split('\n').filter(Boolean);
-      if (r.code === 1) {
-        throw new GitError(
-          `The stash conflicts with this branch in: ${conflicts.map(toUtf8).join(', ')}. Nothing was changed; the stash is kept.`,
-        );
-      }
-      throw new GitError(`Couldn't check the stash against this branch; nothing was changed.\n${r.err.trim()}`);
-    }
+  if (!head || head === c.parents[0]) return [];
+  const r = await git.run(
+    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${c.parents[0]}`, head, sha],
+    { allowFail: true },
+  );
+  if (r.code === 1) {
+    const files = r.out.toString('latin1').split('\n').filter(Boolean).slice(1);
+    return files.length ? files : tracked;
   }
+  if (r.code !== 0) throw new GitError(`Couldn't check the stash against this branch; nothing was changed.\n${r.err.trim()}`);
+  return [];
 }
+
+/** The refusal for a stash that conflicts with HEAD in `files`; the UI offers to go ahead anyway. */
+const conflicts = (files: string[], pop: boolean) =>
+  new GitError(
+    `The stash conflicts with this branch in: ${files.map(toUtf8).join(', ')}. Nothing was changed; the stash is kept. ` +
+      `${pop ? 'Restore' : 'Apply'} it anyway to resolve the conflicts here?`,
+    'stash-conflicts',
+  );
 
 function onDisk(root: string, path: string) {
   try {
@@ -163,12 +170,18 @@ function onDisk(root: string, path: string) {
   }
 }
 
-/**
- * Apply stash `sha` after `checkApply`. The index is restored too when the stash was made on
- * the current commit (it then can't fail); otherwise everything comes back as changes.
- */
+/** Apply stash `sha` if it can't conflict (see `checkApply`). */
 export async function applyStash(git: Git, sha: string) {
-  await checkApply(git, sha);
+  const clashes = await checkApply(git, sha);
+  if (clashes.length) throw conflicts(clashes, false);
+  await applyClean(git, sha);
+}
+
+/**
+ * Apply stash `sha`, which `checkApply` passed. The index is restored too when the stash was made
+ * on the current commit (it then can't fail); otherwise everything comes back as changes.
+ */
+async function applyClean(git: Git, sha: string) {
   const c = await git.commit(sha);
   const head = (await git.headState()).head ?? '';
   const index = head === c.parents[0] ? ['--index'] : [];
@@ -181,10 +194,48 @@ export async function applyStash(git: Git, sha: string) {
   }
 }
 
-/** Save `sha` under refs/legit/stashes/<time>-<label>, kept for two weeks (see retention.ts). */
+/**
+ * Apply stash `sha` and, with `pop`, remove it from the list. One that conflicts with HEAD is
+ * refused unless `anyway`: then it's applied with `git stash apply` (no `--index`: it was made on
+ * another commit), which leaves conflict markers and unmerged entries, and a note says so (see
+ * sync.ts) for the conflict view to finish or abort. A popped one is removed from the list even
+ * then, so it's kept under refs/legit/stashes, and aborting puts it back.
+ */
+async function restore(git: Git, sha: string, pop: boolean, anyway: boolean) {
+  const clashes = await checkApply(git, sha);
+  if (clashes.length && !anyway) throw conflicts(clashes, pop);
+  if (!clashes.length) {
+    await applyClean(git, sha);
+    if (pop) await dropEntry(git, sha, 'pop');
+    return;
+  }
+  const { tracked, untracked } = await stashPaths(git, sha);
+  const message = await git.text(['log', '-1', '--format=%s', sha, '--']);
+  const before = new Set(await changedPaths(git));
+  const note: StashNote = { sha, message, pop: false, kept: null, tracked, untracked };
+  await writeStashNote(git, note);
+  const r = await git.run(['stash', 'apply', sha], { allowFail: true });
+  if (!(await unmergedPaths(git)).size) {
+    await removeStashNote(git);
+    if (r.code !== 0) {
+      throw new GitError(`Git couldn't apply the stash; it's kept, so nothing is lost. Look at your working tree.\n${(r.err + r.out.toString('utf8')).trim()}`);
+    }
+    if (pop) await dropEntry(git, sha, 'pop');
+    return;
+  }
+  // What git changed, renamed files included, for an abort to put back.
+  const created = new Set(untracked);
+  note.tracked = [...new Set([...tracked, ...(await changedPaths(git)).filter((p) => !before.has(p) && !created.has(p))])];
+  await writeStashNote(git, note);
+  if (pop) await writeStashNote(git, { ...note, pop, kept: await dropEntry(git, sha, 'pop') });
+}
+
+/** Save `sha` under refs/legit/stashes/<time>-<label>, kept for two weeks (see retention.ts). Returns the ref. */
 async function keep(git: Git, sha: string, label: string) {
-  await git.run(['update-ref', '-m', `legit: keep stash before ${label}`, `${DROPPED}/${uniqueTime()}-${label}`, sha, '']);
+  const ref = `${DROPPED}/${uniqueTime()}-${label}`;
+  await git.run(['update-ref', '-m', `legit: keep stash before ${label}`, ref, sha, '']);
   await pruneRefs(git);
+  return ref;
 }
 
 /**
@@ -195,11 +246,12 @@ async function dropEntry(git: Git, sha: string, label: string) {
   const before = await list(git);
   const n = before.findIndex((s) => s.sha === sha);
   if (n < 0) throw new GitError('That stash is no longer in the stash list; refresh.');
-  await keep(git, sha, label);
+  const kept = await keep(git, sha, label);
   const r = await git.run(['stash', 'drop', '-q', `stash@{${n}}`], { allowFail: true });
   const after = new Set((await list(git)).map((s) => s.sha));
   for (const s of before) if (s.sha !== sha && !after.has(s.sha)) await keep(git, s.sha, label);
   if (r.code !== 0 || after.has(sha)) throw new GitError(`Couldn't remove the stash from the list; it's still there.\n${r.err.trim()}`);
+  return kept;
 }
 
 const done = async (repo: Repo): Promise<OpResult> => ({ state: await repo.state(), renamed: {}, focus: [] });
@@ -230,20 +282,19 @@ export function stash(repo: Repo): Promise<OpResult> {
   });
 }
 
-/** Apply a stash and keep it (also works for a dropped one). */
-export function stashApply(repo: Repo, req: { sha: string }): Promise<OpResult> {
+/** Apply a stash and keep it (also works for a dropped one). With `conflicts`, even one that conflicts. */
+export function stashApply(repo: Repo, req: { sha: string; conflicts?: boolean }): Promise<OpResult> {
   return guarded(repo, async () => {
     await known(repo.git, req.sha, true);
-    await applyStash(repo.git, req.sha);
+    await restore(repo.git, req.sha, false, req.conflicts === true);
   });
 }
 
-/** Apply a stash, then remove it from the list (only after a clean apply). */
-export function stashPop(repo: Repo, req: { sha: string }): Promise<OpResult> {
+/** Apply a stash, then remove it from the list. With `conflicts`, even one that conflicts. */
+export function stashPop(repo: Repo, req: { sha: string; conflicts?: boolean }): Promise<OpResult> {
   return guarded(repo, async () => {
     await known(repo.git, req.sha);
-    await applyStash(repo.git, req.sha);
-    await dropEntry(repo.git, req.sha, 'pop');
+    await restore(repo.git, req.sha, true, req.conflicts === true);
   });
 }
 
