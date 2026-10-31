@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.0 — 2026-10-31
 
 - A stash that conflicts with your branch can be restored or applied anyway: the error offers **Restore anyway** / **Apply anyway**, and the conflicts are resolved in the conflict view, like a merge's. **Done** keeps the result as uncommitted changes; **Abort** puts the stash's files back (your other changes stay) and a restored stash back in the list. Files left conflicted by a `git stash pop` in a terminal show there too.
 - Working on a fork, `#123` links in messages open the issue or pull request on the original repository: the `upstream` remote's, or, without one, the repository GitHub says your fork is of. **Copy GitHub link** on a line still links to your fork, where your commits are.
