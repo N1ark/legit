@@ -31,3 +31,13 @@ test('the push remote wins, then origin, then any github remote', () => {
   assert.equal(pickGithubRepo(remotes), 'me/b');
   assert.equal(pickGithubRepo(new Map()), null);
 });
+
+test("issue links go to the repository forked from: upstream's, ahead of the push remote", async () => {
+  const { issueRepo } = await import('../src/server/gh/context.ts');
+  const remotes = new Map([
+    ['origin', 'git@github.com:me/b.git'],
+    ['upstream', 'https://github.com/up/b.git'],
+  ]);
+  assert.equal(await issueRepo(remotes, 'origin'), 'up/b');
+  assert.equal(await issueRepo(new Map([['origin', 'git@gitlab.com:me/b.git']])), null);
+});

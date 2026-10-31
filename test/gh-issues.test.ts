@@ -64,3 +64,16 @@ test('resolving references against the fake GitHub: issues, pull requests, and n
   assert.equal(got['acme/widgets#99'], null);
   assert.equal(got['else/where#1'], null);
 });
+
+test("without an upstream remote, issue links go to the repository GitHub says the fork is of", async () => {
+  const { onRest } = await import('../src/server/gh/mock/registry.ts');
+  const { forkParent, issueRepo } = await import('../src/server/gh/context.ts');
+  onRest('GET /repos/:owner/:repo', ({ owner, repo }) =>
+    owner === 'me' ? { full_name: `me/${repo}`, fork: true, parent: { full_name: `up/${repo}` } } : { full_name: `${owner}/${repo}`, fork: false },
+  );
+  assert.equal(await forkParent('me/fork-test'), 'up/fork-test');
+  assert.equal(await forkParent('acme/not-a-fork'), null);
+  // Known now, so not waited for.
+  assert.equal(await issueRepo(new Map([['origin', 'git@github.com:me/fork-test.git']])), 'up/fork-test');
+  assert.equal(await issueRepo(new Map([['origin', 'git@github.com:acme/not-a-fork.git']])), 'acme/not-a-fork');
+});

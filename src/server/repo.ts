@@ -16,6 +16,7 @@ import { localBranches, switchBranch } from './branches.ts';
 import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
+import { issueRepo } from './gh/context.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
@@ -165,13 +166,15 @@ export class Repo {
       stashFor(this.git, branch),
       head ? this.git.firstParent(head, LIMIT) : [],
     ]);
-    const [push, canUndo, canRedo, base, unpushed, commits] = await Promise.all([
-      head && branch ? this.pushInfo(branch, view, remotes.names) : null,
+    const pushing = head && branch ? this.pushInfo(branch, view, remotes.names) : Promise.resolve(null);
+    const [push, canUndo, canRedo, base, unpushed, commits, github] = await Promise.all([
+      pushing,
       this.applies(stacks.undo.at(-1), 'after', head),
       this.applies(stacks.redo.at(-1), 'before', head),
       baseBranch(this.git, branch, head, { remote: remoteOf(view, remotes.names), refs: view.remotes }),
       head ? this.unpushed(head, LIMIT, view) : [],
       this.git.loadCommits(list),
+      pushing.then((p) => issueRepo(remotes.urls, p?.remote)),
     ]);
     const state: RepoState = {
       root: this.git.root,
@@ -183,7 +186,8 @@ export class Repo {
       canUndo,
       canRedo,
       push,
-      github: pickGithubRepo(remotes.urls, push?.remote),
+      github,
+      githubPush: pickGithubRepo(remotes.urls, push?.remote),
       work,
       ...sync,
       stashed,

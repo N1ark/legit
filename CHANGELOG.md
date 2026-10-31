@@ -3,6 +3,7 @@
 ## Unreleased
 
 - A stash that conflicts with your branch can be restored or applied anyway: the error offers **Restore anyway** / **Apply anyway**, and the conflicts are resolved in the conflict view, like a merge's. **Done** keeps the result as uncommitted changes; **Abort** puts the stash's files back (your other changes stay) and a restored stash back in the list. Files left conflicted by a `git stash pop` in a terminal show there too.
+- Working on a fork, `#123` links in messages open the issue or pull request on the original repository: the `upstream` remote's, or, without one, the repository GitHub says your fork is of. **Copy GitHub link** on a line still links to your fork, where your commits are.
 - Scrolled down a commit (or any view), a **Back to top** button in the bottom right corner jumps back up.
 - With the find bar (⌘F) open, clicking a commit and pressing ↑/↓ moves through the commits again instead of scrolling the diff; esc closes the bar while it has the focus.
 - Right-click a folder in the file tree: **Open in Zed**, **Copy path**, **Copy relative path**, and, in a commit, **Remove folder from commit**; in *Uncommitted changes*, **Stage folder**, **Unstage folder** and **Discard this folder's changes**.

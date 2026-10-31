@@ -53,7 +53,7 @@ export async function createIssue(draft: IssueDraft): Promise<boolean> {
 /** A diff's GitHub entries for some new-side `lines` of `path` in commit `sha` (nothing unless it's a listed commit of a GitHub repo). */
 export function lineEntries(sha: string, path: string, lines: number[]): MaybeEntry[] {
   const c = app.bySha.get(sha);
-  const repo = app.repo?.github;
+  const repo = app.repo?.githubPush;
   if (!c || !repo) return [];
   const span = lineSpan(lines);
   const url = blobUrl(repo, sha, path, span);

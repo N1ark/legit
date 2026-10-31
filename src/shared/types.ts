@@ -57,8 +57,10 @@ export interface RepoState {
   work: { staged: number; unstaged: number; untracked: number };
   /** Where the current branch pushes to; null when detached or there's no remote. */
   push: PushInfo | null;
-  /** `owner/repo` on GitHub, from the push remote (or origin), for linking `#123`; null if not on GitHub. */
+  /** `owner/repo` on GitHub that `#123` links to: `upstream`'s, else the one the push remote (or origin) is a fork of, else that one; null if not on GitHub. */
   github: string | null;
+  /** `owner/repo` on GitHub the branch's commits are pushed to (or origin's), for links to code. */
+  githubPush: string | null;
   /** When this repo last fetched (ms since epoch), from any tool; null if never. */
   fetchedAt: number | null;
   /** A merge, rebase, cherry-pick or revert that stopped halfway (on conflicts, usually). */
