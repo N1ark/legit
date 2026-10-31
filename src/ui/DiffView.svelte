@@ -39,7 +39,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, PencilSimpleRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -87,6 +87,7 @@
     sel,
     readonly,
     fileActions,
+    folderActions,
     tree = true,
     initial = null,
     onremove,
@@ -101,6 +102,8 @@
     readonly: boolean;
     /** More entries for a file's context menu. */
     fileActions?: (f: FileSummary) => MaybeEntry[];
+    /** More entries for a folder's context menu (right-click it in the tree), given the files under it. */
+    folderActions?: (dir: string, files: FileSummary[]) => MaybeEntry[];
     /** Show the files as a folder tree beside the diff, to jump between them. */
     tree?: boolean;
     /** Where to open, from `position()` of the view this one replaces. */
@@ -1344,7 +1347,7 @@
     ];
   }
 
-  // Context menu (right-click a file header, a line, or a file in the tree): open in Zed, copy paths.
+  // Context menus (right-click a file header, a line, or a file or folder in the tree): open in Zed, copy paths.
   /** New-side line number to open at for row r: its own, or the nearest one after/before it. */
   function lineFor(rows: FileRows, r: number): number | undefined {
     for (let k = r; k < rows.n.length && !isHead(rows.kind[k]); k++) if (rows.n[k]) return rows.n[k];
@@ -1407,6 +1410,23 @@
     ]);
   }
 
+  function openDirMenu(e: MouseEvent, dir: string) {
+    const inside = files.filter((f) => f.path.startsWith(dir + '/'));
+    menu.show(e, [
+      {
+        label: 'Open in Zed',
+        icon: FolderOpenRegular,
+        // Every file in it deleted: the folder is most likely gone too.
+        disabled: inside.every((f) => f.status === 'D'),
+        run: () => app.openInZed(dir),
+      },
+      'separator',
+      { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${dir}`, 'path') },
+      { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(dir, 'relative path') },
+      ...(folderActions ? ['separator' as const, ...folderActions(dir, inside)] : []),
+    ]);
+  }
+
   /** "12.3 KB → 14.1 KB", or the one side there is. */
   function sizes(f: FileSummary): string {
     const [a, b] = [f.oldSize, f.newSize].map((n) => (n === undefined ? null : formatSize(n)));
@@ -1451,7 +1471,7 @@
       </div>
       {#if showTree}
         <nav class="tree">
-          <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} bind:natural={treeNatural} />
+          <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} ondirmenu={openDirMenu} bind:natural={treeNatural} />
         </nav>
         <ResizeEdge
           side="left"

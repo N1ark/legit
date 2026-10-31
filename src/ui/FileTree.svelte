@@ -1,7 +1,7 @@
 <script lang="ts">
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
   // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
-  // right-clicking one opens its menu.
+  // right-clicking a file or a folder opens its menu.
   import { Twisty, fixedRange, tooltip } from 'purr';
   import { untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
@@ -13,6 +13,7 @@
     onpick,
     onopen,
     onmenu,
+    ondirmenu,
     natural = $bindable(0),
   }: {
     files: FileSummary[];
@@ -23,6 +24,8 @@
     onopen?: (i: number) => void;
     /** A file's context menu. */
     onmenu?: (e: MouseEvent, i: number) => void;
+    /** A folder's context menu, with its full path. */
+    ondirmenu?: (e: MouseEvent, dir: string) => void;
     /** How tall it would be with every row shown (out): a short tree needs no more room. */
     natural?: number;
   } = $props();
@@ -91,6 +94,7 @@
         aria-expanded={!collapsed[r.path]}
         use:tooltip={r.path}
         onclick={() => (collapsed[r.path] = !collapsed[r.path])}
+        oncontextmenu={ondirmenu && ((e) => ondirmenu(e, r.path))}
       >
         <Twisty open={!collapsed[r.path]} size={10} />
         <span class="name">{r.name}</span>

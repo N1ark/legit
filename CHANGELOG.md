@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Right-click a folder in the file tree: **Open in Zed**, **Copy path**, **Copy relative path**, and, in a commit, **Remove folder from commit**; in *Uncommitted changes*, **Stage folder**, **Unstage folder** and **Discard this folder's changes**.
+- A worktree with submodules can be removed (git refused: "working trees containing submodules cannot be moved or removed"). Its submodules go with it, once they have no uncommitted changes and no commits that aren't on a remote.
+- A commit's title starts as one naming what's staged (*Update auth.ts*, *Add a.ts and b.ts*, *Update 4 files in src/ui*), so ⌘↵ commits right away; click it to type over it.
+- **Stage all**, **Unstage all** and **Discard all** sit at the left of the bar above the uncommitted changes, with the file count on the right.
+
 ## 0.18.1 — 2026-10-31
 
 - In a rendered markdown diff, inline code is tinted green or red with what was added or removed, instead of keeping its grey box.

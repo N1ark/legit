@@ -372,6 +372,14 @@
           run: () => remove({ [f.path]: 'all' }),
         },
       ]}
+      folderActions={(_, files) => [
+        !readonly && {
+          label: 'Remove folder from commit',
+          icon: EraserRegular,
+          note: files.length === 1 ? "Takes its file's changes out of the commit" : `Takes its ${files.length} files' changes out of the commit`,
+          run: () => remove(Object.fromEntries(files.map((f) => [f.path, 'all' as const]))),
+        },
+      ]}
     />
   {:else}
     <p class="muted loading">Loading diff…</p>

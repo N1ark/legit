@@ -14,6 +14,7 @@
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
   import { tip } from './lib/tip.ts';
+  import { commitTitle } from './lib/title.ts';
 
   type Sel = Record<string, SvelteSet<number>>;
   let work = $state.raw<WorkState | null>(null);
@@ -104,19 +105,22 @@
   const all = (files: FileSummary[]): Selection => Object.fromEntries(files.map((f) => [f.path, 'all']));
   const isStaged = (f: FileSummary) => !!staged[f.path]?.size || !!f.unshown || !!f.mixed?.length;
   const stagedFiles = $derived(work ? work.changes.files.filter(isStaged).length : 0);
-  const unstagedFiles = $derived(
-    work ? work.changes.files.filter((f) => f.unshown || f.mixed?.length || (staged[f.path]?.size ?? 0) < Math.max(1, f.added + f.removed)) : [],
-  );
+  const isUnstaged = (f: FileSummary) => !!f.unshown || !!f.mixed?.length || (staged[f.path]?.size ?? 0) < Math.max(1, f.added + f.removed);
+  const unstagedFiles = $derived(work ? work.changes.files.filter(isUnstaged) : []);
 
   function stageAll(on: boolean) {
-    if (!work) return;
-    const files = on ? unstagedFiles : work.changes.files.filter(isStaged);
-    for (const f of files) {
+    if (work) stageFiles(work.changes.files, on);
+  }
+
+  /** Stage or unstage whole files (of those, the ones not already so), shown checked or not at once. */
+  function stageFiles(files: FileSummary[], on: boolean) {
+    const which = files.filter(on ? isUnstaged : isStaged);
+    for (const f of which) {
       const s = staged[f.path];
       if (on) for (let k = 0; k < Math.max(1, f.added + f.removed); k++) s.add(k);
       else s.clear();
     }
-    stageMany(all(files), on);
+    stageMany(all(which), on);
   }
 
   // Discarding saves what it throws away first (refs/legit/discarded); the toast can undo it.
@@ -129,31 +133,36 @@
   }
 
   // Commit form, as it was left if the window has shown this repo before.
-  type Kept = { subject: string; body: string; coauthors: string[]; amend: boolean; typed: typeof typed };
+  type Kept = { subject: string; own: boolean; body: string; coauthors: string[]; amend: boolean; typed: typeof typed };
   const back = app.restore<Kept>('work');
   let subject = $state(back?.subject ?? '');
+  // The title starts as a default naming what's staged, until typed over (or set by amending).
+  let own = $state(back?.own ?? !!back?.subject);
+  let keepSelected = false;
+  const title = $derived(own ? subject : work ? commitTitle(work.changes.files.filter(isStaged)) : '');
   let body = $state(back?.body ?? '');
   let coauthors = $state<string[]>(back?.coauthors ?? []);
   const people = $derived(parsePeople(coauthors));
   const head = $derived(app.commits.find((c) => c.sha === app.repo?.head) ?? null);
   let amend = $state(back?.amend ?? false);
   const canCommit = $derived(
-    subject.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : stagedFiles > 0),
+    title.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : stagedFiles > 0),
   );
 
   // Amending starts from the last commit's message; turning it off brings back what was typed.
-  let typed: { subject: string; body: string; coauthors: string[] } | null = back?.typed ?? null;
-  $effect(() => app.keep('work', (): Kept => ({ subject, body, coauthors, amend, typed })));
+  let typed: { subject: string; own: boolean; body: string; coauthors: string[] } | null = back?.typed ?? null;
+  $effect(() => app.keep('work', (): Kept => ({ subject, own, body, coauthors, amend, typed })));
   function toggleAmend() {
     if (!head) return;
     amend = !amend;
     if (amend) {
-      typed = { subject, body, coauthors: [...coauthors] };
+      typed = { subject, own, body, coauthors: [...coauthors] };
       subject = head.subject;
+      own = true;
       body = head.body;
       coauthors = head.coauthors.map(formatPerson);
     } else if (typed) {
-      ({ subject, body } = typed);
+      ({ subject, own, body } = typed);
       coauthors = typed.coauthors;
       typed = null;
     }
@@ -165,6 +174,7 @@
     if (!d) return;
     untrack(() => {
       subject = d.subject;
+      own = true;
       body = d.body;
       coauthors = d.coauthors.map(formatPerson);
       amend = false;
@@ -176,8 +186,9 @@
   async function commit() {
     if (!canCommit || app.busy) return;
     await queue;
-    if (await app.op('commit', { subject, body, coauthors: people, amend })) {
+    if (await app.op('commit', { subject: title, body, coauthors: people, amend })) {
       subject = '';
+      own = false;
       body = '';
       coauthors = [];
       amend = false;
@@ -206,7 +217,32 @@
   </div>
 
   <div class="meta">
-    <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" {@attach refComplete} />
+    <input
+      class="field-input subject"
+      value={title}
+      placeholder="Commit title"
+      aria-label="Commit title"
+      spellcheck="true"
+      oninput={(e) => {
+        subject = e.currentTarget.value;
+        own = true;
+      }}
+      onfocus={(e) => {
+        if (own) return;
+        e.currentTarget.select();
+        keepSelected = true;
+      }}
+      onmouseup={(e) => {
+        // A click's mouseup would put the caret in the default title it just selected.
+        if (keepSelected) e.preventDefault();
+        keepSelected = false;
+      }}
+      onblur={() => {
+        // Emptied, it goes back to the default.
+        if (!subject.trim()) own = false;
+      }}
+      {@attach refComplete}
+    />
     <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true" {@attach refComplete}></textarea>
     <div class="people">
       <span class="muted label">Co-authors</span>
@@ -254,10 +290,9 @@
     {@const files = work.changes.files}
     <section>
       <div class="shead">
-        <h3>Changes</h3>
-        <span class="muted">{plural(files.length, 'file')} · {stagedFiles} staged</span>
-        <span class="spacer"></span>
         {#if files.length}
+          <Button onclick={() => stageAll(true)} disabled={!unstagedFiles.length}><ArrowUpRegular /> Stage all</Button>
+          <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDownRegular /> Unstage all</Button>
           <ConfirmButton
             variant="ghost"
             confirmLabel="Discard all {plural(files.length, 'file')}? Click again"
@@ -266,9 +301,10 @@
             {@attach tip('Throw away every uncommitted change, untracked files included; saved first, so it can be restored')}
             ><TrashRegular /> Discard all</ConfirmButton
           >
-          <Button onclick={() => stageAll(false)} disabled={!stagedFiles}><ArrowDownRegular /> Unstage all</Button>
-          <Button onclick={() => stageAll(true)} disabled={!unstagedFiles.length}><ArrowUpRegular /> Stage all</Button>
         {/if}
+        <span class="spacer"></span>
+        <h3>Changes</h3>
+        <span class="muted">{plural(files.length, 'file')} · {stagedFiles} staged</span>
       </div>
       {#if files.length}
         {#key work.content}
@@ -306,6 +342,19 @@
                 confirm: 'Click again to discard',
                 note: f.untracked ? 'Deletes the file. It can be restored.' : 'Back to the last commit, index included. It can be restored.',
                 run: () => discard({ [f.path]: 'all' }),
+              },
+            ]}
+            folderActions={(_, files) => [
+              { label: 'Stage folder', icon: ArrowUpRegular, disabled: !files.some(isUnstaged), run: () => stageFiles(files, true) },
+              { label: 'Unstage folder', icon: ArrowDownRegular, disabled: !files.some(isStaged), run: () => stageFiles(files, false) },
+              'separator',
+              {
+                label: "Discard this folder's changes",
+                icon: TrashRegular,
+                danger: true,
+                confirm: 'Click again to discard',
+                note: `${plural(files.length, 'file')}, back to the last commit, index included. It can be restored.`,
+                run: () => discard(all(files)),
               },
             ]}
           />
