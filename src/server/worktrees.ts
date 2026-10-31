@@ -116,8 +116,12 @@ async function removable(w: WorktreeInfo): Promise<string | null> {
   const dir = (await run(w.path, ['rev-parse', '--path-format=absolute', '--git-dir'])).out.toString('utf8').trim();
   const progress = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG'];
   if (progress.some((f) => existsSync(join(dir, f)))) return 'A merge, rebase, cherry-pick, revert or bisect is in progress in it.';
-  const status = await run(w.path, ['status', '--porcelain', '-z', '--untracked-files=normal']);
+  const status = await run(w.path, ['status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none']);
   if (status.out.length) return 'It has uncommitted changes or untracked files: commit, stash or discard them there first.';
+  // Its submodules' repositories go with it, and any commits only they have.
+  const subs = await run(w.path, ['submodule', 'foreach', '--quiet', '--recursive', 'test -z "$(git rev-list -n1 HEAD --not --remotes --tags)" || echo "$displaypath"'], { allowFail: true });
+  const unpushed = subs.out.toString('utf8').split('\n').filter(Boolean);
+  if (unpushed.length) return `Its submodule${unpushed.length === 1 ? '' : 's'} ${unpushed.join(', ')} ${unpushed.length === 1 ? 'has' : 'have'} commits on no remote branch or tag: push them first.`;
   return null;
 }
 
@@ -142,7 +146,8 @@ export function removeWorktree(repo: Repo, req: { path: string }): Promise<OpRes
         await repo.git.run(['update-ref', '-m', `legit: backup before removing worktree ${w.name}`, saved, w.head, '']);
       }
     }
-    const r = await repo.git.run(['worktree', 'remove', w.path], { allowFail: true });
+    // --force: git won't remove one with submodules otherwise; `removable` has checked it's clean.
+    const r = await repo.git.run(['worktree', 'remove', '--force', w.path], { allowFail: true });
     if (r.code !== 0) {
       if (saved) await repo.git.run(['update-ref', '-d', saved, w.head!], { allowFail: true });
       throw new GitError(`Couldn't remove ${w.name}; nothing was changed.\n${r.err.trim()}`);

@@ -136,3 +136,31 @@ test('remove a worktree: refused when it has changes, is current, main or locked
   await removeWorktree(repo, { path: g.path });
   assert.deepEqual((await deletedBranches(repo)).map((b) => [b.name, b.sha]), [['legit-gone', stranded], ['legit-detached', lonely]]);
 });
+
+test('remove a worktree with submodules: deleted once they are clean and pushed', async () => {
+  const lib = t.tmp('legit-lib-');
+  t.gitIn(lib, 'init', '-q', '-b', 'main');
+  writeFileSync(join(lib, 'l'), '1\n');
+  t.gitIn(lib, 'add', 'l');
+  t.gitIn(lib, 'commit', '-qm', 'lib');
+  commit('base', { f: '1\n' });
+  git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+  git('commit', '-qm', 'add lib');
+  const repo = await Repo.open(t.dir);
+  const { path } = await addWorktree(repo, { branch: 'x' });
+  t.gitIn(path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init');
+  assert.ok(existsSync(join(path, 'lib', 'l')));
+
+  // A commit only the submodule has, even recorded in the worktree's branch, would be lost.
+  const sub = join(path, 'lib');
+  t.gitIn(sub, 'commit', '-q', '--allow-empty', '-m', 'local');
+  await assert.rejects(removeWorktree(repo, { path }), /uncommitted changes/);
+  t.gitIn(path, 'commit', '-qam', 'bump lib');
+  await assert.rejects(removeWorktree(repo, { path }), /submodule lib has commits on no remote branch or tag/);
+  t.gitIn(sub, 'reset', '-q', '--hard', 'origin/HEAD');
+  t.gitIn(path, 'commit', '-qam', 'unbump lib');
+
+  await removeWorktree(repo, { path });
+  assert.equal(existsSync(path), false);
+  assert.equal((await worktrees(repo)).length, 1);
+});
