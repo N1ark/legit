@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Resolve conflicts right in the conflict view's diff: each conflict's `<<<<<<<` line has **Keep HEAD**, **Keep *feature*** (named as its markers name the sides) and **Keep both**. The file is rewritten at once, and marked resolved when no conflict is left in it; the toast's **Undo** puts it back.
+
 ## 0.19.0 — 2026-10-31
 
 - A stash that conflicts with your branch can be restored or applied anyway: the error offers **Restore anyway** / **Apply anyway**, and the conflicts are resolved in the conflict view, like a merge's. **Done** keeps the result as uncommitted changes; **Abort** puts the stash's files back (your other changes stay) and a restored stash back in the list. Files left conflicted by a `git stash pop` in a terminal show there too.

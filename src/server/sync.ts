@@ -673,6 +673,85 @@ export function markResolved(repo: Repo, req: { path?: string; paths?: string[];
   });
 }
 
+/** Which side of a conflict to keep: HEAD's (ours, above `=======`), the other one (theirs, below it), or both, ours first. */
+export type Side = 'ours' | 'theirs' | 'both';
+const OPEN = /^<{7}(?: |\r?$)/;
+const BASE = /^\|{7}(?: |\r?$)/;
+const MID = /^={7}\r?$/;
+const CLOSE = /^>{7}(?: |\r?$)/;
+
+/** What a click on a conflict replaced, per file, so its toast can undo it (one step). */
+const keptBlocks = new Map<string, { before: Buffer; staged: boolean; id: string }>();
+
+/** A conflicted file of the repo's working tree, as a byte path and a file path, refused unless unmerged. */
+async function conflictedFile(git: Git, path: string): Promise<{ raw: string; file: string }> {
+  const raw = fromUtf8(path);
+  if (!path || path.split('/').some((p) => p === '..' || p === '')) throw new GitError(`${path} isn't a path in the repository.`);
+  if (!(await unmergedPaths(git)).has(raw)) throw new GitError(`${path} isn't conflicted (any more); nothing was changed.`);
+  return { raw, file: join(git.root, path) };
+}
+
+/**
+ * Settle the conflict whose `<<<<<<<` is on line `line` of `path`: keep one side of it, or both.
+ * The file is rewritten in place; once it has no conflict left, it's marked resolved (`git add`).
+ */
+export function resolveBlock(repo: Repo, req: { path?: string; line?: number; side?: Side; id?: string }): Promise<SyncResult> {
+  return repo.exclusive(async () => {
+    const git = repo.git;
+    const path = String(req.path ?? '');
+    const side = req.side;
+    if (side !== 'ours' && side !== 'theirs' && side !== 'both') throw new GitError('Keep which side?');
+    const { raw, file } = await conflictedFile(git, path);
+    const before = await readFile(file);
+    const lines = before.toString('latin1').split('\n');
+    const at = Number(req.line) - 1;
+    if (!OPEN.test(lines[at] ?? '')) {
+      throw new GitError(`${path} changed since it was shown: line ${req.line} doesn't start a conflict any more. Nothing was changed.`);
+    }
+    let base = -1;
+    let mid = -1;
+    let end = -1;
+    for (let k = at + 1; k < lines.length && end < 0; k++) {
+      if (OPEN.test(lines[k])) break;
+      if (mid < 0 && base < 0 && BASE.test(lines[k])) base = k;
+      else if (mid < 0 && MID.test(lines[k])) mid = k;
+      else if (mid >= 0 && CLOSE.test(lines[k])) end = k;
+    }
+    if (end < 0) throw new GitError(`The conflict at line ${req.line} of ${path} isn't complete (no ======= and >>>>>>> after it). Nothing was changed.`);
+    const ours = lines.slice(at + 1, base >= 0 ? base : mid);
+    const theirs = lines.slice(mid + 1, end);
+    const label = (k: number, or: string) => toUtf8(lines[k].slice(8).replace(/\r$/, '').trim()) || or;
+    const what = side === 'both' ? 'both sides' : `${label(side === 'ours' ? at : end, side)}'s side`;
+    lines.splice(at, end - at + 1, ...(side === 'ours' ? ours : side === 'theirs' ? theirs : [...ours, ...theirs]));
+    const after = lines.join('\n');
+    await writeFile(file, Buffer.from(after, 'latin1'));
+    const staged = !MARKERS.test(after);
+    if (staged) await git.run(['--literal-pathspecs', 'add', '-A', '-f', '--', path]);
+    keptBlocks.set(`${git.root}\0${raw}`, { before, staged, id: String(req.id ?? '') });
+    return done(repo, `Kept ${what} in ${path}${staged ? "; no conflicts are left in it, so it's marked resolved" : ''}.`);
+  });
+}
+
+/** Undo the `resolveBlock` `id` in `path`, if it's the last one there: the file as it was, and conflicted again if it was marked resolved. */
+export function unresolveBlock(repo: Repo, req: { path?: string; id?: string }): Promise<SyncResult> {
+  return repo.exclusive(async () => {
+    const git = repo.git;
+    const path = String(req.path ?? '');
+    const key = `${git.root}\0${fromUtf8(path)}`;
+    const kept = keptBlocks.get(key);
+    if (!kept) throw new GitError(`There's nothing to undo in ${path}.`);
+    if (kept.id !== String(req.id ?? '')) throw new GitError(`Only the last choice made in ${path} can be undone; nothing was changed.`);
+    // The index remembers the conflict that `git add` resolved (its resolve-undo record).
+    if (kept.staged) await git.run(['update-index', '--unresolve', '--', path], { allowFail: true });
+    await conflictedFile(git, path).catch(() => {
+      throw new GitError(`Couldn't make ${path} conflicted again; nothing was changed.`);
+    });
+    await writeFile(join(git.root, path), kept.before);
+    keptBlocks.delete(key);
+    return done(repo, `Put ${path} back as it was.`);
+  });
+}
+
 const CONTINUE: Record<Exclude<Kind, 'stash'>, string[]> = {
   merge: ['merge', '--continue'],
   rebase: ['rebase', '--continue'],

@@ -823,13 +823,14 @@ class App {
 
   /**
    * Run a sync operation (pull, merge, rebase, resolve, continue, abort) and toast what
-   * happened. Returns the result, or null if it failed.
+   * happened (with `action` as the toast's button, unless it offers Undo). Returns the result, or null if it failed.
    */
   async sync(
     name: string,
     body: unknown = {},
     prepare?: (r: SyncResult) => Promise<unknown>,
     undoable = false,
+    action?: { label: string; run: () => void },
   ): Promise<SyncResult | null> {
     if (this.busy) return null;
     const gen = ++this.gen;
@@ -841,7 +842,7 @@ class App {
       this.gen = Math.max(this.gen, gen);
       this.applyResult(r);
       // The toast's Undo only once it's finished (not stopped on a conflict).
-      const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : undefined;
+      const undo = undoable && r.state.canUndo && !r.state.conflict ? { label: 'Undo', run: () => this.undo() } : action;
       if (r.message) toast(r.message, { timeout: r.message.length > 80 || undo ? 10_000 : undefined, action: undo });
       return r;
     } catch (e) {

@@ -26,7 +26,7 @@ import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
 import { watchTree } from './watch.ts';
 import {
-  abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, pull, rebaseBranch, rebuildBranch, rebuildPlan,
+  abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
 import { addWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
@@ -215,6 +215,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     cherryPick: (b) => cherryPick(repo, b),
     copyTo: (b) => copyTo(repo, b),
     resolve: (b) => markResolved(repo, b),
+    resolveBlock: (b) => resolveBlock(repo, b),
+    unresolveBlock: (b) => unresolveBlock(repo, b),
     continue: () => continueOp(repo),
     abort: () => abortOp(repo),
     editStart: (b) => startEdit(repo, b),

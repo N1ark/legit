@@ -64,6 +64,12 @@
   const pending = $derived(c ? [...c.files.map((f) => f.path), ...c.unstaged] : []);
   const marked = $derived(c ? c.files.filter((f) => f.markers).length : 0);
   const resolveAll = (force = false) => app.sync('resolve', { paths: pending, force });
+  // A conflict settled from its <<<<<<< line in the diff; the toast can put the file back.
+  let picks = 0;
+  function keep(path: string, line: number, side: 'ours' | 'theirs' | 'both') {
+    const id = String(++picks);
+    app.sync('resolveBlock', { path, line, side, id }, undefined, false, { label: 'Undo', run: () => app.sync('unresolveBlock', { path, id }) });
+  }
 
   /** A path split into its folder (with the trailing slash) and the file's name. */
   const split = (path: string) => {
@@ -95,7 +101,7 @@
     <div class="meta">
       <p class="muted hint">
         {#if c.files.length}
-          Resolve each file in your editor, then mark it resolved.
+          Pick a side on each conflict in the diff below, or resolve the file in your editor and mark it resolved.
         {:else if c.unstaged.length}
           Stage these again or undo their changes to continue.
         {:else}
@@ -219,7 +225,7 @@
       <p class="muted empty">{error}</p>
     {:else if diff}
       {#key diff.sha}
-        <DiffView summary={diff} {sel} readonly={true} />
+        <DiffView summary={diff} {sel} readonly={true} onresolve={keep} />
       {/key}
     {:else}
       <p class="muted empty">Loading changes…</p>

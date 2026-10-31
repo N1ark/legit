@@ -92,6 +92,7 @@
     initial = null,
     onremove,
     oneditline,
+    onresolve,
     onstage,
     changeActions,
     review,
@@ -110,6 +111,8 @@
     initial?: DiffPosition | null;
     /** Take changes out of the commit (offered in a changed line's menu). */
     onremove?: (selection: Selection) => void;
+    /** Conflicts: keep one side (or both) of the conflict whose `<<<<<<<` is on new-side line `line` of `path`. */
+    onresolve?: (path: string, line: number, side: 'ours' | 'theirs' | 'both') => void;
     /** Replace line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
     oneditline?: (path: string, line: number, text: string) => Promise<boolean>;
     /**
@@ -1165,7 +1168,7 @@
   let pending: { i: number; r: number; x: number; y: number } | null = null;
 
   function down(e: MouseEvent, i: number) {
-    if ((e.target as HTMLElement).closest('.editor, .xp, .gh-slot')) return;
+    if ((e.target as HTMLElement).closest('.editor, .xp, .gh-slot, .resolve')) return;
     const r = rowOf(e);
     const rows = contents[i];
     if (rows?.kind[r] === TAIL && e.button === 0) return void expand(i, rows.gap[r], 'top');
@@ -1425,6 +1428,17 @@
       { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(dir, 'relative path') },
       ...(folderActions ? ['separator' as const, ...folderActions(dir, inside)] : []),
     ]);
+  }
+
+  // Conflict markers (in the conflict view): the sides named as their markers name them, e.g. HEAD and feature.
+  const OPENS = /^<{7}(?: |$)/;
+  const sideName = (marker: string, or: string) => marker.slice(8).trim() || or;
+  function sides(rows: FileRows, r: number): { ours: string; theirs: string } | null {
+    for (let k = r + 1; k < rows.text.length && !isHead(rows.kind[k]); k++) {
+      if (OPENS.test(rows.text[k])) return null;
+      if (/^>{7}(?: |$)/.test(rows.text[k])) return { ours: sideName(rows.text[r], 'ours'), theirs: sideName(rows.text[k], 'theirs') };
+    }
+    return null;
   }
 
   /** "12.3 KB → 14.1 KB", or the one side there is. */
@@ -1707,7 +1721,19 @@
                                 onblur={closeUnchanged}
                                 {@attach attachEditor}
                               ></textarea></span
-                            >{:else}<span class="code" {@attach code(i, r, rows, tok, fileHits?.get(r))}></span>{/if}
+                            >{:else}<span class="code" {@attach code(i, r, rows, tok, fileHits?.get(r))}></span>{/if}{#if onresolve && kind !== REMOVED && rows.n[r] && OPENS.test(rows.text[r])}
+                            {@const s = sides(rows, r)}
+                            {#if s}
+                              {@const at = rows.n[r]}
+                              <span class="resolve" role="group" aria-label="Resolve this conflict"
+                                ><button use:tooltip={`Keep what's above =======, from ${s.ours}`} onclick={() => onresolve(f.path, at, 'ours')}
+                                  >Keep {s.ours}</button
+                                ><button use:tooltip={`Keep what's below =======, from ${s.theirs}`} onclick={() => onresolve(f.path, at, 'theirs')}
+                                  >Keep {s.theirs}</button
+                                ><button use:tooltip={`Keep both: ${s.ours}'s, then ${s.theirs}'s`} onclick={() => onresolve(f.path, at, 'both')}>Keep both</button
+                              ></span>
+                            {/if}
+                          {/if}
                         </div>
                       {/if}
                       {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
@@ -2017,6 +2043,46 @@
   .code {
     padding: 0 12px 0 8px;
     flex: 1;
+  }
+
+  /* A conflict's choices, on its <<<<<<< line, kept in view when the line scrolls sideways. */
+  .resolve {
+    position: sticky;
+    right: 0;
+    flex-shrink: 0;
+    align-self: flex-start;
+    display: flex;
+    gap: var(--gap-2);
+    height: 19px;
+    align-items: center;
+    padding: 0 var(--gap-3);
+  }
+
+  .resolve button {
+    all: unset;
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 var(--gap-3);
+    line-height: 15px;
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: var(--fs-xs);
+    color: var(--color2);
+    background: var(--surface);
+    box-shadow: var(--box-shadow);
+    cursor: default;
+  }
+
+  .resolve button:focus-visible {
+    outline: 2px solid var(--theme2);
+  }
+
+  @media (hover: hover) {
+    .resolve button:hover {
+      background: var(--theme-soft);
+    }
   }
 
   /* Wrapping: the code breaks anywhere at --cols columns, so each line's rows are known. */
