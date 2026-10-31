@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.1 — 2026-10-31
 
 - In a rendered markdown diff, inline code is tinted green or red with what was added or removed, instead of keeping its grey box.
 
