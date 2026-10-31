@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The find bar over the diff (⌘F): ↵ / ⇧↵ (or ⌘G / ⇧⌘G) for the next and previous match, esc closes.
+  // The find bar over the diff (⌘F): ↵ / ⇧↵ (or ⌘G / ⇧⌘G) for the next and previous match, esc (in it) closes.
   import { IconButton, registerOverlay } from 'purr';
   import { CaretDownRegular, CaretUpRegular, XRegular } from 'purr/glyphs';
   import { finder } from './lib/finder.svelte.ts';
@@ -7,7 +7,13 @@
   let input: HTMLInputElement;
   const total = $derived(finder.total);
 
-  $effect(() => registerOverlay(() => finder.close()));
+  // An overlay (esc closes it; plain shortcuts stand aside) only while it has the focus: clicking a
+  // commit gives ↑/↓ back to the commit list, with the bar still open.
+  let bar: HTMLElement;
+  let focused = $state(false);
+  $effect(() => {
+    if (focused) return registerOverlay(() => finder.close());
+  });
 
   $effect(() => {
     void finder.focusTick;
@@ -30,7 +36,13 @@
   }
 </script>
 
-<div class="find" role="search">
+<div
+  class="find"
+  role="search"
+  bind:this={bar}
+  onfocusin={() => (focused = true)}
+  onfocusout={(e) => (focused = bar.contains(e.relatedTarget as Node | null))}
+>
   <input
     bind:this={input}
     class="field-input"

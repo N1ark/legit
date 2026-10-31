@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Scrolled down a commit (or any view), a **Back to top** button in the bottom right corner jumps back up.
+- With the find bar (⌘F) open, clicking a commit and pressing ↑/↓ moves through the commits again instead of scrolling the diff; esc closes the bar while it has the focus.
 - Right-click a folder in the file tree: **Open in Zed**, **Copy path**, **Copy relative path**, and, in a commit, **Remove folder from commit**; in *Uncommitted changes*, **Stage folder**, **Unstage folder** and **Discard this folder's changes**.
 - A worktree with submodules can be removed (git refused: "working trees containing submodules cannot be moved or removed"). Its submodules go with it, once they have no uncommitted changes and no commits that aren't on a remote.
 - A commit's title starts as one naming what's staged (*Update auth.ts*, *Add a.ts and b.ts*, *Update 4 files in src/ui*), so ⌘↵ commits right away; click it to type over it.

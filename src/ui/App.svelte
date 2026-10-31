@@ -17,7 +17,7 @@
     tooltip,
     type Binding,
   } from 'purr';
-  import { ArrowUUpLeftRegular, ArrowUUpRightRegular, GearRegular, PencilSimpleLineBold, WarningBold } from 'purr/glyphs';
+  import { ArrowLineUpRegular, ArrowUUpLeftRegular, ArrowUUpRightRegular, GearRegular, PencilSimpleLineBold, WarningBold } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
   import Backups from './Backups.svelte';
   import StashBanner from './StashBanner.svelte';
@@ -58,6 +58,10 @@
   let branchPicker = $state<BranchPicker>();
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
+  // The views' scroller, and whether it's far enough down to offer going back to the top (px).
+  let scroller: HTMLElement;
+  let scrolled = $state(false);
+  const TO_TOP = 600;
   /** The settings' section shown, while they're open. */
   let settings = $state<string | null>(null);
   let switcher = $state(false);
@@ -269,7 +273,7 @@
         <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> shortcuts</button>
       </footer>
     </aside>
-    <section data-scroller>
+    <section data-scroller bind:this={scroller} onscroll={() => (scrolled = scroller.scrollTop > TO_TOP)}>
       {#if finder.open}
         <div class="find"><div class="bar"><FindBar.component /></div></div>
       {/if}
@@ -295,6 +299,13 @@
         {/key}
       {:else if app.repo}
         <p class="empty muted">{app.repo.blocked ?? 'No commit selected.'}</p>
+      {/if}
+      {#if scrolled}
+        <div class="to-top">
+          <span class="lift"
+            ><IconButton label="Back to top" variant="default" size="lg" onclick={() => (scroller.scrollTop = 0)}><ArrowLineUpRegular /></IconButton></span
+          >
+        </div>
       {/if}
     </section>
   </main>
@@ -409,6 +420,26 @@
   section {
     overflow: auto;
     min-width: 0;
+  }
+
+  /* Pinned to the scroller's bottom right corner: sticky at the end of its content. */
+  .to-top {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-sticky);
+    height: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding-right: var(--sp-5);
+  }
+
+  .lift {
+    display: flex;
+    margin-bottom: var(--sp-5);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
   }
 
   /* Over the diff's top right corner, wherever it's scrolled. */
