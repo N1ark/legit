@@ -74,7 +74,7 @@ function hiddenIn(g: Gap | undefined, top: number, bottom: number): number | nul
   return Math.max(0, g.end - g.start + 1 - top - bottom);
 }
 
-function gapsOf(hunks: HunkData[], file: FileLines | null): Gap[] {
+export function gapsOf(hunks: HunkData[], file: FileLines | null): Gap[] {
   const gaps: Gap[] = [];
   let oldNext = 1;
   let newNext = 1;
@@ -208,6 +208,80 @@ export function buildRows(hunks: HunkData[], expandable = false, x: Expansion = 
     hidden,
     ws,
   };
+}
+
+/** The old lines expansion `x` shows of `gaps`, as [first, last] ranges: what a newer version of the diff opens again. */
+export function shownRanges(gaps: Gap[], x: Expansion): [number, number][] {
+  const out: [number, number][] = [];
+  gaps.forEach((g, k) => {
+    const top = x.top[k] ?? 0;
+    const bottom = x.bottom[k] ?? 0;
+    if (top) out.push([g.start, g.start + top - 1]);
+    if (bottom && g.end !== null) out.push([g.end - bottom + 1, g.end]);
+  });
+  return out;
+}
+
+/** The expansion of `gaps` (another version's) that shows the old lines of `ranges` where they touch a gap's ends. */
+export function expansionOf(gaps: Gap[], ranges: [number, number][], file: FileLines | null): Expansion {
+  const x: Expansion = { file, top: [], bottom: [] };
+  gaps.forEach((g, k) => {
+    if (g.end === null || g.end < g.start) return;
+    const size = g.end - g.start + 1;
+    let top = 0;
+    let bottom = 0;
+    for (const [a, b] of ranges) {
+      if (a <= g.start && b >= g.start) top = Math.max(top, Math.min(b, g.end) - g.start + 1);
+      if (a <= g.end && b >= g.end) bottom = Math.max(bottom, g.end - Math.max(a, g.start) + 1);
+    }
+    if (top >= size) [top, bottom] = [size, 0];
+    else bottom = Math.min(bottom, size - top);
+    if (top) x.top[k] = top;
+    if (bottom) x.bottom[k] = bottom;
+  });
+  return x;
+}
+
+/**
+ * Where row r is, `frac` of the way down it, in terms another version of the file's diff can find:
+ * the last row at or above it with an old line (which edits to the file don't renumber), and how
+ * many rows further down it is; with none, its new line.
+ */
+export interface RowPlace {
+  old: number;
+  after: number;
+  line: number;
+  frac: number;
+}
+
+export function rowPlace(rows: FileRows, r: number, frac: number): RowPlace {
+  r = Math.max(0, Math.min(r, rows.kind.length - 1));
+  let k = r;
+  while (k >= 0 && !rows.o[k]) k--;
+  return { old: k >= 0 ? rows.o[k] : 0, after: k >= 0 ? r - k : r, line: rows.n[r], frac };
+}
+
+/** The row of `rows` at place `p` (from `rowPlace` on another version), and how far down it. */
+export function rowOfPlace(rows: FileRows, p: RowPlace): { r: number; frac: number } {
+  const count = rows.kind.length;
+  if (!count) return { r: 0, frac: 0 };
+  let base = -1;
+  if (p.old) {
+    // The row with that old line, or the last one before it.
+    for (let k = 0; k < count; k++) {
+      if (!rows.o[k]) continue;
+      if (rows.o[k] > p.old) break;
+      base = k;
+      if (rows.o[k] === p.old) break;
+    }
+    if (base >= 0 && rows.o[base] !== p.old) return { r: base, frac: 1 };
+  }
+  if (base < 0 && p.line) {
+    const r = rows.n.findIndex((n) => n >= p.line);
+    if (r >= 0) return { r, frac: rows.n[r] === p.line ? p.frac : 0 };
+  }
+  const r = Math.min(count - 1, Math.max(0, base) + p.after);
+  return { r, frac: p.frac };
 }
 
 /** The changes of rows a to b (either way round). */

@@ -227,7 +227,9 @@ export interface EditLineRequest {
   path: string;
   /** Line number in the commit's version of the file (an added or unchanged line), from 1. */
   line: number;
-  /** What replaces the line: its new text, or several lines separated by '\n'. */
+  /** Lines replaced, from `line` (1 by default). */
+  count?: number;
+  /** What replaces them: the new text, as many lines as it has, separated by '\n'. */
   text: string;
 }
 
@@ -383,11 +385,36 @@ export interface ConflictFile {
   markers: boolean;
   /** Line of the first marker, to open the file at. */
   line: number | null;
+  /** Its complete conflicts: how many, and the sides as the first one's markers name them (HEAD, feature). */
+  sides: { ours: string; theirs: string; blocks: number } | null;
+}
+
+/** Cloning: the URL (or GitHub's `owner/name`), and the folder, relative to `CloneInfo.parent` or absolute. */
+export interface CloneRequest {
+  url: string;
+  path?: string;
+}
+
+export interface CloneInfo {
+  /** Where clones go by default: beside this repository ("~/code"). */
+  parent: string;
+  /** GitHub is reached over SSH here (a GitHub remote's URL uses it), so `owner/name` is cloned that way. */
+  ssh: boolean;
+}
+
+/** One of the signed-in user's GitHub repositories, to clone. */
+export interface GithubRepoInfo {
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  fork: boolean;
+  /** Last pushed to, ms since the epoch. */
+  pushedAt: number;
 }
 
 /** How far a fetch or push has got, from git's --progress output; streamed to the UI as it runs. */
 export interface Progress {
-  op: 'fetch' | 'push';
+  op: 'fetch' | 'push' | 'clone';
   remote: string;
   /** git's words, e.g. "Receiving objects"; null once it's finished. */
   phase: string | null;

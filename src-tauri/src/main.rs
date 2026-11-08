@@ -121,6 +121,7 @@ fn main() {
             "rebuild" => eval_focused(app, "window.__legit?.rebuild()"),
             "upstream" => eval_focused(app, "window.__legit?.branch('upstream')"),
             "worktree" => eval_focused(app, "window.__legit?.newWorktree()"),
+            "clone" => eval_focused(app, "window.__legit?.clone()"),
             "shortcuts" => eval_focused(app, "window.__legit?.help()"),
             "logs" => eval_focused(app, "window.__legit?.logs()"),
             _ => {}
@@ -667,6 +668,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         &[
             &MenuItem::with_id(app, "open", "Open Repository…", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "clone", "Clone Repository…", true, None::<&str>)?,
             &open_recent,
             &sep()?,
             &PredefinedMenuItem::close_window(app, None)?,

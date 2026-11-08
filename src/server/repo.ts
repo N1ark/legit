@@ -617,9 +617,9 @@ export class Repo {
   }
 
   /**
-   * Replace one line of a commit's version of a file (an added line, or an unchanged one, which
-   * the commit then changes) with new text, which may be several lines. The commits after it are
-   * replayed on top, as with `removeChanges`.
+   * Replace lines of a commit's version of a file (added lines, or unchanged ones, which the commit
+   * then changes): `count` of them from `line`, with new text, which may be more or fewer lines. The
+   * commits after it are replayed on top, as with `removeChanges`.
    */
   editLine(req: EditLineRequest): Promise<OpResult> {
     return this.exclusive(async () => {
@@ -632,23 +632,26 @@ export class Repo {
       if (!f.partial || f.status === 'D') throw new GitError(`${req.path} can't be edited line by line.`);
       const blob = (await this.git.readObjects([f.newSha])).get(f.newSha)!.data.toString('latin1');
       const lines = blob.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-      if (!Number.isInteger(req.line) || req.line < 1 || req.line > lines.length) {
-        throw new GitError(`${req.path} has no line ${req.line} in this commit; refresh.`);
+      const count = req.count ?? 1;
+      if (!Number.isInteger(count) || count < 1) throw new GitError('Edit how many lines?');
+      if (!Number.isInteger(req.line) || req.line < 1 || req.line + count - 1 > lines.length) {
+        throw new GitError(`${req.path} has no line ${req.line + count - 1} in this commit; refresh.`);
       }
-      const old = lines[req.line - 1];
+      const old = lines.slice(req.line - 1, req.line - 1 + count);
       // The text arrives as UTF-8: a line in another encoding would come back garbled.
-      if (fromUtf8(toUtf8(old)) !== old) throw new GitError(`Line ${req.line} of ${req.path} isn't UTF-8 text, so it can't be edited here.`);
+      const bad = old.findIndex((l) => fromUtf8(toUtf8(l)) !== l);
+      if (bad >= 0) throw new GitError(`Line ${req.line + bad} of ${req.path} isn't UTF-8 text, so it can't be edited here.`);
       if (typeof req.text !== 'string') throw new GitError('Missing the new text.');
-      // Keep the file's line endings: the line's own, or (on a last line without one) the file's.
-      const ending = /\r?\n$/.exec(old)?.[0] ?? '';
-      const eol = ending || (lines.at(-2)?.endsWith('\r\n') ? '\r\n' : '\n');
+      // Keep the file's line endings: the last line's own, or (on a last line without one) the file's.
+      const ending = /\r?\n$/.exec(old.at(-1)!)?.[0] ?? '';
+      const eol = /\r?\n$/.exec(old[0])?.[0] || (lines.at(-2)?.endsWith('\r\n') ? '\r\n' : '\n');
       const text = fromUtf8(req.text).split('\n').map((l) => l.replace(/\r$/, '')).join(eol) + ending;
-      if (text === old) throw new GitError('That line is unchanged.');
-      lines[req.line - 1] = text;
+      if (text === old.join('')) throw new GitError(count > 1 ? 'Those lines are unchanged.' : 'That line is unchanged.');
+      lines.splice(req.line - 1, count, text);
       const sha = this.git.writeObject('blob', Buffer.from(lines.join(''), 'latin1'));
       await this.git.flush();
       const tree = await this.treeWith(c.tree, [`${f.newMode} ${sha}\t${f.path}`]);
-      return this.retree('edit line', chain, k, tree);
+      return this.retree(count > 1 ? 'edit lines' : 'edit line', chain, k, tree);
     });
   }
 

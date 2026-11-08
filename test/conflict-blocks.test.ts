@@ -55,3 +55,18 @@ test('refused for a file that is not conflicted, or a path outside the repositor
   await assert.rejects(resolveBlock(repo, { path: '../f', line: 1, side: 'ours' }), /isn't a path in the repository/);
   await assert.rejects(resolveBlock(repo, { path: 'f', line: at(0), side: 'neither' as never }), /Keep which side/);
 });
+
+test('keep one side of every conflict in a file at once, from its sides as the conflict state names them', async () => {
+  const { repo } = await conflicted();
+  const f = (await repo.state()).conflict?.files[0];
+  assert.deepEqual(f?.sides, { ours: 'HEAD', theirs: 'feature', blocks: 2 });
+  let r = await resolveBlock(repo, { path: 'f', side: 'theirs', id: '1' });
+  assert.match(r.message, /Kept feature's side of 2 conflicts in f; no conflicts are left in it, so it's marked resolved\./);
+  assert.equal(t.read('f'), 'a\nTHEIRS1\nb\nc\nd\ne\nTHEIRS2\nf\n');
+  assert.equal(r.state.conflict?.files.length, 0);
+  r = await unresolveBlock(repo, { path: 'f', id: '1' });
+  assert.equal(r.state.conflict?.files.length, 1);
+  r = await resolveBlock(repo, { path: 'f', side: 'both' });
+  assert.equal(t.read('f'), 'a\nOURS1\nTHEIRS1\nb\nc\nd\ne\nOURS2\nTHEIRS2\nf\n');
+  await assert.rejects(resolveBlock(repo, { path: 'f', side: 'ours' }), /isn't conflicted/);
+});

@@ -7,9 +7,9 @@
   import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, menu, tooltip } from 'purr';
   import { ArrowCounterClockwiseRegular, CheckBold, CheckRegular, ChecksRegular, CopyRegular, FileArrowUpRegular } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { DiffSummary } from '../shared/types.ts';
+  import type { ConflictFile, DiffSummary } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
-  import { app } from './lib/app.svelte.ts';
+  import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { tip } from './lib/tip.ts';
 
   const c = $derived(app.repo?.conflict ?? null);
@@ -21,6 +21,8 @@
 
   // What finishing would change on top of HEAD, straight from the working tree (markers included).
   let diff = $state.raw<DiffSummary | null>(null);
+  let diffView = $state<DiffView>();
+  let at = $state.raw<DiffPosition | null>(null);
   let error = $state<string | null>(null);
   let loading = false;
   let again = false;
@@ -36,7 +38,13 @@
       if ('error' in d) error = d.error;
       else {
         error = null;
-        if (d.sha !== diff?.sha) diff = d;
+        // The new diff opens where this one was, its files in view already loaded, so resolving doesn't move the view.
+        if (d.sha !== diff?.sha) {
+          const p = diffView?.position() ?? null;
+          const want = p ? d.files.flatMap((f, i) => (f.rows && p.shown.includes(f.path) ? [i] : [])) : [];
+          if (want.length) await app.fileContents(d, want).catch(() => {});
+          [at, diff] = [p, d];
+        }
       }
     } finally {
       loading = false;
@@ -66,14 +74,24 @@
   const resolveAll = (force = false) => app.sync('resolve', { paths: pending, force });
   // A conflict settled from its <<<<<<< line in the diff; the toast can put the file back.
   let picks = 0;
-  function keep(path: string, line: number, side: 'ours' | 'theirs' | 'both') {
+  // Without a line, every conflict in the file at once (its buttons in the list).
+  function keep(path: string, line: number | null, side: 'ours' | 'theirs' | 'both') {
     const id = String(++picks);
-    app.sync('resolveBlock', { path, line, side, id }, undefined, false, { label: 'Undo', run: () => app.sync('unresolveBlock', { path, id }) });
+    app.sync('resolveBlock', { path, line: line ?? undefined, side, id }, undefined, false, {
+      label: 'Undo',
+      run: () => app.sync('unresolveBlock', { path, id }),
+    });
   }
+  const each = (n: number) => (n === 1 ? 'its conflict' : `all ${n} of its conflicts`);
 
   /** A listed file's menu: open it, mark it resolved (or stage it again), copy its path. */
-  function fileMenu(e: MouseEvent, path: string, o: { line?: number | null; exists?: boolean; markers?: boolean; stage?: boolean } = {}) {
+  function fileMenu(
+    e: MouseEvent,
+    path: string,
+    o: { line?: number | null; exists?: boolean; markers?: boolean; stage?: boolean; sides?: ConflictFile['sides'] } = {},
+  ) {
     e.preventDefault();
+    const s = o.sides;
     menu.show(e, [
       {
         label: 'Open in Zed',
@@ -89,6 +107,10 @@
         confirm: o.markers ? 'It still has conflict markers. Click again' : undefined,
         run: () => resolve(path, !!o.markers),
       },
+      !!s && 'separator',
+      !!s && { label: `Keep ${s.ours}`, disabled: app.busy, note: `In ${each(s.blocks)}`, run: () => keep(path, null, 'ours') },
+      !!s && { label: `Keep ${s.theirs}`, disabled: app.busy, note: `In ${each(s.blocks)}`, run: () => keep(path, null, 'theirs') },
+      !!s && { label: 'Keep both', disabled: app.busy, note: `${s.ours}'s, then ${s.theirs}'s`, run: () => keep(path, null, 'both') },
       'separator',
       { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${path}`, 'path') },
       { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(path, 'relative path') },
@@ -125,7 +147,7 @@
     <div class="meta">
       <p class="muted hint">
         {#if c.files.length}
-          Pick a side on each conflict in the diff below, or resolve the file in your editor and mark it resolved.
+          Keep a side of every conflict in a file here, or of each one in the diff below; or resolve the file in your editor and mark it resolved.
         {:else if c.unstaged.length}
           Stage these again or undo their changes to continue.
         {:else}
@@ -158,6 +180,20 @@
               <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
                 <FileArrowUpRegular /> Open in Zed
               </Button>
+              {#if f.sides}
+                {@const s = f.sides}
+                <span class="keep" role="group" aria-label="Resolve every conflict in {f.path}">
+                  <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'ours')} {@attach tip(`Keep what's above ======= in ${each(s.blocks)}, from ${s.ours}`)}
+                    ><span class="side">Keep {s.ours}</span></Button
+                  >
+                  <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'theirs')} {@attach tip(`Keep what's below ======= in ${each(s.blocks)}, from ${s.theirs}`)}
+                    ><span class="side">Keep {s.theirs}</span></Button
+                  >
+                  <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'both')} {@attach tip(`Keep both sides of ${each(s.blocks)}: ${s.ours}'s, then ${s.theirs}'s`)}
+                    >Keep both</Button
+                  >
+                </span>
+              {/if}
               <span class="spacer"></span>
               {#if f.markers}<span use:tooltip={'<<<<<<<, ======= or >>>>>>> at a line start'}><Tag color="var(--warn)" label="conflict markers" /></span>{/if}
               <Tag label={f.status} />
@@ -259,7 +295,7 @@
       <p class="muted empty">{error}</p>
     {:else if diff}
       {#key diff.sha}
-        <DiffView summary={diff} {sel} readonly={true} onresolve={keep} />
+        <DiffView bind:this={diffView} summary={diff} {sel} readonly={true} initial={at} onresolve={keep} />
       {/key}
     {:else}
       <p class="muted empty">Loading changes…</p>
@@ -378,6 +414,24 @@
 
   .spacer {
     flex: 1;
+  }
+
+  /* Settling every conflict of the file, beside its other actions; a long side name (a rebased commit's) is cut. */
+  .keep {
+    display: flex;
+    gap: var(--gap-2);
+    min-width: 0;
+    padding-left: var(--gap-4);
+    border-left: 1px solid var(--border);
+  }
+
+  .side {
+    display: inline-block;
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
   }
 
   .path:focus-visible {

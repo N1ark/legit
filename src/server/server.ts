@@ -29,6 +29,7 @@ import {
   abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
 import { addWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
+import { cloneInfo, cloneRepo, cloned } from './clone.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
@@ -238,6 +239,12 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       if (!opts.open) throw new GitError('Switching worktree is done by the app here.');
       return { url: await opts.open((await findWorktree(repo, b.path)).path) };
     },
+    clone: (b) => cloneRepo(repo, b),
+    openClone: async (b) => {
+      if (!opts.open) throw new GitError('Switching repository is done by the app here.');
+      if (!cloned.has(b.path)) throw new GitError(`${b.path} wasn't cloned here.`);
+      return { url: await opts.open(b.path) };
+    },
     stash: () => stash(repo),
     stashApply: (b) => stashApply(repo, b),
     stashPop: (b) => stashPop(repo, b),
@@ -310,6 +317,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     }
     if (path === '/api/remotes') return send(res, 200, await remotes(repo));
     if (path === '/api/worktrees') return send(res, 200, await worktrees(repo));
+    if (path === '/api/clone/info') return send(res, 200, await cloneInfo(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

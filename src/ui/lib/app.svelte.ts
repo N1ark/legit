@@ -2,7 +2,7 @@ import { IS_TAURI, copyText, persisted, toast } from 'purr';
 import { expandable } from '../../shared/context.ts';
 import { renderKind } from '../../shared/files.ts';
 import { highlight, prepare } from './highlighter.ts';
-import { type Expansion, buildRows, noExpansion, rowHunks } from './rows.ts';
+import { type Expansion, type RowPlace, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
 import type { CsvIndex } from './csv.ts';
@@ -959,6 +959,10 @@ export interface DiffPosition {
   /** Every file: one that wasn't there starts collapsed or not as it would anyway (missing when kept by an older version). */
   files?: string[];
   shown: string[];
+  /** The line at the top of the viewport in `path`'s diff, found again once its contents are in (see `rowPlace`). */
+  row?: RowPlace | null;
+  /** The old lines shown between hunks, by file (see `shownRanges`). */
+  expanded?: Record<string, [number, number][]>;
 }
 
 /** A stash being looked at: one in the stash list, or a dropped one legit kept. */

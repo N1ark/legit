@@ -23,6 +23,8 @@
   import StashBanner from './StashBanner.svelte';
   import StashPanel from './StashPanel.svelte';
   import NewWorktreeDialog from './NewWorktreeDialog.svelte';
+  import CloneDialog from './CloneDialog.svelte';
+  import { cloneRepository } from './lib/clone.svelte.ts';
   import SwitchDialog from './SwitchDialog.svelte';
   import BranchPicker from './BranchPicker.svelte';
   import CommitList from './CommitList.svelte';
@@ -82,6 +84,7 @@
     rebaseOnBase: () => app.rebaseOnBase(),
     rebuild: () => rebuildOn(app.selection.map((c) => c.sha)),
     newWorktree: () => newWorktree(),
+    clone: () => cloneRepository(),
     help: () => (help = true),
     logs: () => (settings = 'logs'),
     // The app is about to switch repo: refuse while something runs, else keep what's shown.
@@ -320,6 +323,7 @@
 <DialogHost />
 <SwitchDialog />
 <NewWorktreeDialog />
+<CloneDialog />
 <ToastHost position="bottom-end" />
 {#if settings}
   <Settings.component {shortcuts} bind:section={settings} onclose={() => (settings = null)} />

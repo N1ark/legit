@@ -72,13 +72,18 @@
     TAIL,
     buildRows,
     changesIn,
+    expansionOf,
+    gapsOf,
     isHead,
     moveTokens,
     noExpansion,
     rowHunks,
     rowMap,
     rowOfChange,
+    rowOfPlace,
+    rowPlace,
     rowsIn,
+    shownRanges,
   } from './lib/rows.ts';
   import { type Anchor, type Knot, anchorAt, readKnots, rowAnchor, rowOfAnchor, yOf } from './lib/place.ts';
 
@@ -113,8 +118,8 @@
     onremove?: (selection: Selection) => void;
     /** Conflicts: keep one side (or both) of the conflict whose `<<<<<<<` is on new-side line `line` of `path`. */
     onresolve?: (path: string, line: number, side: 'ours' | 'theirs' | 'both') => void;
-    /** Replace line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
-    oneditline?: (path: string, line: number, text: string) => Promise<boolean>;
+    /** Replace `count` lines from line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
+    oneditline?: (path: string, line: number, text: string, count: number) => Promise<boolean>;
     /**
      * Uncommitted changes: `sel` is what's staged, and picking lines stages or unstages them at once
      * (`on`). Files' `mixed` lines show as neither until picked.
@@ -199,9 +204,10 @@
   let scroller: HTMLElement;
   let alive = true;
 
-  // Editing a line in place (double-click it, or its menu): the row becomes a text field, which
-  // grows by a row per line typed into it and pushes the rows below down.
-  let editing = $state<{ i: number; r: number; text: string; orig: string } | null>(null);
+  // Editing lines in place (double-click one, or its menu): the row becomes a text field, which
+  // grows by a row per line typed into it and pushes the rows below down. ↑ on its first line or
+  // ↓ on its last takes in the line next to it (rows r..end, removed lines among them hidden meanwhile).
+  let editing = $state<{ i: number; r: number; end: number; text: string; orig: string } | null>(null);
   let saving = $state(false);
 
   // Review threads (and comments being written) sit under the rows they're on, as tall as they
@@ -353,17 +359,25 @@
     if (w?.cols !== cols) wrapCache.set(rows, (w = { cols, at: wrappedOffsets(rows, cols) }));
     return w.at;
   }
+  /** Rows of file i's lines a..b take, as they show when not edited. */
+  function plainSpan(i: number, a: number, b: number): number {
+    const at = wrapped(i);
+    return at ? at[b + 1] - at[a] : b - a + 1;
+  }
+  /** Row r of file i is in the field, after its first row: not shown. */
+  const inField = (i: number, r: number) => editing?.i === i && r > editing.r && r <= editing.end;
   /** Rows row r of file i takes (the one being edited: what its field needs). */
   function rowSpan(i: number, r: number): number {
     if (editing?.i === i && editing.r === r) return editRows;
-    const at = wrapped(i);
-    return at ? at[r + 1] - at[r] : 1;
+    if (inField(i, r)) return 0;
+    return plainSpan(i, r, r);
   }
   /** Y of row r in file i's lines. */
   function rowY(i: number, r: number): number {
     const at = wrapped(i);
     const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
-    return editing?.i === i && editing.r < r ? y + (editRows - (at ? at[editing.r + 1] - at[editing.r] : 1)) * ROW : y;
+    if (editing?.i !== i || editing.r >= r) return y;
+    return y + (editRows - plainSpan(i, editing.r, Math.min(r - 1, editing.end))) * ROW;
   }
   // Markdown and CSV files can be shown rendered instead of as lines (the button in their header).
   // A rendered file is as tall as it was laid out, measured as it shows (and as it changes: images
@@ -475,7 +489,7 @@
       const k = knotsOf.get(i);
       reading = k && rendered[i] && !collapsed[i] ? { i, at: anchorAt(k, top - tops[i]) } : null;
     };
-    const drop = () => (placing = null);
+    const drop = () => (placing = restoring = null);
     const input = ['wheel', 'touchstart', 'pointerdown'] as const;
     el.addEventListener('scroll', read, { passive: true });
     for (const t of input) el.addEventListener(t, drop, { passive: true });
@@ -697,6 +711,11 @@
       if (k >= 0) scroller.scrollTop += tops[k] + Math.min(initial.offset, fileHeight(k)) - view.top;
       else scroller.scrollTop = initial.scrollTop;
       measure();
+      if (k >= 0 && initial.row) restoring = { i: k, row: initial.row, until: performance.now() + 3000 };
+      for (const [path, ranges] of Object.entries(initial.expanded ?? {})) {
+        const i = files.findIndex((f) => f.path === path);
+        if (i >= 0 && expandable(files[i]) && files[i].rows) reopen(i, ranges);
+      }
     }
     // Grammars load while the first contents do.
     prepare(files.slice(near[0], near[1]).map((f) => f.path));
@@ -775,6 +794,7 @@
         const next = { ...contents };
         for (const i of want) next[i] = build(i, res[i]);
         contents = next;
+        if (restoring && want.includes(restoring.i)) restoreRow();
       },
       (e) => {
         for (const i of want) requested.delete(i);
@@ -851,9 +871,12 @@
     const moved = rowMap(before, rows);
     if (tokens[i]) tokens = { ...tokens, [i]: moveTokens(tokens[i], before, rows, moved) };
     if (editing?.i === i) {
-      const n = before.n[editing.r];
-      const r = moved[editing.r] >= 0 ? moved[editing.r] : rows.n.findIndex((m, k) => m === n && !isHead(rows.kind[k]));
-      if (r >= 0) editing.r = r;
+      const to = (from: number) => {
+        const n = before.n[from];
+        return moved[from] >= 0 ? moved[from] : rows.n.findIndex((m, k) => m === n && !isHead(rows.kind[k]));
+      };
+      const [r, end] = [to(editing.r), to(editing.end)];
+      if (r >= 0 && end >= r) [editing.r, editing.end] = [r, end];
       else editing = null;
     }
     hoverBlock = null;
@@ -1049,6 +1072,21 @@
   export function position(): DiffPosition {
     const k = view.top >= 0 ? rowAt(tops, view.top) : -1;
     const at = k >= 0 && k < files.length ? k : -1;
+    const expanded: Record<string, [number, number][]> = {};
+    for (const [k, x] of Object.entries(expansions)) {
+      const ranges = contents[+k] ? shownRanges(contents[+k].gaps, x) : [];
+      if (ranges.length) expanded[files[+k].path] = ranges;
+    }
+    // The row at the top of the view (below the file's sticky header), when it shows lines.
+    let row: DiffPosition['row'] = null;
+    const rows = at >= 0 && !rendered[at] && !collapsed[at] ? contents[at] : undefined;
+    if (rows?.kind.length) {
+      const y = view.top - tops[at] - HEAD - lead(at);
+      if (y >= 0) {
+        const [r] = rowsIn(rows.kind.length, (k) => rowY(at, k), y, y + 1);
+        if (r < rows.kind.length) row = rowPlace(rows, r, (y - rowY(at, r)) / (rowSpan(at, r) * ROW));
+      }
+    }
     return {
       path: at >= 0 ? files[at].path : null,
       offset: at >= 0 ? view.top - tops[at] : 0,
@@ -1056,7 +1094,46 @@
       collapsed: files.filter((_, i) => collapsed[i]).map((f) => f.path),
       files: files.map((f) => f.path),
       shown: visible.map((i) => files[i].path),
+      row,
+      expanded,
     };
+  }
+
+  // Opening at a place (another version of this diff): the line that was at the top goes back
+  // there once its file's contents (and the gaps that were open) are in, unless the reader moved first.
+  let restoring: { i: number; row: NonNullable<DiffPosition['row']>; until: number } | null = null;
+  let reopening = 0;
+  function restoreRow() {
+    const p = restoring;
+    if (!p || !scroller || reopening) return;
+    if (performance.now() > p.until || collapsed[p.i] || rendered[p.i]) return void (restoring = null);
+    const rows = contents[p.i];
+    if (!rows) return;
+    flushSync();
+    const { r, frac } = rowOfPlace(rows, p.row);
+    const y = tops[p.i] + HEAD + lead(p.i) + rowY(p.i, r) + frac * rowSpan(p.i, r) * ROW;
+    if (Math.abs(y - view.top) >= 0.5) {
+      scroller.scrollTop += y - view.top;
+      measure();
+    }
+  }
+
+  /** Show the old lines `ranges` of file i between its hunks, as another version of the diff did. */
+  async function reopen(i: number, ranges: [number, number][]) {
+    reopening++;
+    try {
+      const [file, res] = await Promise.all([app.oldLines(summary.sha, i), app.fileContents(summary, [i])]);
+      if (!alive) return;
+      const x = expansionOf(gapsOf(res[i], file), ranges, file);
+      if (!x.top.length && !x.bottom.length) return;
+      expansions[i] = x;
+      if (contents[i]) replaceRows(i, build(i, contents[i].hunks));
+    } catch {
+      // The gaps just stay closed.
+    } finally {
+      reopening--;
+      if (alive) restoreRow();
+    }
   }
 
   const totals = $derived(files.reduce((t, f) => ({ a: t.a + f.added, r: t.r + f.removed, ws: t.ws + f.ws }), { a: 0, r: 0, ws: 0 }));
@@ -1257,16 +1334,77 @@
     return !!oneditline && !readonly && f.partial && f.status !== 'D' && !!rows && !isHead(rows.kind[r]) && rows.n[r] > 0;
   }
 
-  /** Focus the field when it's first shown, not each time scrolling mounts it again. */
+  /** Focus the field when it's first shown (with the caret at `caret`, else at the end), not each time scrolling mounts it again. */
   let focusEditor = false;
+  let caret: [number, number, 'forward' | 'backward' | 'none'] | null = null;
+
+  // The line ending isn't part of the text (the server keeps the file's).
+  const lineText = (i: number, r: number) => contents[i].text[r].replace(/\r$/, '');
 
   function startEdit(i: number, r: number) {
     if (saving || !canEdit(i, r)) return;
-    // The line ending isn't part of the text (the server keeps the file's).
-    const text = contents[i].text[r].replace(/\r$/, '');
-    editing = { i, r, text, orig: text };
+    const text = lineText(i, r);
+    editing = { i, r, end: r, text, orig: text };
     focusEditor = true;
+    caret = null;
   }
+
+  /** The commit's next line after row r of file i (`dir` 1) or before it (-1), when it can be edited; removed lines are passed over. */
+  function nextLine(i: number, r: number, dir: 1 | -1): number {
+    const rows = contents[i];
+    for (let k = r + dir; k >= 0 && k < rows.kind.length; k += dir) {
+      if (isHead(rows.kind[k])) return -1;
+      if (rows.n[k]) return canEdit(i, k) ? k : -1;
+    }
+    return -1;
+  }
+
+  /** Lines of the commit's version in the field: rows r..end of its file, removed ones aside. */
+  const fieldLines = (e: NonNullable<typeof editing>) => {
+    let n = 0;
+    for (let k = e.r; k <= e.end; k++) if (contents[e.i].n[k]) n++;
+    return n;
+  };
+
+  /** ↑ on the field's first line or ↓ on its last: take the line beyond it in, the caret going on to it. */
+  function extendEdit(e: KeyboardEvent, el: HTMLTextAreaElement): boolean {
+    const ed = editing;
+    if (!ed || saving) return false;
+    const down = e.key === 'ArrowDown';
+    const v = el.value;
+    const at = el.selectionDirection === 'backward' ? el.selectionStart : el.selectionEnd;
+    if (down ? v.indexOf('\n', at) >= 0 : v.lastIndexOf('\n', at - 1) >= 0) return false;
+    const k = nextLine(ed.i, down ? ed.end : ed.r, down ? 1 : -1);
+    if (k < 0) return false;
+    const line = lineText(ed.i, k);
+    const col = at - (v.lastIndexOf('\n', at - 1) + 1);
+    const anchor = el.selectionDirection === 'backward' ? el.selectionEnd : el.selectionStart;
+    if (down) {
+      const to = v.length + 1 + Math.min(col, line.length);
+      caret = e.shiftKey ? [anchor, to, 'forward'] : [to, to, 'forward'];
+      Object.assign(ed, { end: k, text: `${ed.text}\n${line}`, orig: `${ed.orig}\n${line}` });
+    } else {
+      const shift = line.length + 1;
+      const to = Math.min(col, line.length);
+      caret = e.shiftKey ? [to, anchor + shift, 'backward'] : [to, to, 'forward'];
+      Object.assign(ed, { r: k, text: `${line}\n${ed.text}`, orig: `${line}\n${ed.orig}` });
+    }
+    // Taking in a line above moves the field to that row: the new one takes the focus.
+    focusEditor = true;
+    moving = true;
+    tick().then(() => {
+      moving = false;
+      const field = filesEl?.querySelector<HTMLTextAreaElement>('textarea.editor');
+      if (field && caret) {
+        field.focus({ preventScroll: true });
+        field.setSelectionRange(...caret);
+        caret = null;
+        focusEditor = false;
+      }
+    });
+    return true;
+  }
+  let moving = false;
 
   async function saveEdit() {
     if (!editing || saving || !oneditline) return;
@@ -1277,7 +1415,7 @@
     }
     saving = true;
     try {
-      if (await oneditline(files[i].path, contents[i].n[r], text)) editing = null;
+      if (await oneditline(files[i].path, contents[i].n[r], text, fieldLines(editing))) editing = null;
     } finally {
       saving = false;
     }
@@ -1296,19 +1434,23 @@
     } else if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       document.execCommand('insertText', false, '\t');
+    } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (extendEdit(e, e.currentTarget as HTMLTextAreaElement)) e.preventDefault();
     }
   }
 
-  // Leaving the field closes it if nothing was typed. (Removing the field blurs it too.)
+  // Leaving the field closes it if nothing was typed. (Removing the field blurs it too, but not as it moves up a row.)
   function closeUnchanged() {
-    if (editing && editing.text === editing.orig && !saving) editing = null;
+    if (editing && editing.text === editing.orig && !saving && !moving) editing = null;
   }
 
   function attachEditor(el: HTMLTextAreaElement) {
     if (!focusEditor) return;
     focusEditor = false;
     el.focus({ preventScroll: true });
-    el.setSelectionRange(el.value.length, el.value.length);
+    const [a, b, dir] = caret ?? [el.value.length, el.value.length, 'none'];
+    el.setSelectionRange(a, b, dir);
+    caret = null;
   }
 
   /** Picked changes of every file, as a selection. */
@@ -1334,7 +1476,7 @@
     return [
       ...(changeActions && ci >= 0 ? changeActions(f, mine, block) : []),
       commentEntry(i, r),
-      canEdit(i, r) && { label: 'Edit line', icon: PencilSimpleRegular, note: 'Or double-click it', run: () => startEdit(i, r) },
+      canEdit(i, r) && { label: 'Edit line', icon: PencilSimpleRegular, note: 'Or double-click it; ↑/↓ take in more lines', run: () => startEdit(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
           ? `Remove ${count} picked changes from commit`
@@ -1690,7 +1832,7 @@
                               >{/if}</span
                           ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
                         </div>
-                      {:else}
+                      {:else if !inField(i, r)}
                         {@const kind = rows.kind[r]}
                         {@const ci = rows.ci[r]}
                         {@const edit = editing?.i === i && editing.r === r ? editing : null}
@@ -1712,7 +1854,7 @@
                           >{#if edit}<span class="code"
                               ><textarea
                                 class="editor"
-                                aria-label="Line {rows.n[r]}"
+                                aria-label={edit.end > r ? `Lines ${rows.n[r]} to ${rows.n[edit.end]}` : `Line ${rows.n[r]}`}
                                 wrap={cols ? 'soft' : 'off'}
                                 spellcheck="false"
                                 readonly={saving}

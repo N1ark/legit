@@ -2,7 +2,7 @@
 // module exports its own tables, merged here.
 
 import { checksGet, checksPost, warmChecks } from './checks.ts';
-import { GithubError, MOCK, githubToken, resetToken, viewerLogin } from './client.ts';
+import { GithubError, MOCK, githubToken, resetToken, rest, viewerLogin } from './client.ts';
 import { ghRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import { notificationsGet, notificationsPost, warmNotifications } from './notifications.ts';
@@ -12,6 +12,7 @@ import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
 import { reviewGet, reviewPost } from './review.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
+import type { GithubRepoInfo } from '../../shared/types.ts';
 import type { Repo } from '../repo.ts';
 
 export type GetRoute = (repo: Repo, query: URLSearchParams) => Promise<unknown>;
@@ -33,6 +34,19 @@ const core: Record<string, GetRoute> = {
     return status;
   },
   pr: (repo, q) => prForBranch(repo, q.get('branch') ?? '', q.get('fresh') === '1'),
+  // The signed-in user's repositories (theirs, and their organizations' and collaborations'), last pushed first: to clone one.
+  myRepos: async () => {
+    const list = await rest<any[]>('GET', '/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member');
+    return list.map(
+      (r): GithubRepoInfo => ({
+        fullName: r.full_name,
+        description: r.description ?? null,
+        private: !!r.private,
+        fork: !!r.fork,
+        pushedAt: Date.parse(r.pushed_at ?? '') || 0,
+      }),
+    );
+  },
 };
 
 export const getRoutes: Record<string, GetRoute> = {

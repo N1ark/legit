@@ -3,12 +3,13 @@
   // one, add one or remove one; in the desktop app, the recent repositories too: pick one to
   // switch to it, or open another. Right-click a row, or the name, for its menu.
   import { ConfirmButton, Highlight, IS_TAURI, IconButton, Popover, menu, rank, toast, tooltip, type MaybeEntry } from 'purr';
-  import { ArrowsLeftRightRegular, CaretDownRegular, CheckBold, CopyRegular, FolderOpenRegular, FolderPlusRegular, LockSimpleRegular, TrashRegular, XRegular } from 'purr/glyphs';
+  import { ArrowsLeftRightRegular, CaretDownRegular, CheckBold, CopyRegular, DownloadSimpleRegular, FolderOpenRegular, FolderPlusRegular, LockSimpleRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import type { WorktreeInfo } from '../shared/types.ts';
   import { app, shortSha } from './lib/app.svelte.ts';
   import { invoke } from './lib/desktop.ts';
   import { startCursor } from './lib/picker.ts';
   import { tip } from './lib/tip.ts';
+  import { cloneRepository } from './lib/clone.svelte.ts';
   import { listWorktrees, newWorktree, openWorktree, removeWorktree, removeWorktreeTip, worktreeList } from './lib/worktrees.svelte.ts';
 
   interface RecentRepo {
@@ -24,7 +25,8 @@
     | { kind: 'worktree'; w: WorktreeInfo; score: number; field: number; indices: number[] }
     | { kind: 'new'; score?: undefined }
     | { kind: 'recent'; r: RecentRepo; score: number; field: number; indices: number[] }
-    | { kind: 'open'; score?: undefined };
+    | { kind: 'open'; score?: undefined }
+    | { kind: 'clone'; score?: undefined };
 
   let open = $state(false);
   let list = $state<RecentRepo[] | null>(null);
@@ -45,16 +47,18 @@
       for (const { item, ...m } of rank(trees, filter, { keys })) out.push({ kind: 'worktree', w: item, ...m });
     }
     out.push({ kind: 'new' });
-    if (!IS_TAURI) return out;
-    for (const { item, ...m } of rank(list ?? [], filter, { keys: [(r) => r.name, (r) => r.short] })) out.push({ kind: 'recent', r: item, ...m });
-    out.push({ kind: 'open' });
+    if (IS_TAURI) {
+      for (const { item, ...m } of rank(list ?? [], filter, { keys: [(r) => r.name, (r) => r.short] })) out.push({ kind: 'recent', r: item, ...m });
+      out.push({ kind: 'open' });
+    }
+    out.push({ kind: 'clone' });
     return out;
   });
 
   const opens = (r: Row) => (r.kind === 'worktree' && !r.w.current && !r.w.missing) || (r.kind === 'recent' && !r.r.current);
   // With nothing matching, a filter in the app is more likely a repository to open than a branch.
   const active = $derived(
-    picked === null ? startCursor(rows, opens, IS_TAURI && filter.trim() ? rows.length - 1 : 0) : Math.min(picked, rows.length - 1),
+    picked === null ? startCursor(rows, opens, IS_TAURI && filter.trim() ? rows.length - 2 : 0) : Math.min(picked, rows.length - 1),
   );
   const loading = $derived(trees === null || (IS_TAURI && list === null));
   const shownTrees = $derived(rows.filter((r) => r.kind === 'worktree').length);
@@ -86,6 +90,7 @@
     if (r.kind === 'worktree' && r.w.missing) return toast(`${r.w.short} is gone: click its bin twice to forget it.`);
     open = false;
     if (r.kind === 'new') return newWorktree();
+    if (r.kind === 'clone') return cloneRepository();
     if (r.kind === 'worktree') {
       if (r.w.current) return;
       return openWorktree(r.w.path);
@@ -161,6 +166,7 @@
       [
         { label: 'New worktree…', icon: FolderPlusRegular, run: () => choose({ kind: 'new' }) },
         IS_TAURI && { label: 'Open Repository…', icon: FolderOpenRegular, run: () => choose({ kind: 'open' }) },
+        { label: 'Clone Repository…', icon: DownloadSimpleRegular, run: () => choose({ kind: 'clone' }) },
         !!root && copyPath(root),
       ],
       app.repo?.name,
@@ -168,7 +174,7 @@
   }
 
   /** Switching away is refused while something runs; adding or removing a worktree isn't. */
-  const switches = (r: Row) => r.kind === 'open' || (r.kind === 'recent' && !r.r.current) || (r.kind === 'worktree' && !r.w.current && !r.w.missing);
+  const switches = (r: Row) => r.kind === 'open' || r.kind === 'clone' || (r.kind === 'recent' && !r.r.current) || (r.kind === 'worktree' && !r.w.current && !r.w.missing);
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -234,7 +240,7 @@
             class="row-item"
             class:is-cursor={k === active}
             class:current={(r.kind === 'worktree' && r.w.current) || (r.kind === 'recent' && r.r.current)}
-            class:action={r.kind === 'new' || r.kind === 'open'}
+            class:action={r.kind === 'new' || r.kind === 'open' || r.kind === 'clone'}
             class:disabled={off}
             role="option"
             aria-selected={k === active}
@@ -285,9 +291,12 @@
                   <XRegular />
                 </IconButton>
               </span>
-            {:else}
+            {:else if r.kind === 'open'}
               <span class="check"><FolderOpenRegular /></span>
               <span class="name">Open Repository…</span>
+            {:else}
+              <span class="check"><DownloadSimpleRegular /></span>
+              <span class="name" use:tooltip={'Clone one of your GitHub repositories, or any URL, and switch to it'}>Clone Repository…</span>
             {/if}
           </li>
         {/each}

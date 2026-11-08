@@ -152,19 +152,19 @@ async function unstagedPaths(git: Git, unmerged: Map<string, string>): Promise<s
   return [...new Set(r.out.toString('latin1').split('\0'))].filter((p) => p && !unmerged.has(p));
 }
 
-async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exists' | 'markers' | 'line'>> {
+async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exists' | 'markers' | 'line' | 'sides'>> {
   try {
     const file = join(git.root, toUtf8(path));
     const st = await lstat(file);
-    if (!st.isFile() || st.size > 50 * 1024 * 1024) return { exists: true, markers: false, line: null };
+    if (!st.isFile() || st.size > 50 * 1024 * 1024) return { exists: true, markers: false, line: null, sides: null };
     const text = (await readFile(file)).toString('latin1');
     const m = MARKERS.exec(text);
-    if (!m) return { exists: true, markers: false, line: null };
+    if (!m) return { exists: true, markers: false, line: null, sides: null };
     let line = 1;
     for (let i = text.indexOf('\n'); i >= 0 && i < m.index; i = text.indexOf('\n', i + 1)) line++;
-    return { exists: true, markers: true, line };
+    return { exists: true, markers: true, line, sides: conflictSides(text.split('\n')) };
   } catch {
-    return { exists: false, markers: false, line: null };
+    return { exists: false, markers: false, line: null, sides: null };
   }
 }
 
@@ -691,9 +691,63 @@ async function conflictedFile(git: Git, path: string): Promise<{ raw: string; fi
   return { raw, file: join(git.root, path) };
 }
 
+/** A conflict's lines: its `<<<<<<<`, `|||||||` (-1 without a base section), `=======` and `>>>>>>>`. */
+export interface ConflictBlock {
+  at: number;
+  base: number;
+  mid: number;
+  end: number;
+}
+
+/** The complete conflict starting on line `at` (0-based), or null when there's none there. */
+function blockAt(lines: string[], at: number): ConflictBlock | null {
+  if (!OPEN.test(lines[at] ?? '')) return null;
+  let base = -1;
+  let mid = -1;
+  for (let k = at + 1; k < lines.length; k++) {
+    if (OPEN.test(lines[k])) return null;
+    if (mid < 0 && base < 0 && BASE.test(lines[k])) base = k;
+    else if (mid < 0 && MID.test(lines[k])) mid = k;
+    else if (mid >= 0 && CLOSE.test(lines[k])) return { at, base, mid, end: k };
+  }
+  return null;
+}
+
+/** Every complete conflict of a file's lines, in order. */
+export function conflictBlocks(lines: string[]): ConflictBlock[] {
+  const out: ConflictBlock[] = [];
+  for (let k = 0; k < lines.length; k++) {
+    const b = OPEN.test(lines[k]) ? blockAt(lines, k) : null;
+    if (b) {
+      out.push(b);
+      k = b.end;
+    }
+  }
+  return out;
+}
+
+/** The name a marker line gives its side ("HEAD", "feature"), or `or`. */
+const sideLabel = (line: string, or: string) => toUtf8(line.slice(8).replace(/\r$/, '').trim()) || or;
+
+/** How the first conflict of a file's lines names its sides, and how many conflicts there are; null with none. */
+export function conflictSides(lines: string[]): { ours: string; theirs: string; blocks: number } | null {
+  const all = conflictBlocks(lines);
+  if (!all.length) return null;
+  return { ours: sideLabel(lines[all[0].at], 'ours'), theirs: sideLabel(lines[all[0].end], 'theirs'), blocks: all.length };
+}
+
+/** `lines` with conflict `b` replaced by the side kept. */
+export function keepSide(lines: string[], b: ConflictBlock, side: Side): string[] {
+  const ours = lines.slice(b.at + 1, b.base >= 0 ? b.base : b.mid);
+  const theirs = lines.slice(b.mid + 1, b.end);
+  const kept = side === 'ours' ? ours : side === 'theirs' ? theirs : [...ours, ...theirs];
+  return [...lines.slice(0, b.at), ...kept, ...lines.slice(b.end + 1)];
+}
+
 /**
- * Settle the conflict whose `<<<<<<<` is on line `line` of `path`: keep one side of it, or both.
- * The file is rewritten in place; once it has no conflict left, it's marked resolved (`git add`).
+ * Settle the conflict whose `<<<<<<<` is on line `line` of `path` (every conflict in it, without a
+ * line): keep one side of it, or both. The file is rewritten in place; once it has no conflict left,
+ * it's marked resolved (`git add`).
  */
 export function resolveBlock(repo: Repo, req: { path?: string; line?: number; side?: Side; id?: string }): Promise<SyncResult> {
   return repo.exclusive(async () => {
@@ -703,26 +757,25 @@ export function resolveBlock(repo: Repo, req: { path?: string; line?: number; si
     if (side !== 'ours' && side !== 'theirs' && side !== 'both') throw new GitError('Keep which side?');
     const { raw, file } = await conflictedFile(git, path);
     const before = await readFile(file);
-    const lines = before.toString('latin1').split('\n');
-    const at = Number(req.line) - 1;
-    if (!OPEN.test(lines[at] ?? '')) {
-      throw new GitError(`${path} changed since it was shown: line ${req.line} doesn't start a conflict any more. Nothing was changed.`);
+    let lines = before.toString('latin1').split('\n');
+    let blocks: ConflictBlock[];
+    if (req.line === undefined || req.line === null) {
+      blocks = conflictBlocks(lines);
+      if (!blocks.length) throw new GitError(`${path} has no complete conflict (<<<<<<<, ======= and >>>>>>>) left. Nothing was changed.`);
+    } else {
+      const at = Number(req.line) - 1;
+      if (!OPEN.test(lines[at] ?? '')) {
+        throw new GitError(`${path} changed since it was shown: line ${req.line} doesn't start a conflict any more. Nothing was changed.`);
+      }
+      const b = blockAt(lines, at);
+      if (!b) throw new GitError(`The conflict at line ${req.line} of ${path} isn't complete (no ======= and >>>>>>> after it). Nothing was changed.`);
+      blocks = [b];
     }
-    let base = -1;
-    let mid = -1;
-    let end = -1;
-    for (let k = at + 1; k < lines.length && end < 0; k++) {
-      if (OPEN.test(lines[k])) break;
-      if (mid < 0 && base < 0 && BASE.test(lines[k])) base = k;
-      else if (mid < 0 && MID.test(lines[k])) mid = k;
-      else if (mid >= 0 && CLOSE.test(lines[k])) end = k;
-    }
-    if (end < 0) throw new GitError(`The conflict at line ${req.line} of ${path} isn't complete (no ======= and >>>>>>> after it). Nothing was changed.`);
-    const ours = lines.slice(at + 1, base >= 0 ? base : mid);
-    const theirs = lines.slice(mid + 1, end);
-    const label = (k: number, or: string) => toUtf8(lines[k].slice(8).replace(/\r$/, '').trim()) || or;
-    const what = side === 'both' ? 'both sides' : `${label(side === 'ours' ? at : end, side)}'s side`;
-    lines.splice(at, end - at + 1, ...(side === 'ours' ? ours : side === 'theirs' ? theirs : [...ours, ...theirs]));
+    const first = blocks[0];
+    const label = side === 'both' ? '' : sideLabel(lines[side === 'ours' ? first.at : first.end], side);
+    const name = side === 'both' ? 'both sides' : `${label}${label.endsWith('s') ? "'" : "'s"} side`;
+    const what = blocks.length > 1 ? `${name} of ${blocks.length} conflicts` : name;
+    for (const b of blocks.toReversed()) lines = keepSide(lines, b, side);
     const after = lines.join('\n');
     await writeFile(file, Buffer.from(after, 'latin1'));
     const staged = !MARKERS.test(after);

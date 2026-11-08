@@ -37,3 +37,31 @@ test('rowsIn finds the rows overlapping a window, by height', () => {
   }
   assert.deepEqual(rowsIn(0, y, 0, 100), [0, 0]);
 });
+
+test('expanded gaps carry over to another version of the diff by old line', async () => {
+  const { expansionOf, gapsOf, shownRanges } = await import('../src/ui/lib/rows.ts');
+  const file = { lines: Array.from({ length: 100 }, (_, k) => `l${k + 1}`), noNewline: false };
+  const hunk = (at: number, types = '   +   '): HunkData => ({ header: '@@', oldStart: at, newStart: at, types, text: types.split(''), eof: [] });
+  const a = gapsOf([hunk(20), hunk(60)], file);
+  // 5 lines down from the top of the file, 3 up into the second hunk, all of the end.
+  const ranges = shownRanges(a, { file, top: [5, 0, 35], bottom: [0, 3] });
+  assert.deepEqual(ranges, [[1, 5], [57, 59], [66, 100]]);
+  // A hunk added between them: its gaps open where the ranges touch them.
+  const b = gapsOf([hunk(20), hunk(40), hunk(60)], file);
+  const x = expansionOf(b, ranges, file);
+  assert.deepEqual([x.top, x.bottom], [[5, , , 35], [, , 3]]);
+  // A range covering a whole gap shows all of it, from the top.
+  assert.deepEqual(expansionOf(gapsOf([hunk(20)], file), [[1, 19]], file).top, [19]);
+});
+
+test('a row is found again in another version by its old line, edits above it or not', async () => {
+  const { rowOfPlace, rowPlace } = await import('../src/ui/lib/rows.ts');
+  const h = (oldStart: number, types: string): HunkData => ({ header: '@@', oldStart, newStart: oldStart, types, text: types.split(''), eof: [] });
+  const before = buildRows([h(10, '  ++  ')]);
+  // Row 4 is the second added line: two rows below old line 11.
+  const p = rowPlace(before, 4, 0.5);
+  assert.deepEqual(p, { old: 11, after: 2, line: 13, frac: 0.5 });
+  // Lines added above it in the file: new numbers move, old ones don't.
+  const after = buildRows([h(2, '+++'), h(10, '  ++  ')].map((x, k) => (k ? { ...x, newStart: 13 } : x)));
+  assert.deepEqual(rowOfPlace(after, p), { r: 8, frac: 0.5 });
+});
