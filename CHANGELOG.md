@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 — 2026-11-09
 
 - On a fork, **Rebase on upstream/main** shows beside **Rebase on main** when the `upstream` remote's default branch has commits your fork's main doesn't yet: one click instead of pulling main from upstream first.
 - Uncommitted changes no longer stop anything. Editing a commit's diff, dropping, undoing, pulling, switching with **Bring my changes** and the like merge them onto the result (staged ones stay staged); if they'd conflict, they come back with the conflicts for the conflict view (**Abort** puts them in the stash list). Rebases, merges and cherry-picks that stop on conflicts, and **Edit files**, put them aside in the stash list and bring them back once finished or aborted.
