@@ -50,6 +50,7 @@
     !push ? ''
     : push.publish ? `Publishes ${branch} to ${push.remote} first`
     : push.ahead && !push.behind ? `Pushes ${commits(push.ahead)} to ${push.remote}/${push.branch} first`
+    : push.ahead ? `Force pushes to ${push.remote}/${push.branch} first (asks before)`
     : '',
   );
   /** Nothing on this branch that the base doesn't have: GitHub would refuse it. */

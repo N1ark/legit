@@ -63,12 +63,34 @@ export async function newWorktree(start: WorktreeStart = {}): Promise<boolean> {
 }
 
 /**
- * Remove a worktree, once its button was clicked twice: its folder goes, its branch stays (the
- * server refuses one with uncommitted changes or untracked files, and keeps commits only it has).
+ * Remove a worktree, once its button was clicked twice: its folder goes, its branch stays, and its
+ * uncommitted changes are saved first. When its submodules have something only they have, the error
+ * asks, and **Remove anyway** goes ahead. Removing the one you're in goes to the main worktree.
  */
-export async function removeWorktree(w: WorktreeInfo): Promise<boolean> {
-  if (!(await app.op('removeWorktree', { path: w.path }))) return false;
-  toast(w.missing ? `Forgot ${w.name}` : `Removed ${w.name}`);
+export async function removeWorktree(w: WorktreeInfo, force = false): Promise<boolean> {
+  const done = (note?: string) => toast(`${w.missing ? 'Forgot' : 'Removed'} ${w.name}${note ? `. ${note}` : ''}`, { timeout: note ? 10_000 : undefined });
+  const ask = (e: Error & { code?: string }) => {
+    if (e.code !== 'worktree-loses') return false;
+    toast(e.message, { kind: 'error', timeout: 20_000, action: { label: 'Remove anyway', run: () => void removeWorktree(w, true) } });
+    return true;
+  };
+  if (w.current) {
+    if (app.switchBlocker) return (toast(app.switchBlocker), false);
+    let r: { moved: string; url?: string; note?: string };
+    try {
+      r = await request('/api/removeWorktree', { path: w.path, force });
+    } catch (e) {
+      if (!(e instanceof Error && ask(e))) toast.error(e);
+      return false;
+    }
+    done(r.note);
+    if (IS_TAURI) await invoke('open_worktree', { path: r.moved }).catch((e) => toast.error(e));
+    else if (r.url) location.href = r.url;
+    return true;
+  }
+  // The server's note (where the changes went) is toasted by `op`.
+  if (!(await app.op('removeWorktree', { path: w.path, force }, undefined, undefined, ask))) return false;
+  done();
   return true;
 }
 
@@ -76,5 +98,5 @@ export async function removeWorktree(w: WorktreeInfo): Promise<boolean> {
 export function removeWorktreeTip(w: WorktreeInfo): string {
   if (w.missing) return `Forget it: ${w.short} is already gone`;
   const keeps = w.branch ? `${w.branch} stays` : 'commits only it has go under Recently deleted';
-  return `Remove it: deletes ${w.short}, ignored files included; ${keeps}. Refused if it has uncommitted changes or untracked files.`;
+  return `Remove it: deletes ${w.short}, ignored files included; its uncommitted changes are stashed first and ${keeps}.${w.current ? ' You go to the main worktree.' : ''}`;
 }

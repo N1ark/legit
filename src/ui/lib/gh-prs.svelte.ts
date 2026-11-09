@@ -1,13 +1,14 @@
 // Pull requests around the current branch: every branch's (badges in the branch list), the
 // stack it's in (the header's pull request chip), restacking it, and opening a pull request.
 
-import { toast } from 'purr';
+import { confirmAction, toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { rebuild, switchOp } from './branches.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { openWorktree } from './worktrees.svelte.ts';
 import type { CreatePrRequest, PrStack, RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
 import type { PullRequest } from '../../shared/github.ts';
+import type { PushInfo } from '../../shared/types.ts';
 
 type Kind = 'local' | 'remote';
 /** Most of a request's URL taken by branch names. */
@@ -185,6 +186,35 @@ export async function retarget(plan: RestackPlan): Promise<boolean> {
   return true;
 }
 
+const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
+
+/** Ask before replacing what the remote has of the branch; true to go ahead. */
+function askForce(where: string, why: string) {
+  return confirmAction(`Force push to ${where}?`, {
+    description: `${why} The pull request is opened from what GitHub has, so your branch replaces it. The replaced commits stay in this repo.`,
+    confirmLabel: 'Force push and create',
+    danger: true,
+  });
+}
+
+/** Get GitHub to have all of the branch: push it, or force push it once asked. False if that didn't happen. */
+async function pushForPr(push: PushInfo): Promise<boolean> {
+  const where = `${push.remote}/${push.branch}`;
+  if (push.ahead && push.behind) {
+    const why = push.rewritten
+      ? `${where} has the old versions of ${commits(push.behind)} you rewrote.`
+      : `${where} has ${commits(push.behind)} your branch doesn't.`;
+    if (!(await askForce(where, why))) return false;
+    return app.op('push', { force: 'overwrite', expect: push.tip });
+  }
+  if (!push.publish && !push.ahead) return true;
+  let refused = false;
+  const ok = await app.op('push', { force: false }, undefined, undefined, (e) => (refused = e.code === 'not-fetched'));
+  if (ok || !refused) return ok;
+  if (!(await askForce(where, `${where} has commits your branch doesn't, pushed since you last fetched.`))) return false;
+  return app.op('push', { force: 'fetch' });
+}
+
 /** Open the "Create pull request" dialog for the current branch. */
 export function openCreatePr() {
   if (!gh.ready) return toast.error(gh.status?.error ?? 'This repository is not on GitHub.');
@@ -192,18 +222,17 @@ export function openCreatePr() {
   prs.creating = true;
 }
 
-/** Push the branch if GitHub doesn't have all of it yet, then open its pull request. */
+/**
+ * Push the branch if GitHub doesn't have all of it yet (a force push when the remote's copy has
+ * commits the branch doesn't, asked first), then open its pull request.
+ */
 export async function createPr(req: Omit<CreatePrRequest, 'head'>): Promise<PullRequest | null> {
   const push = app.repo?.push;
   if (!push) {
     toast.error("This branch doesn't push anywhere: add a GitHub remote first");
     return null;
   }
-  if (push.ahead && push.behind) {
-    toast.error(`${push.remote}/${push.branch} has commits this branch doesn't: pull or force push first`);
-    return null;
-  }
-  if ((push.publish || push.ahead) && !(await app.op('push', { force: false }))) return null;
+  if (!(await pushForPr(push))) return null;
   let pr: PullRequest;
   try {
     pr = await ghPost<PullRequest>('prCreate', { ...req, head: app.repo?.push?.branch ?? push.branch });

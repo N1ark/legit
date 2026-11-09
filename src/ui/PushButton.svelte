@@ -25,6 +25,8 @@
   const where = $derived(info ? `${info.remote}/${info.branch}` : '');
   const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
   const disabled = $derived(app.busy || !!app.repo?.blocked);
+  /** Pushing only sends the branch, so a merge or rebase in progress doesn't stop it. */
+  const pushDisabled = $derived(app.busy || !app.repo?.head);
 
   let now = $state(Date.now());
   let started = false;
@@ -70,9 +72,9 @@
   async function push(force: Force = mode === 'rewritten') {
     if (!info) return;
     const body = force === 'overwrite' ? { force, expect: info.tip } : { force };
-    const forced = !!force && mode !== 'push' && mode !== 'publish';
+    const forced = !!force;
     if (await app.op('push', body, undefined, undefined, refused)) {
-      toast(mode === 'publish' ? `Published to ${where}` : forced ? `Force pushed to ${where}` : `Pushed to ${where}`);
+      toast(forced ? `Force pushed to ${where}` : mode === 'publish' ? `Published to ${where}` : `Pushed to ${where}`);
     }
   }
 
@@ -80,7 +82,7 @@
   function refused(e: Error & { code?: string }) {
     const anyway =
       e.code === 'not-integrated' ? { label: 'Force push anyway', run: () => push('overwrite') }
-      : e.code === 'not-fetched' ? { label: 'Fetch and force push anyway', run: () => push('fetch') }
+      : e.code === 'not-fetched' ? { label: 'Force push anyway', run: () => push('fetch') }
       : null;
     if (!anyway) return false;
     toast(e.message, { kind: 'error', timeout: 20_000, action: anyway });
@@ -127,7 +129,7 @@
       ? `${where} has ${commits(info.behind)} your branch doesn't, and yours has ${commits(info.ahead)} it doesn't. ` +
         'Pull brings theirs in, by rebase or merge.'
     : `${where} has ${commits(info.behind)} your branch doesn't. Pull fetches and moves your branch up to them; ` +
-      "uncommitted changes come along unless they'd be overwritten.",
+      "uncommitted changes come along.",
   );
   const overwriteTitle = $derived(
     !info ? ''
@@ -157,18 +159,18 @@
         variant="ghost"
         confirmLabel={`Overwrite ${commits(info.behind)} on ${where}`}
         onconfirm={() => push('overwrite')}
-        {disabled}
+        disabled={pushDisabled}
         {@attach tip(overwriteTitle)}
       >
         <WarningRegular /> Force push
       </ConfirmButton>
     {/if}
     {#if mode === 'rewritten'}
-      <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} {disabled} {@attach tip(pushTitle)}>
+      <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} disabled={pushDisabled} {@attach tip(pushTitle)}>
         <WarningBold /> Force push <span class="count">↑{info.ahead}</span>
       </ConfirmButton>
     {:else if mode === 'push' || mode === 'publish'}
-      <Button variant="primary" onclick={() => push(false)} {disabled} {@attach tip(pushTitle)}>
+      <Button variant="primary" onclick={() => push(false)} disabled={pushDisabled} {@attach tip(pushTitle)}>
         <CloudArrowUpRegular />
         {mode === 'publish' ? 'Publish' : 'Push'}
         {#if mode === 'push'}<span class="count">↑{info.ahead}</span>{/if}

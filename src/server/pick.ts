@@ -5,6 +5,7 @@
 import type { CommitInfo, SyncResult } from '../shared/types.ts';
 import { type Git, GitError, type RawCommit } from './git.ts';
 import { type Repo, ReplayConflict, info } from './repo.ts';
+import { ASIDE, autostash, withAutostash } from './carry.ts';
 import { carry, done, inProgress, unmergedPaths } from './sync.ts';
 
 /** Commits of another branch listed to pick from, at most. */
@@ -131,8 +132,8 @@ export function copyTo(repo: Repo, req: { shas: string[]; branch: string }): Pro
 /**
  * Cherry-pick commits onto the current branch, oldest first. In memory when nothing conflicts
  * (uncommitted changes come along, as in a rebase); otherwise a real `git cherry-pick`, which
- * stops on each conflict for the conflict view, and needs a working tree without uncommitted
- * changes so that aborting gets back exactly. Either way it's undone in one step.
+ * stops on each conflict for the conflict view, with uncommitted changes put aside until it's
+ * over (see carry.ts). Either way it's undone in one step.
  */
 export function cherryPick(repo: Repo, req: { shas: string[] }): Promise<SyncResult> {
   return repo.exclusive(async () => {
@@ -143,7 +144,6 @@ export function cherryPick(repo: Repo, req: { shas: string[] }): Promise<SyncRes
     if (!head) throw new GitError('This branch has no commits yet.');
     const here = (await repo.currentBranch()) ?? 'HEAD';
     const commits = await picks(git, req.shas, head, here);
-    let conflict: string;
     try {
       const r = await replay(repo, commits, head);
       if (!r.out.length) return done(repo, `${here} already has those changes; nothing was cherry-picked.`);
@@ -151,16 +151,9 @@ export function cherryPick(repo: Repo, req: { shas: string[] }): Promise<SyncRes
       return done(repo, `Cherry-picked ${plural(r.out.length, 'commit')} onto ${here}${r.skipped}.`, [r.tip]);
     } catch (e) {
       if (!(e instanceof ReplayConflict)) throw e;
-      conflict = e.message.replace(/ Nothing was changed\.$/, '');
     }
 
-    await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-    const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-    if (status) {
-      throw new GitError(
-        `${conflict} Resolving that means stopping at the conflict, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
-      );
-    }
+    const aside = await autostash(repo, 'cherry-pick');
     await repo.backup(head, 'cherry-pick');
     const r = await git.run(['cherry-pick', '--empty=drop', ...commits.map((c) => c.sha)], {
       allowFail: true,
@@ -172,14 +165,15 @@ export function cherryPick(repo: Repo, req: { shas: string[] }): Promise<SyncRes
       const n = (await unmergedPaths(git)).size;
       return done(
         repo,
-        `Cherry-picking stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue (it stops again at each commit that conflicts), or abort to put everything back.`,
+        `Cherry-picking stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue (it stops again at each commit that conflicts), or abort to put everything back.${aside ? ` ${ASIDE}` : ''}`,
       );
     }
+    const back = await withAutostash(repo, '');
     const after = await repo.head();
     if (r.code !== 0 || !after || after === head) {
-      throw new GitError(after === head ? `Cherry-pick failed; nothing was changed.\n${output}` : `Cherry-pick failed.\n${output}`);
+      throw new GitError(after === head ? `Cherry-pick failed; nothing was changed.${back}\n${output}` : `Cherry-pick failed.${back}\n${output}`);
     }
     await repo.record({ label: 'cherry-pick', before: head, after });
-    return done(repo, `Cherry-picked ${plural(commits.length, 'commit')} onto ${here}.`, [after]);
+    return done(repo, `Cherry-picked ${plural(commits.length, 'commit')} onto ${here}.${back}`, [after]);
   });
 }

@@ -3,14 +3,16 @@
 // and `git rebase --continue` replays the commits after it, stopping on conflicts like any
 // rebase. Cancelling aborts the rebase, after saving the edits.
 //
-// It starts from a clean working tree, so an abort gets back exactly. Untracked files that were
-// there before are noted (in git's rebase dir) and never folded into the commit.
+// Uncommitted changes are put aside first (see carry.ts), so an abort gets back exactly, and come back
+// once it's finished or cancelled. Untracked files that were there before are noted and never folded
+// into the commit.
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CommitDiff, SyncResult } from '../shared/types.ts';
 import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { GitError } from './git.ts';
+import { ASIDE, autostash, withAutostash } from './carry.ts';
 import { Repo } from './repo.ts';
 import { EDIT_NOTE, abortNow, changedPaths, continueNow, done, editStop, inProgress, unmergedPaths, worktreeTree } from './sync.ts';
 
@@ -57,7 +59,7 @@ export function startEdit(repo: Repo, req: { sha: string }): Promise<SyncResult>
     const k = Repo.indexOf(chain, req.sha);
     const c = chain[k];
     const head = chain[0].sha;
-    await repo.requireClean();
+    const aside = await autostash(repo, 'edit commit');
     const untracked = await untrackedFiles(repo);
     await repo.backup(head, 'edit commit');
     const base = c.parents[0];
@@ -78,12 +80,13 @@ export function startEdit(repo: Repo, req: { sha: string }): Promise<SyncResult>
     if (!stop || stop.sha !== c.sha) {
       // Didn't stop where it should (an untracked file in the way, say): put everything back.
       if (inProgress(git)) await git.run(['rebase', '--abort'], { allowFail: true });
+      const back = await withAutostash(repo, '');
       const now = await repo.head();
       const output = (r.err + r.out.toString('utf8')).trim();
       throw new GitError(
         now === head
-          ? `Couldn't check out that commit; nothing was changed.\n${output}`
-          : `Couldn't check out that commit, and HEAD is now ${now?.slice(0, 7)} (it was ${head.slice(0, 7)}; a backup was made).\n${output}`,
+          ? `Couldn't check out that commit; nothing was changed.${back}\n${output}`
+          : `Couldn't check out that commit, and HEAD is now ${now?.slice(0, 7)} (it was ${head.slice(0, 7)}; a backup was made).${back}\n${output}`,
       );
     }
     const note: Note = { sha: c.sha, head, untracked };
@@ -91,7 +94,7 @@ export function startEdit(repo: Repo, req: { sha: string }): Promise<SyncResult>
     const n = stop.pending.length;
     return done(
       repo,
-      `Checked out "${stop.subject}". Change its files, then finish to amend them into it${n ? ` and replay the ${plural(n, 'commit')} after it` : ''}.`,
+      `Checked out "${stop.subject}". Change its files, then finish to amend them into it${n ? ` and replay the ${plural(n, 'commit')} after it` : ''}.${aside ? ` ${ASIDE}` : ''}`,
     );
   });
 }
@@ -123,7 +126,9 @@ export function finishEdit(repo: Repo): Promise<SyncResult> {
       const files = res.state.conflict.files.length;
       res.message = `${what}; replaying the commits after it stopped${files ? ` with conflicts in ${plural(files, 'file')}` : ''}. Resolve them and continue, or abort to put everything back.`;
     } else {
-      res.message = `${what}${n ? ` and replayed the ${plural(n, 'commit')} after it` : ''}.`;
+      // What came after "Finished the rebase." (uncommitted changes put back) stays.
+      const after = res.message.replace(/^Finished the rebase\./, '');
+      res.message = `${what}${n ? ` and replayed the ${plural(n, 'commit')} after it` : ''}.${after}`;
       res.focus = [edited];
     }
     return res;

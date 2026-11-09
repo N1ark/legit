@@ -6,6 +6,7 @@ import {
   renameBranch, restoreBranch, setUpstream, unsetUpstream,
 } from '../src/server/branches.ts';
 import { Repo } from '../src/server/repo.ts';
+import { abortOp } from '../src/server/sync.ts';
 import { setup } from './util.ts';
 
 const t = setup();
@@ -14,8 +15,8 @@ const A = { name: 'Ann', email: 'ann@x.org' };
 const dir = () => t.dir;
 
 test('create a branch from HEAD or an older commit, switching to it or not', async () => {
-  const base = commit('base', { f: '1\n' });
-  commit('a', { f: '2\n' });
+  const base = commit('base', { f: '1\n2\n3\n' });
+  commit('a', { f: '1\n2\nthree\n' });
   const repo = await Repo.open(dir());
   let st = (await createBranch(repo, { name: 'feature' })).state;
   assert.equal(st.branch, 'feature');
@@ -32,18 +33,22 @@ test('create a branch from HEAD or an older commit, switching to it or not', asy
   await assert.rejects(createBranch(repo, { name: ' ' }), /needs a name/);
   assert.equal(git('rev-parse', 'old'), base);
 
-  // From an older commit: uncommitted changes in the way make git refuse, and nothing changes.
-  write('f', 'dirty\n');
-  await assert.rejects(createBranch(repo, { name: 'older', from: base }), /Couldn't switch to older; nothing was changed/);
-  assert.equal(read('f'), 'dirty\n');
-  assert.equal(git('branch', '--show-current'), 'feature');
-  assert.equal(git('branch', '--list', 'older'), '');
+  // From an older commit with another version of a changed file: the changes come along, merged onto it, staged ones staged.
+  write('f', 'one\n2\nthree\n');
+  git('add', 'f');
+  const r = await createBranch(repo, { name: 'older', from: base });
+  assert.equal(r.state.branch, 'older');
+  assert.match(r.note ?? '', /came along/);
+  assert.equal(read('f'), 'one\n2\n3\n');
+  assert.equal(git('diff', '--cached', '--name-only'), 'f');
+  assert.equal(git('diff', '--name-only'), '');
+  assert.equal(git('stash', 'list'), '');
 
   // Leaving them on the current branch stashes them first.
-  st = (await createBranch(repo, { name: 'older', from: base, stash: true })).state;
-  assert.equal(st.branch, 'older');
-  assert.equal(read('f'), '1\n');
-  assert.match(git('stash', 'list', '--format=%gs'), /legit: on feature$/);
+  st = (await createBranch(repo, { name: 'older2', from: base, stash: true })).state;
+  assert.equal(st.branch, 'older2');
+  assert.equal(read('f'), '1\n2\n3\n');
+  assert.match(git('stash', 'list', '--format=%gs'), /legit: on older$/);
 });
 
 test('rename a branch: undo history and backups follow it', async () => {
@@ -68,7 +73,7 @@ test('rename a branch: undo history and backups follow it', async () => {
   assert.equal(git('rev-parse', 'trunk'), a);
 });
 
-test('delete a branch: refuses the current one, saves the tip, and can bring it back', async () => {
+test('delete a branch: saves the tip, and can bring it back', async () => {
   commit('base', { f: '1\n' });
   git('switch', '-q', '-c', 'feature');
   const tip = commit('feature work', { g: '1\n' });
@@ -76,7 +81,6 @@ test('delete a branch: refuses the current one, saves the tip, and can bring it 
   git('config', 'branch.feature.remote', 'origin');
   const repo = await Repo.open(dir());
 
-  await assert.rejects(deleteBranch(repo, { branch: 'main' }), /You're on main/);
   await assert.rejects(deleteBranch(repo, { branch: 'nope' }), /No local branch/);
   await deleteBranch(repo, { branch: 'feature' });
   assert.equal(git('branch', '--list', 'feature'), '');
@@ -104,7 +108,52 @@ test('delete a branch: refuses the current one, saves the tip, and can bring it 
   assert.equal(git('rev-parse', 'feature-old'), tip);
 });
 
-test('delete several branches: the current one and worktrees are skipped, the rest kept under Recently deleted', async () => {
+test("delete the branch you're on: it switches to the default branch first, uncommitted changes coming along", async () => {
+  const base = commit('base', { f: '1\n' });
+  git('switch', '-q', '-c', 'feature');
+  const tip = commit('feature work', { g: '1\n' });
+  write('f', 'mine\n');
+  write('new', 'untracked\n');
+  const repo = await Repo.open(dir());
+
+  const r = await deleteBranch(repo, { branch: 'feature' });
+  assert.equal(r.state.branch, 'main');
+  assert.match(r.note ?? '', /You're on main now/);
+  assert.equal(git('branch', '--list', 'feature'), '');
+  assert.equal(read('f'), 'mine\n');
+  assert.equal(read('new'), 'untracked\n');
+  assert.equal(t.exists('g'), false);
+  assert.deepEqual((await deletedBranches(repo)).map((d) => [d.name, d.sha]), [['feature', tip]]);
+
+  // The default branch itself, among others: it goes to a branch that isn't being deleted.
+  git('branch', 'keep');
+  git('branch', 'drop');
+  const many = await deleteBranches(repo, { branches: ['main', 'drop'] });
+  assert.deepEqual(many.deleted, ['main', 'drop']);
+  assert.equal(many.state.branch, 'keep');
+  assert.equal(read('f'), 'mine\n');
+
+  // The only branch left: HEAD is detached at its commit.
+  const last = await deleteBranch(repo, { branch: 'keep' });
+  assert.equal(last.state.branch, null);
+  assert.equal(git('rev-parse', 'HEAD'), base);
+  assert.equal(read('f'), 'mine\n');
+});
+
+test('deleting the branch you are on, from a remote default branch with no local one: it checks that out', async () => {
+  commit('base', { f: '1\n' });
+  t.remote();
+  git('push', '-q', '-u', 'origin', 'main');
+  git('remote', 'set-head', 'origin', 'main');
+  git('switch', '-q', '-c', 'feature');
+  git('branch', '-D', 'main');
+  const repo = await Repo.open(dir());
+  const r = await deleteBranch(repo, { branch: 'feature' });
+  assert.equal(r.state.branch, 'main');
+  assert.equal(git('rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+});
+
+test('delete several branches: worktrees are skipped, the rest kept under Recently deleted', async () => {
   commit('base', { f: '1\n' });
   const tips: Record<string, string> = {};
   for (const name of ['a', 'b', 'c', 'held']) {
@@ -116,10 +165,9 @@ test('delete several branches: the current one and worktrees are skipped, the re
   git('worktree', 'add', '-q', wt, 'held');
   const repo = await Repo.open(dir());
 
-  const r = await deleteBranches(repo, { branches: ['a', 'main', 'b', 'held', 'nope', 'a'] });
+  const r = await deleteBranches(repo, { branches: ['a', 'b', 'held', 'nope', 'a'] });
   assert.deepEqual(r.deleted, ['a', 'b']);
   assert.deepEqual(r.skipped, [
-    { name: 'main', why: "you're on it" },
     { name: 'held', why: `checked out in ${t.gitIn(wt, 'rev-parse', '--show-toplevel')}` },
     { name: 'nope', why: 'no such branch' },
   ]);
@@ -133,7 +181,7 @@ test('delete several branches: the current one and worktrees are skipped, the re
   assert.equal(git('rev-parse', 'a'), tips.a);
 
   // Nothing deletable: refused, saying why for each.
-  await assert.rejects(deleteBranches(repo, { branches: ['main', 'held'] }), /Nothing was deleted: main \(you're on it\), held \(checked out in/);
+  await assert.rejects(deleteBranches(repo, { branches: ['held', 'nope'] }), /Nothing was deleted: held \(checked out in .*\), nope \(no such branch\)/);
   await assert.rejects(deleteBranches(repo, { branches: [] }), /Pick the branches/);
 });
 
@@ -301,10 +349,6 @@ test('switching with "leave my changes" stashes them, and puts them back if the 
   write('new', 'untracked\n');
   const repo = await Repo.open(dir());
 
-  // Bringing them along would overwrite f: git refuses.
-  await assert.rejects(repo.switchBranch({ branch: 'other' }), /Couldn't switch/);
-  assert.equal(read('f'), 'mine\n');
-
   let st = (await repo.switchBranch({ branch: 'other', stash: true })).state;
   assert.equal(st.branch, 'other');
   assert.equal(read('f'), '1\n');
@@ -324,6 +368,23 @@ test('switching with "leave my changes" stashes them, and puts them back if the 
   assert.equal(read('f'), 'mine\n');
   assert.equal(git('diff', '--cached', '--name-only'), 'new');
   assert.equal(git('stash', 'list'), '');
+});
+
+test('bringing changes that conflict with the branch switches anyway, with the conflicts to resolve', async () => {
+  commit('base', { f: '1\n' });
+  git('branch', 'other');
+  commit('a', { f: '2\n' });
+  write('f', 'mine\n');
+  const repo = await Repo.open(dir());
+  const r = await repo.switchBranch({ branch: 'other' });
+  assert.equal(r.state.branch, 'other');
+  assert.equal(r.state.conflict?.kind, 'stash');
+  assert.match(r.note ?? '', /conflict/);
+  assert.match(read('f'), /<<<<<<<[\s\S]*mine[\s\S]*>>>>>>>/);
+  // Aborting puts other's version back, and the changes in the stash list.
+  await abortOp(repo);
+  assert.equal(read('f'), '1\n');
+  assert.match(git('stash', 'list', '--format=%gs'), /your changes before switching to other on main/);
 });
 
 test('a switch that a hook fails after it happened says so and leaves the changes stashed', async () => {

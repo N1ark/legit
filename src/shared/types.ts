@@ -256,6 +256,8 @@ export interface OpResult {
   renamed: Record<string, string>;
   /** SHAs of the commits the UI should select after the operation. */
   focus: string[];
+  /** Something to tell the user besides (uncommitted changes that came back with conflicts, say). */
+  note?: string;
 }
 
 export interface Backup {

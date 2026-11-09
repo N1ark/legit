@@ -5,6 +5,7 @@ import { beforeEach, test } from 'node:test';
 import { deletedBranches } from '../src/server/branches.ts';
 import { Repo } from '../src/server/repo.ts';
 import { addWorktree, findWorktree, removeWorktree, worktrees } from '../src/server/worktrees.ts';
+import type { OpResult } from '../src/shared/types.ts';
 import { setup } from './util.ts';
 
 const t = setup();
@@ -76,37 +77,48 @@ test('add worktrees for a new branch, an existing one or a remote one, and list 
   assert.equal(t.gitIn(d.path, 'rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/shared');
 });
 
-test('remove a worktree: refused when it has changes, is current, main or locked; its detached commits are kept', async () => {
+test('remove a worktree whatever its state: its changes are stashed first, and its detached commits kept', async () => {
   commit('base', { f: '1\n' });
   const repo = await Repo.open(t.dir);
   const root = realpathSync(t.dir);
   const { path } = await addWorktree(repo, { branch: 'x' });
 
-  writeFileSync(join(path, 'new'), 'u\n');
-  await assert.rejects(removeWorktree(repo, { path }), /uncommitted changes or untracked files.*Nothing was changed/s);
-  assert.ok(existsSync(join(path, 'new')));
-  t.gitIn(path, 'add', 'new');
-  await assert.rejects(removeWorktree(repo, { path }), /uncommitted/);
   writeFileSync(join(path, '.gitignore'), 'build/\n');
   t.gitIn(path, 'add', '.gitignore');
   t.gitIn(path, 'commit', '-qm', 'on x');
   // Ignored files go with it.
   mkdirSync(join(path, 'build'));
   writeFileSync(join(path, 'build', 'out'), '');
+  // Uncommitted changes and untracked files are stashed on its branch.
+  writeFileSync(join(path, 'new'), 'u\n');
+  writeFileSync(join(path, 'f'), 'changed\n');
+  t.gitIn(path, 'add', 'f');
 
   await assert.rejects(removeWorktree(repo, { path: root }), /main worktree/);
-  const there = await Repo.open(path);
-  await assert.rejects(removeWorktree(there, { path }), /You're in it/);
+  // Locked doesn't stop it either.
   git('worktree', 'lock', '--reason', 'busy', path);
-  await assert.rejects(removeWorktree(repo, { path }), /locked \(busy\)/);
-  git('worktree', 'unlock', path);
-
   const tip = t.gitIn(path, 'rev-parse', 'HEAD');
-  await removeWorktree(repo, { path });
+  const r = (await removeWorktree(repo, { path })) as OpResult;
+  assert.match(r.note ?? '', /stashed on x/);
   assert.equal(existsSync(path), false);
   assert.equal(git('rev-parse', 'x'), tip);
   assert.equal((await worktrees(repo)).length, 1);
   assert.deepEqual(await deletedBranches(repo), []);
+  assert.match(git('stash', 'list', '--format=%gs'), /legit: on x$/);
+
+  // The one you're in: removed from the main worktree, which it says to go to.
+  const c = await addWorktree(repo, { branch: 'cur' });
+  writeFileSync(join(c.path, 'wip'), 'w\n');
+  const there = await Repo.open(c.path);
+  const moved = await removeWorktree(there, { path: c.path });
+  assert.deepEqual(moved, { moved: root, url: undefined, note: 'Its changes are stashed on cur.' });
+  assert.equal(existsSync(c.path), false);
+  assert.equal(git('rev-parse', 'cur'), git('rev-parse', 'main'));
+
+  // Switching to x offers its changes back.
+  const st = (await repo.switchBranch({ branch: 'x' })).state;
+  assert.deepEqual(st.stashed?.files.sort(), ['f', 'new']);
+  git('switch', '-q', 'main');
 
   // Detached, with a commit no branch has: saved under Recently deleted, named after the folder.
   const d = await addWorktree(repo, { branch: 'y', path: '../legit-detached' });
@@ -137,7 +149,29 @@ test('remove a worktree: refused when it has changes, is current, main or locked
   assert.deepEqual((await deletedBranches(repo)).map((b) => [b.name, b.sha]), [['legit-gone', stranded], ['legit-detached', lonely]]);
 });
 
-test('remove a worktree with submodules: deleted once they are clean and pushed', async () => {
+test('remove a worktree in the middle of a merge: its files are saved as a commit under Recently deleted', async () => {
+  commit('base', { f: '1\n' });
+  const repo = await Repo.open(t.dir);
+  const { path } = await addWorktree(repo, { branch: 'm', path: '../legit-merging' });
+  const inIt = (...args: string[]) => t.gitIn(path, ...args);
+  inIt('switch', '-q', '-c', 'o');
+  writeFileSync(join(path, 'f'), 'o\n');
+  inIt('commit', '-qam', 'o');
+  inIt('switch', '-q', 'm');
+  writeFileSync(join(path, 'f'), 'm\n');
+  inIt('commit', '-qam', 'm');
+  assert.throws(() => inIt('merge', '-q', 'o'));
+  writeFileSync(join(path, 'f'), 'resolved\n');
+
+  const r = (await removeWorktree(repo, { path })) as OpResult;
+  assert.match(r.note ?? '', /Recently deleted branches, as legit-merging-changes/);
+  assert.equal(existsSync(path), false);
+  const saved = (await deletedBranches(repo)).find((b) => b.name === 'legit-merging-changes')!;
+  assert.equal(git('show', `${saved.sha}:f`), 'resolved');
+  assert.equal(git('rev-parse', `${saved.sha}^`), git('rev-parse', 'm'));
+});
+
+test('remove a worktree with submodules: asked first when they have something only they have', async () => {
   const lib = t.tmp('legit-lib-');
   t.gitIn(lib, 'init', '-q', '-b', 'main');
   writeFileSync(join(lib, 'l'), '1\n');
@@ -154,13 +188,18 @@ test('remove a worktree with submodules: deleted once they are clean and pushed'
   // A commit only the submodule has, even recorded in the worktree's branch, would be lost.
   const sub = join(path, 'lib');
   t.gitIn(sub, 'commit', '-q', '--allow-empty', '-m', 'local');
-  await assert.rejects(removeWorktree(repo, { path }), /uncommitted changes/);
+  const asks = (e: any) => e.code === 'worktree-loses' && /submodule lib has uncommitted changes or commits on no remote branch or tag.*anyway/.test(e.message);
+  await assert.rejects(removeWorktree(repo, { path }), asks);
   t.gitIn(path, 'commit', '-qam', 'bump lib');
-  await assert.rejects(removeWorktree(repo, { path }), /submodule lib has commits on no remote branch or tag/);
-  t.gitIn(sub, 'reset', '-q', '--hard', 'origin/HEAD');
-  t.gitIn(path, 'commit', '-qam', 'unbump lib');
-
-  await removeWorktree(repo, { path });
+  await assert.rejects(removeWorktree(repo, { path }), asks);
+  assert.ok(existsSync(path));
+  await removeWorktree(repo, { path, force: true });
   assert.equal(existsSync(path), false);
   assert.equal((await worktrees(repo)).length, 1);
+
+  // Clean and pushed, it isn't asked.
+  const other = await addWorktree(repo, { branch: 'y' });
+  t.gitIn(other.path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init');
+  await removeWorktree(repo, { path: other.path });
+  assert.equal(existsSync(other.path), false);
 });

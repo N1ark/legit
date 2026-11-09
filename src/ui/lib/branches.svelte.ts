@@ -148,7 +148,7 @@ async function bulk(op: string, body: unknown, done: (n: number) => string): Pro
   return true;
 }
 
-/** Delete several local branches; the current one and those checked out in another worktree are skipped. */
+/** Delete several local branches (leaving the current one first); those checked out in another worktree are skipped. */
 export function deleteBranches(names: string[]): Promise<boolean> {
   return bulk('deleteBranches', { branches: names }, (n) => `Deleted ${plural(n, 'branch')}; restorable for two weeks`);
 }

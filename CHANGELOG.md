@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Uncommitted changes no longer stop anything. Editing a commit's diff, dropping, undoing, pulling, switching with **Bring my changes** and the like merge them onto the result (staged ones stay staged); if they'd conflict, they come back with the conflicts for the conflict view (**Abort** puts them in the stash list). Rebases, merges and cherry-picks that stop on conflicts, and **Edit files**, put them aside in the stash list and bring them back once finished or aborted.
+- Delete the branch you're on: legit switches to the default branch first (else the most recent other one), your changes coming along.
+- Remove any worktree but the main one, whatever its state: locked, mid-merge, with uncommitted changes or untracked files (stashed on its branch first), or the one you're in (the window moves to the main worktree). When its submodules have work only they have, it asks first.
+- **Create PR** pushes or publishes the branch first, and when the remote's copy has commits yours doesn't, asks, then force pushes, instead of refusing.
+- A push the remote rejects as not a fast-forward (a branch of the same name already there, say) offers **Force push anyway**, and pushing works while a merge or rebase is stopped.
+- Restoring a stash over uncommitted changes to the same files merges them, unless they conflict.
+- In the uncommitted changes' diff, the stripes of lines *staged differently* line up across consecutive lines.
+
 ## 0.21.0 — 2026-11-09
 
 - A conflicted file's row in the conflict view has **Keep HEAD**, **Keep *feature*** and **Keep both**, settling every conflict in it at once (also in its right-click menu); the toast's **Undo** puts it back.

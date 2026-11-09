@@ -1,13 +1,17 @@
 // Worktrees: list, add and remove the repository's linked worktrees. Removing one deletes its
-// folder, so it's refused while it has uncommitted changes, and a detached HEAD no branch has is
-// first saved under refs/legit/deleted/<folder>/<time> (listed under Recently deleted branches).
+// folder, whatever state it's in: its uncommitted changes and untracked files are stashed first
+// (offered back when you switch to its branch), and a detached HEAD no branch has is saved under
+// refs/legit/deleted/<folder>/<time> (listed under Recently deleted branches). Removing the one
+// you're in moves the window to the main worktree.
 
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { unlink } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { OpResult, WorktreeInfo, WorktreeRequest } from '../shared/types.ts';
 import { DELETED } from './branches.ts';
-import { GitError, run } from './git.ts';
+import { GitError, fromUtf8, run } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
 
@@ -107,36 +111,73 @@ export function addWorktree(repo: Repo, req: WorktreeRequest): Promise<OpResult 
   });
 }
 
-/** Why a worktree can't be removed as it is, if it can't. */
-async function removable(w: WorktreeInfo): Promise<string | null> {
-  if (w.main) return "That's the main worktree, which holds the repository; it can't be removed.";
-  if (w.current) return "You're in it; switch to another worktree to remove it.";
-  if (w.locked !== null) return `It's locked${w.locked ? ` (${w.locked})` : ''}; unlock it with \`git worktree unlock\` first.`;
+/** What removing a worktree would lose for good: its submodules' uncommitted changes and commits on no remote. */
+async function wouldLose(w: WorktreeInfo): Promise<string | null> {
   if (w.missing) return null;
-  const dir = (await run(w.path, ['rev-parse', '--path-format=absolute', '--git-dir'])).out.toString('utf8').trim();
-  const progress = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG'];
-  if (progress.some((f) => existsSync(join(dir, f)))) return 'A merge, rebase, cherry-pick, revert or bisect is in progress in it.';
-  const status = await run(w.path, ['status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none']);
-  if (status.out.length) return 'It has uncommitted changes or untracked files: commit, stash or discard them there first.';
-  // Its submodules' repositories go with it, and any commits only they have.
-  const subs = await run(w.path, ['submodule', 'foreach', '--quiet', '--recursive', 'test -z "$(git rev-list -n1 HEAD --not --remotes --tags)" || echo "$displaypath"'], { allowFail: true });
-  const unpushed = subs.out.toString('utf8').split('\n').filter(Boolean);
-  if (unpushed.length) return `Its submodule${unpushed.length === 1 ? '' : 's'} ${unpushed.join(', ')} ${unpushed.length === 1 ? 'has' : 'have'} commits on no remote branch or tag: push them first.`;
-  return null;
+  const subs = await run(
+    w.path,
+    ['submodule', 'foreach', '--quiet', '--recursive', 'test -z "$(git status --porcelain)$(git rev-list -n1 HEAD --not --remotes --tags)" || echo "$displaypath"'],
+    { allowFail: true },
+  );
+  const lost = subs.out.toString('utf8').split('\n').filter(Boolean);
+  if (!lost.length) return null;
+  const one = lost.length === 1;
+  return `Its submodule${one ? '' : 's'} ${lost.join(', ')} ${one ? 'has' : 'have'} uncommitted changes or commits on no remote branch or tag, which go with it.`;
 }
 
 /**
- * Remove a worktree: its folder (ignored files included) and git's record of it. Its branch
- * stays; a detached HEAD that no branch, tag or remote branch has is saved first (even when its
- * folder is already gone, and the worktree is only forgotten).
+ * Save a worktree's uncommitted changes and untracked files before its folder goes: stashed (as when
+ * leaving its branch, so switching to it offers them back), or, when git won't stash them (in the
+ * middle of a merge, say), committed on top of its HEAD under refs/legit/deleted. Returns what was done.
  */
-export function removeWorktree(repo: Repo, req: { path: string }): Promise<OpResult> {
-  return repo.exclusive(async () => {
-    const w = (await worktrees(repo)).find((x) => x.path === req.path);
-    if (!w) throw new GitError(`There's no worktree at ${req.path}; refresh.`);
-    const why = await removable(w);
-    if (why) throw new GitError(`Couldn't remove ${w.name}. ${why} Nothing was changed.`);
+async function saveChanges(repo: Repo, w: WorktreeInfo): Promise<string | null> {
+  if (w.missing) return null;
+  const status = await run(w.path, ['status', '--porcelain', '-z', '--untracked-files=all', '--ignore-submodules=all']);
+  if (!status.out.length) return null;
+  const label = w.branch ? `legit: on ${w.branch}` : `legit: worktree ${w.name}`;
+  const stashed = await run(w.path, ['stash', 'push', '--include-untracked', '-m', label], { allowFail: true });
+  if (stashed.code === 0) return w.branch ? `Its changes are stashed on ${w.branch}.` : 'Its changes are in the stash list.';
+  const index = join(tmpdir(), `legit-index-${randomBytes(6).toString('hex')}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    const head = (await run(w.path, ['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { allowFail: true })).out.toString('utf8').trim();
+    await run(w.path, ['read-tree', ...(head ? [head] : ['--empty'])], { env });
+    await run(w.path, ['add', '-A', '-f', '--', '.'], { env, allowFail: true });
+    const tree = (await run(w.path, ['write-tree'], { env })).out.toString('utf8').trim();
+    const ident = await repo.git.committerIdent();
+    const sha = repo.git.writeCommit({
+      tree, parents: head ? [head] : [], author: ident, committer: ident, extra: [],
+      message: fromUtf8(`Uncommitted changes in ${w.name} before removing it\n`),
+    });
+    await repo.git.flush();
+    const ref = `${DELETED}/${w.name.replace(/[^\w-]+/g, '-') || 'worktree'}-changes/${Date.now()}`;
+    await repo.git.run(['update-ref', '-m', `legit: changes in worktree ${w.name}`, ref, sha, '']);
+    return `Its changes are saved under Recently deleted branches, as ${ref.slice(DELETED.length + 1).replace(/\/\d+$/, '')}.`;
+  } finally {
+    await unlink(index).catch(() => {});
+  }
+}
 
+/**
+ * Remove a worktree: its folder (ignored files included) and git's record of it, even locked or
+ * in the middle of a merge. Its branch stays, and what's uncommitted is saved first (see
+ * `saveChanges`); a detached HEAD that no branch, tag or remote branch has is saved too (even when
+ * its folder is already gone, and the worktree is only forgotten). What its submodules alone have
+ * is lost, so that's asked first: refused, saying so, unless `force`. Removing the one you're in
+ * returns the main worktree to go to instead of the state (and, with `open`, its URL).
+ */
+export function removeWorktree(
+  repo: Repo, req: { path: string; force?: boolean }, open?: (path: string) => Promise<string>,
+): Promise<OpResult | { moved: string; url?: string; note?: string }> {
+  return repo.exclusive(async () => {
+    const all = await worktrees(repo);
+    const w = all.find((x) => x.path === req.path);
+    if (!w) throw new GitError(`There's no worktree at ${req.path}; refresh.`);
+    if (w.main) throw new GitError(`Couldn't remove ${w.name}. That's the main worktree, which holds the repository. Nothing was changed.`);
+    const lose = req.force ? null : await wouldLose(w);
+    if (lose) throw new GitError(`${lose} Remove it anyway?`, 'worktree-loses');
+
+    const notes: string[] = [];
     let saved: string | null = null;
     // A missing one's too: its folder is gone, but its commits are still in the repository.
     if (!w.branch && w.head) {
@@ -144,16 +185,24 @@ export function removeWorktree(repo: Repo, req: { path: string }): Promise<OpRes
       if (lost) {
         saved = `${DELETED}/${w.name.replace(/[^\w-]+/g, '-') || 'worktree'}/${Date.now()}`;
         await repo.git.run(['update-ref', '-m', `legit: backup before removing worktree ${w.name}`, saved, w.head, '']);
+        notes.push('Its commits are under Recently deleted branches.');
       }
     }
-    // --force: git won't remove one with submodules otherwise; `removable` has checked it's clean.
-    const r = await repo.git.run(['worktree', 'remove', '--force', w.path], { allowFail: true });
+    const changes = await saveChanges(repo, w);
+    if (changes) notes.push(changes);
+    const main = all[0];
+    const url = w.current && open ? await open(main.path) : undefined;
+    // Twice forced: one with changes, submodules or a lock goes too. Run from the main worktree, as this one may be it.
+    const r = await run(main.path, ['worktree', 'remove', '--force', '--force', w.path], { allowFail: true });
     if (r.code !== 0) {
       if (saved) await repo.git.run(['update-ref', '-d', saved, w.head!], { allowFail: true });
-      throw new GitError(`Couldn't remove ${w.name}; nothing was changed.\n${r.err.trim()}`);
+      throw new GitError(`Couldn't remove ${w.name}.${changes ? ` ${changes}` : ''}\n${r.err.trim()}`);
     }
+    const note = notes.join(' ') || undefined;
+    // This worktree's folder is gone: nothing more runs in it.
+    if (w.current) return { moved: main.path, url, note };
     await pruneRefs(repo.git);
-    return done(repo);
+    return { ...(await done(repo)), note };
   });
 }
 

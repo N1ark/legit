@@ -157,7 +157,7 @@ test('the newest commit and the first commit can be edited too', async () => {
   assert.equal(blob('HEAD', 'g'), 'two\n');
 });
 
-test('refuses with uncommitted changes, or an untracked file in the way, changing nothing', async () => {
+test('uncommitted changes are put aside while editing and come back after; an untracked file in the way refuses', async () => {
   commit('base', { f: 'a\n', u: 'tracked\n' });
   const c = commit('change', { f: 'a\nb\n' });
   git('rm', '-q', 'u');
@@ -166,9 +166,27 @@ test('refuses with uncommitted changes, or an untracked file in the way, changin
   const repo = await Repo.open(t.dir);
 
   write('f', 'wip\n');
-  await assert.rejects(startEdit(repo, { sha: c }), /uncommitted changes/);
+  git('add', 'f');
+  let r = await startEdit(repo, { sha: c });
+  assert.match(r.message, /put aside/);
+  assert.equal(read('f'), 'a\nb\n');
+  assert.deepEqual((await editChanges(repo)).files, []);
+  r = await cancelEdit(repo);
+  assert.match(r.message, /uncommitted changes are back/);
+  assert.equal(git('rev-parse', 'HEAD'), last);
   assert.equal(read('f'), 'wip\n');
-  git('checkout', '-q', 'f');
+  assert.equal(git('diff', '--cached', '--name-only'), 'f');
+
+  // Finishing brings them back on top of the result too.
+  await startEdit(repo, { sha: c });
+  write('new', 'n\n');
+  r = await finishEdit(repo);
+  assert.match(r.message, /uncommitted changes are back/);
+  assert.deepEqual(files('HEAD~1'), ['f', 'new', 'u']);
+  assert.equal(read('f'), 'wip\n');
+  assert.equal(git('stash', 'list'), '');
+  git('reset', '-q', '--hard', last);
+  rmSync(join(t.dir, 'new'), { force: true });
 
   write('u', 'precious\n');
   await assert.rejects(startEdit(repo, { sha: c }), /nothing was changed/);

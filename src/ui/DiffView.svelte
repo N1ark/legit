@@ -2348,9 +2348,22 @@
     color: var(--on-accent);
   }
 
-  /* Staged in a version that's neither side's: half picked. */
+  /* Staged in a version that's neither side's: half picked. One tile per 19px row, so stripes run on across lines. */
   .line.mixed .gutter {
-    background: repeating-linear-gradient(135deg, var(--theme-mid) 0 3px, transparent 3px 6px), var(--code-bg);
+    background:
+      linear-gradient(
+          135deg,
+          var(--theme-mid) 12.5%,
+          transparent 12.5% 25%,
+          var(--theme-mid) 25% 37.5%,
+          transparent 37.5% 50%,
+          var(--theme-mid) 50% 62.5%,
+          transparent 62.5% 75%,
+          var(--theme-mid) 75% 87.5%,
+          transparent 87.5%
+        )
+        0 0 / 19px 19px,
+      var(--code-bg);
   }
 
   .line.ta.sel {

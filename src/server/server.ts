@@ -234,7 +234,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     setUpstream: (b) => setUpstream(repo, b),
     unsetUpstream: (b) => unsetUpstream(repo, b),
     addWorktree: (b) => addWorktree(repo, b),
-    removeWorktree: (b) => removeWorktree(repo, b),
+    removeWorktree: (b) => removeWorktree(repo, b, opts.open),
     openWorktree: async (b) => {
       if (!opts.open) throw new GitError('Switching worktree is done by the app here.');
       return { url: await opts.open((await findWorktree(repo, b.path)).path) };

@@ -110,24 +110,34 @@ test('pull fast-forwards, carrying local changes along, and can be undone', asyn
   assert.ok((await repo.backups()).some((b) => b.label === 'pull' && b.sha === base));
   assert.match((await pull(repo, {})).message, /Already up to date/);
 
-  // Undo needs a clean tree, and puts the branch back.
-  await assert.rejects(repo.undo(), /uncommitted changes/);
-  git('checkout', '-q', '--', 'g');
+  // Undo puts the branch back, local changes still coming along.
   await repo.undo();
   assert.equal(git('rev-parse', 'HEAD'), base);
   assert.equal(existsSync(join(dir, 't')), false);
+  assert.equal(read('g'), 'local\n');
 });
 
-test("pull refuses, changing nothing, when local changes or untracked files would be overwritten", async () => {
+test('pull with local changes to the same lines: they come back with the conflicts to resolve', async () => {
+  const repo = await Repo.open(dir);
+  const theirs = theyPush('theirs', { f: 'theirs\n' });
+  write('f', 'mine\n');
+  const r = await pull(repo, {});
+  assert.match(r.message, /Fast-forwarded.*conflict with the result/s);
+  assert.equal(git('rev-parse', 'HEAD'), theirs);
+  assert.equal(r.state.conflict?.kind, 'stash');
+  assert.match(read('f'), /<<<<<<<[\s\S]*mine[\s\S]*>>>>>>>/);
+  // Done keeps the resolution as uncommitted changes.
+  write('f', 'both\n');
+  await markResolved(repo, { path: 'f' });
+  await continueOp(repo);
+  assert.equal(read('f'), 'both\n');
+  assert.equal((await repo.state()).conflict, null);
+});
+
+test("pull refuses, changing nothing, when untracked files would be overwritten", async () => {
   const repo = await Repo.open(dir);
   const base = git('rev-parse', 'HEAD');
   theyPush('theirs', { f: 'theirs\n', t: 'theirs\n' });
-  write('f', 'mine\n');
-  await assert.rejects(pull(repo, {}), /in the way, so nothing was changed/);
-  assert.equal(git('rev-parse', 'HEAD'), base);
-  assert.equal(read('f'), 'mine\n');
-
-  git('checkout', '-q', '--', 'f');
   write('t', 'precious\n');
   await assert.rejects(pull(repo, {}), /in the way/);
   assert.equal(read('t'), 'precious\n');
@@ -164,7 +174,7 @@ test('diverged: pull refuses to guess; rebase replays in memory, dropping commit
   assert.equal(git('rev-parse', 'HEAD'), before);
 });
 
-test('a conflicting rebase stops at each conflict to resolve, continues and undoes in one step; refused with uncommitted changes', async () => {
+test('a conflicting rebase stops at each conflict to resolve, continues and undoes in one step; uncommitted changes wait aside', async () => {
   const repo = await Repo.open(dir);
   theyPush('theirs', { f: 'theirs\n', g: 'theirs\n' });
   commit('mine', { f: 'mine\n' });
@@ -173,13 +183,8 @@ test('a conflicting rebase stops at each conflict to resolve, continues and undo
   const head = git('rev-parse', 'HEAD');
 
   write('h', 'dirty\n');
-  await assert.rejects(pull(repo, { how: 'rebase' }), /conflicts\. .* "mine" conflicts in f\. Resolving.*without uncommitted changes.*Nothing was changed/s);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-  assert.equal(read('h'), 'dirty\n');
-  git('checkout', '-q', '--', 'h');
-
   let r = await pull(repo, { how: 'rebase' });
-  assert.match(r.message, /Rebasing main onto origin\/main stopped with conflicts in 1 file/);
+  assert.match(r.message, /Rebasing main onto origin\/main stopped with conflicts in 1 file.*put aside/s);
   assert.equal(r.state.conflict?.kind, 'rebase');
   assert.deepEqual(r.state.conflict?.files.map((f) => f.path), ['f']);
   write('f', 'both\n');
@@ -194,6 +199,9 @@ test('a conflicting rebase stops at each conflict to resolve, continues and undo
   assert.equal(r.state.branch, 'main');
   assert.deepEqual(log(), ['mine too', 'clean', 'mine', 'theirs', 'base']);
   assert.equal(read('f'), 'both\n');
+  assert.match(r.message, /uncommitted changes are back/);
+  assert.equal(read('h'), 'dirty\n');
+  git('checkout', '-q', '--', 'h');
   assert.ok(r.state.canUndo);
   await repo.undo();
   assert.equal(git('rev-parse', 'HEAD'), head);
@@ -219,20 +227,20 @@ test('a conflicting rebase stops at each conflict to resolve, continues and undo
   assert.equal(git('rev-parse', 'HEAD'), merged);
 });
 
-test('pull with merge: a clean merge is one undoable step; a dirty tree is refused', async () => {
+test('pull with merge: a clean merge is one undoable step; uncommitted changes come along', async () => {
   const repo = await Repo.open(dir);
   theyPush('theirs', { t: '1\n' });
   commit('mine', { m: '1\n' });
   const head = git('rev-parse', 'HEAD');
   write('g', 'dirty\n');
-  await assert.rejects(pull(repo, { how: 'merge' }), /without uncommitted changes.*Nothing was changed/s);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-  assert.equal(read('g'), 'dirty\n');
-  git('checkout', '-q', '--', 'g');
-
+  git('add', 'g');
   write('untracked', 'u\n');
   const r = await pull(repo, { how: 'merge' });
-  assert.match(r.message, /Merged origin\/main into main/);
+  assert.match(r.message, /Merged origin\/main into main.*uncommitted changes are back/);
+  assert.equal(read('g'), 'dirty\n');
+  assert.equal(git('diff', '--cached', '--name-only'), 'g');
+  assert.equal(git('stash', 'list'), '');
+  git('reset', '-q', '--hard');
   assert.equal(git('rev-list', '--parents', '-1', 'HEAD').split(' ').length, 3);
   assert.equal(git('log', '-1', '--format=%s'), "Merge remote-tracking branch 'origin/main'");
   assert.equal(read('t'), '1\n');

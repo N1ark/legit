@@ -128,17 +128,17 @@
       return [
         opens(r) && { label: 'Switch to it', icon: ArrowsLeftRightRegular, run: () => choose(r) },
         copyPath(w.path),
-        !w.main && !w.current && w.locked === null && 'separator',
-        !w.main &&
-          !w.current &&
-          w.locked === null && {
-            label: w.missing ? 'Forget' : 'Remove',
-            icon: TrashRegular,
-            danger: true,
-            note: w.missing ? 'Its folder is already gone' : `Deletes its folder${w.branch ? `; ${w.branch} stays` : ''}`,
-            confirm: w.missing ? `Forget ${w.name}` : `Remove ${w.name}`,
-            run: () => remove(w),
-          },
+        !w.main && 'separator',
+        !w.main && {
+          label: w.missing ? 'Forget' : 'Remove',
+          icon: TrashRegular,
+          danger: true,
+          note: w.missing
+            ? 'Its folder is already gone'
+            : `Deletes its folder, saving its changes first${w.branch ? `; ${w.branch} stays` : ''}${w.current ? '. You go to the main worktree' : ''}`,
+          confirm: w.missing ? `Forget ${w.name}` : `Remove ${w.name}`,
+          run: () => remove(w),
+        },
       ];
     }
     if (r.kind === 'recent') {
@@ -262,7 +262,8 @@
               </span>
               {#if w.locked !== null}
                 <span class="lock muted" use:tooltip={`Locked${w.locked ? `: ${w.locked}` : ''}`}><LockSimpleRegular /></span>
-              {:else if !w.main && !w.current}
+              {/if}
+              {#if !w.main}
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
                 <span class="forget" onclick={(e) => e.stopPropagation()}>
                   <ConfirmButton

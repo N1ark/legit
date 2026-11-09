@@ -55,14 +55,38 @@ test('aborting a reorder that stopped at a conflict puts everything back', async
   assert.equal(git('status', '--porcelain'), '');
 });
 
-test('a reorder that conflicts with uncommitted changes refuses, changing nothing', async () => {
+test('a reorder that conflicts, with uncommitted changes: they are put aside until it is over', async () => {
   const { a, b, c, base } = history();
   write('g', 'dirty\n');
+  git('add', 'g');
+  write('g', 'dirtier\n');
   const repo = await Repo.open(t.dir);
-  await assert.rejects(repo.reorder({ order: [c, a, b, base] }), /conflict in f needs a working tree without uncommitted changes.*Commit or stash/s);
+  const r = await repo.reorder({ order: [c, a, b, base] });
+  assert.match(r.note ?? '', /put aside/);
+  assert.equal(r.state.conflict?.kind, 'rebase');
+  assert.match(git('stash', 'list', '--format=%gs'), /legit: your changes before reorder on main/);
+
+  // Aborting brings them back exactly, staged and unstaged.
+  const back = await abortOp(repo);
+  assert.match(back.message, /uncommitted changes are back/);
   assert.equal(git('rev-parse', 'HEAD'), c);
-  assert.equal(read('g'), 'dirty\n');
-  assert.equal((await repo.state()).conflict, null);
+  assert.equal(read('g'), 'dirtier\n');
+  assert.equal(git('show', ':g'), 'dirty');
+  assert.equal(git('stash', 'list'), '');
+
+  // Finishing brings them back on top of the result.
+  await repo.reorder({ order: [c, a, b, base] });
+  write('f', '3\n');
+  await markResolved(repo, { path: 'f' });
+  await continueOp(repo);
+  write('f', '2\n');
+  await markResolved(repo, { path: 'f' });
+  const done = await continueOp(repo);
+  assert.equal(done.state.conflict, null);
+  assert.match(done.message, /uncommitted changes are back/);
+  assert.equal(read('g'), 'dirtier\n');
+  assert.equal(git('show', ':g'), 'dirty');
+  assert.equal(git('stash', 'list'), '');
 });
 
 test('a drop that conflicts stops at the conflict', async () => {

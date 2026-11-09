@@ -141,17 +141,21 @@ test('an untracked file in the way of the rebase is never overwritten', async ()
   assert.equal(read('f'), 'a\nB!\nc\n');
 });
 
-test('refuses when there are uncommitted changes, which are left alone', async () => {
+test('uncommitted changes stay as they are, and come along when the same file changes', async () => {
   commit('base', { f: 'a\n', g: '1\n' });
-  const c = commit('change', { f: 'a\nb\n' });
+  const c = commit('change', { f: 'a\nb\nc\n' });
   write('g', 'wip\n');
+  write('f', 'A\nb\nc\n');
+  git('add', 'f');
   const repo = await Repo.open(t.dir);
-  const head = git('rev-parse', 'HEAD');
-  await assert.rejects(repo.removeChanges({ sha: c, selection: { f: 'all' } }), /uncommitted changes/);
-  await assert.rejects(repo.editLine({ sha: c, path: 'f', line: 2, text: 'B' }), /uncommitted changes/);
-  assert.equal(git('rev-parse', 'HEAD'), head);
+  await repo.editLine({ sha: c, path: 'f', line: 3, text: 'C' });
+  assert.equal(git('show', 'HEAD:f'), 'a\nb\nC');
+  assert.equal(read('f'), 'A\nb\nC\n');
+  assert.equal(git('show', ':f'), 'A\nb\nC');
   assert.equal(read('g'), 'wip\n');
-  assert.equal(read('f'), 'a\nb\n');
+  await repo.removeChanges({ sha: git('rev-parse', 'HEAD'), selection: { f: [1] } });
+  assert.equal(read('g'), 'wip\n');
+  assert.equal(git('stash', 'list'), '');
 });
 
 test('refuses an empty selection and commits that are not editable', async () => {

@@ -22,7 +22,7 @@ export function integrateEntries(name: string, current: boolean, close?: () => v
       label: `Merge ${name} into ${here}`,
       icon: GitMergeRegular,
       disabled: !!why || app.busy,
-      note: why ?? 'Needs no uncommitted changes. Conflicts can be resolved here, or aborted.',
+      note: why ?? 'Uncommitted changes are put aside and come back after. Conflicts can be resolved here, or aborted.',
       run: go('merge'),
     },
     {

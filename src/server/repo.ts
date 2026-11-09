@@ -24,6 +24,7 @@ import { STASH_NOTE, fetchFrom, networkEnv, syncState } from './sync.ts';
 import { stashDiff, stashFor } from './stash.ts';
 import { stagingOf, workCounts, workDiff } from './work.ts';
 import { emit, restage } from './staging.ts';
+import { ASIDE, autostash, moveWork, restoreAutostash } from './carry.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
@@ -113,6 +114,7 @@ export class Repo {
   private diffsBytes = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private lastBackup = 0;
+  notes: string[] = [];
   /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
   snapshots = new Map<string, CommitDiff>();
   snapshotIds = new Map<string, string>();
@@ -125,7 +127,10 @@ export class Repo {
   static async open(path: string) {
     const git = await Git.open(path);
     await pruneRefs(git);
-    return new Repo(git);
+    const repo = new Repo(git);
+    // Changes put aside for an operation that was finished elsewhere (or before legit quit) come back.
+    await restoreAutostash(repo).catch(() => null);
+    return repo;
   }
 
   /** Resolves once no operation is running. */
@@ -458,35 +463,24 @@ export class Repo {
   }
 
   /**
-   * Point HEAD at `to`. The old tip is first saved under refs/legit/backups. The index and
-   * working tree are only touched if the snapshot changes, and then only when there are no
-   * uncommitted changes to tracked files (git itself refuses to overwrite untracked ones).
+   * Point HEAD at `to`. The old tip is first saved under refs/legit/backups. The index and working
+   * tree follow when the snapshot changes, keeping uncommitted changes (see carry.ts).
    */
   private async moveHead(from: string, to: string, label: string) {
     if (from === to) return;
-    const treeChanged = (await this.git.treeOf(from)) !== (await this.git.treeOf(to));
-    if (treeChanged) await this.requireClean();
-    await this.backup(from, label);
-    if (treeChanged) {
-      const r = await this.git.run(['read-tree', '-m', '-u', from, to], { allowFail: true });
-      if (r.code !== 0) throw new GitError(`Git refused to update the working tree; nothing was changed.\n${r.err.trim()}`);
-    }
-    const r = await this.git.run(['update-ref', '-m', `legit: ${label}`, 'HEAD', to, from], { allowFail: true });
-    if (r.code !== 0) {
-      if (treeChanged) await this.git.run(['read-tree', '-m', '-u', to, from], { allowFail: true });
-      throw new GitError(`HEAD moved while rewriting; nothing was changed. ${r.err.trim()}`);
-    }
+    const note = await moveWork(this, from, to, label, async () => {
+      await this.backup(from, label);
+      const r = await this.git.run(['update-ref', '-m', `legit: ${label}`, 'HEAD', to, from], { allowFail: true });
+      if (r.code !== 0) throw new GitError(`HEAD moved while rewriting; nothing was changed. ${r.err.trim()}`);
+    });
+    if (note) this.notes.push(note);
   }
 
-  /** Refuse if any tracked file has uncommitted changes (staged or not). */
-  async requireClean() {
-    await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-    const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-    if (status) {
-      throw new GitError(
-        `This would change files in your working tree, but you have uncommitted changes:\n${status}\nCommit or stash them first. Nothing was changed.`,
-      );
-    }
+  /** Notes for the user from the operation that just ran (uncommitted changes that came back with conflicts, say), once. */
+  takeNote(): string | undefined {
+    const note = this.notes.join(' ');
+    this.notes = [];
+    return note || undefined;
   }
 
   backupPrefix(branch: string | null) {
@@ -534,7 +528,7 @@ export class Repo {
       if (!head) throw new GitError('This branch has no commits yet.');
       await this.moveHead(head, sha, 'restore');
       await this.record({ label: 'restore', before: head, after: sha });
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 
@@ -543,6 +537,7 @@ export class Repo {
       state,
       renamed: Object.fromEntries(renamed.filter(([c, s]) => c.sha !== s).map(([c, s]) => [c.sha, s])),
       focus,
+      note: this.takeNote(),
     };
   }
 
@@ -699,30 +694,22 @@ export class Repo {
       return await this.rewrite(label, chain, k, items, keepsTree);
     } catch (e) {
       if (!(e instanceof ReplayConflict)) throw e;
-      await this.rebaseTodo(label, chain, k, await todo(), e);
+      await this.rebaseTodo(label, chain, k, await todo());
       return null;
     }
   }
 
   /**
    * Replace `chain[0..k]` by a `git rebase -i` onto `chain[k]`'s parent doing `todo`: git replays
-   * it and stops at each conflict like any rebase. It starts from a clean working tree (so
-   * `git rebase --abort` gets back exactly), after a backup of the tip. True if it finished
-   * without stopping. `conflict`: the one that made the in-memory replay give up, for the refusal.
+   * it and stops at each conflict like any rebase. Uncommitted changes are put aside first (see
+   * carry.ts), so `git rebase --abort` gets back exactly, and come back once it's over. The tip is
+   * backed up first. True if it finished without stopping.
    */
-  private async rebaseTodo(label: string, chain: RawCommit[], k: number, todo: string[], conflict?: ReplayConflict): Promise<boolean> {
+  private async rebaseTodo(label: string, chain: RawCommit[], k: number, todo: string[]): Promise<boolean> {
     const base = chain[k].parents[0] ?? null;
-    await this.git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-    const status = await this.git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-    if (status) {
-      throw new GitError(
-        conflict
-          ? `Resolving the conflict in ${conflict.files.join(', ')} needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`
-          : `This would change files in your working tree, but you have uncommitted changes:\n${status}\nCommit or stash them first. Nothing was changed.`,
-      );
-    }
     const head = chain[0].sha;
     if ((await this.head()) !== head) throw new GitError('HEAD moved while rewriting; nothing was changed.');
+    const aside = await autostash(this, label);
     await this.backup(head, label);
     const file = join(tmpdir(), `legit-todo-${randomBytes(6).toString('hex')}`);
     let r: Awaited<ReturnType<Git['run']>>;
@@ -745,7 +732,12 @@ export class Repo {
       await unlink(file).catch(() => {});
     }
     // Stopped on a conflict: the conflict view takes it from here.
-    if (this.blocked()) return false;
+    if (this.blocked()) {
+      if (aside) this.notes.push(ASIDE);
+      return false;
+    }
+    const back = await restoreAutostash(this);
+    if (back) this.notes.push(back);
     const after = await this.head();
     if (r.code !== 0 || !after || after === head) {
       const output = (r.err + r.out.toString('utf8')).trim();
@@ -908,7 +900,7 @@ export class Repo {
       else if (m.soft) await this.moveHeadSoft(m.after, m.before, `undo ${m.label}`);
       else await this.moveHead(m.after, m.before, `undo ${m.label}`);
       h.redo.push(h.undo.pop()!);
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 
@@ -922,7 +914,7 @@ export class Repo {
       else if (m.soft) await this.moveHeadSoft(m.before, m.after, `redo ${m.label}`);
       else await this.moveHead(m.before, m.after, `redo ${m.label}`);
       h.undo.push(h.redo.pop()!);
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 
@@ -1060,7 +1052,7 @@ export class Repo {
         );
       }
       if (records.length) await this.updateIndex(records);
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 
@@ -1120,7 +1112,7 @@ export class Repo {
       if (c.parents.length > 1) throw new GitError("The last commit is a merge; it can't be undone this way.");
       await this.moveHeadSoft(head, c.parents[0], 'uncommit');
       await this.record({ label: 'uncommit', before: head, after: c.parents[0], soft: true });
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 
@@ -1190,14 +1182,13 @@ export class Repo {
    */
   push(req: { force?: boolean | 'overwrite' | 'fetch'; expect?: string }): Promise<OpResult> {
     return this.exclusive(async () => {
-      const why = this.blocked();
-      if (why) throw new GitError(why);
+      // Only the branch's ref is sent, so a merge or rebase in progress doesn't matter.
       const branch = await this.currentBranch();
       if (!branch) throw new GitError("HEAD is detached; switch to a branch to push.");
       const force = req.force === true || req.force === 'overwrite' || req.force === 'fetch' ? req.force : false;
       let info = await this.pushInfo(branch);
       if (!info) throw new GitError('This repository has no remote to push to.');
-      if (force === 'fetch' && !info.publish) {
+      if (force === 'fetch') {
         await fetchFrom(this.git, info.remote);
         info = (await this.pushInfo(branch))!;
       }
@@ -1205,8 +1196,12 @@ export class Repo {
       const refspec = `refs/heads/${branch}:refs/heads/${info.branch}`;
       const theirs = `${info.behind} commit${info.behind === 1 ? '' : 's'}`;
       let args: string[];
-      if (info.publish) args = ['push', '--set-upstream', info.remote, refspec];
-      else if (info.behind === 0) {
+      if (info.publish) {
+        // A branch of that name already there (not tracked here) is replaced only when forced, leased on what was fetched of it.
+        const there = force ? await this.git.resolve(`refs/remotes/${info.remote}/${info.branch}`) : null;
+        const lease = force ? [`--force-with-lease=refs/heads/${info.branch}:${there ?? ''}`] : [];
+        args = ['push', '--set-upstream', ...lease, info.remote, refspec];
+      } else if (info.behind === 0) {
         if (info.ahead === 0) throw new GitError('Already up to date.');
         args = ['push', info.remote, refspec];
       } else if (!force) {
@@ -1232,16 +1227,16 @@ export class Repo {
             'not-integrated',
           );
         }
-        if (/stale info|fetch first|non-fast-forward/i.test(err)) {
+        if (/stale info|fetch first|non-fast-forward|rejected/i.test(err) && !/hook|protected|GH006|permission|denied/i.test(err)) {
           throw new GitError(
-            `Nothing was pushed: ${where} has new commits since you last fetched, which you haven't seen yet. ` +
-              (force ? 'Fetch to look at them, or fetch and force push anyway to overwrite them too.' : `Fetch, then pull them in.\n${err}`),
-            force ? 'not-fetched' : undefined,
+            `Nothing was pushed: ${where} has commits your branch doesn't, which you haven't seen yet. ` +
+              'Fetch to look at them and pull them in, or force push anyway to replace them with your branch.',
+            'not-fetched',
           );
         }
         throw new GitError(`Push failed.\n${err}`);
       }
-      return { state: await this.state(), renamed: {}, focus: [] };
+      return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
     });
   }
 

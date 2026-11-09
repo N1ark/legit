@@ -263,12 +263,8 @@
   const selection = $derived((local ?? []).filter((b) => chosen.has(`local:${b.name}`)));
   /** The remote branches selected, deleted on their remotes with the rest. */
   const remoteSelection = $derived(remote.filter((b) => chosen.has(`remote:${b.ref}`)));
-  const deletable = $derived(selection.filter((b) => !b.current && !b.worktree));
-  const kept = $derived(
-    selection
-      .filter((b) => b.current || b.worktree)
-      .map((b) => `${b.name} (${b.worktree ? `checked out in ${folder(b.worktree)}` : "you're on it"})`),
-  );
+  const deletable = $derived(selection.filter((b) => !b.worktree));
+  const kept = $derived(selection.filter((b) => b.worktree).map((b) => `${b.name} (checked out in ${folder(b.worktree!)})`));
   const upstreams = $derived(
     deletable.map(remoteUpstream).filter(Boolean).map((u) => `refs/remotes/${u}`).filter((ref) => !remoteSelection.some((b) => b.ref === ref)),
   );
@@ -407,11 +403,11 @@
         label: 'Delete',
         icon: TrashRegular,
         danger: true,
-        disabled: b.current || !!b.worktree,
-        note: b.current
-          ? "You're on it; switch to another branch first."
-          : b.worktree
-            ? `It's checked out in ${folder(b.worktree)}; remove that worktree first.`
+        disabled: !!b.worktree,
+        note: b.worktree
+          ? `It's checked out in ${folder(b.worktree)}; remove that worktree first.`
+          : b.current
+            ? "You're on it: legit switches to the default branch first, your changes coming along. Restorable for two weeks."
             : 'Restorable for two weeks.',
         confirm: `Delete ${b.name}`,
         run: () => act(() => deleteBranch(b.name), true),
@@ -778,7 +774,7 @@
         </p>
       {:else if mode === 'merge'}
         <p class="foot muted">
-          Needs no uncommitted changes · <span class="mono">⌘Z</span> undoes
+          Uncommitted changes are kept · <span class="mono">⌘Z</span> undoes
         </p>
       {:else}
         <p class="foot muted">

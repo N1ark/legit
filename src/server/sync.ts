@@ -16,6 +16,7 @@ import type { CommitDiff, Conflict, ConflictFile, EditStop, RebuildPlan, RepoSta
 import { DIFF_ARGS, parseDiff } from './diff.ts';
 import { type Git, GitError, type RawCommit, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
+import { ASIDE, autostash, moveWork, withAutostash } from './carry.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
 
@@ -38,7 +39,8 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const nul = (paths: string[]) => Buffer.from(paths.map((p) => p + '\0').join(''), 'latin1');
 
 export async function done(repo: Repo, message: string, focus: string[] = [], renamed: Record<string, string> = {}): Promise<SyncResult> {
-  return { state: await repo.state(), renamed, focus, message };
+  const note = repo.takeNote();
+  return { state: await repo.state(), renamed, focus, message: note ? `${message} ${note}` : message };
 }
 
 // ---- state ----
@@ -365,26 +367,18 @@ async function integrate(repo: Repo, t: Target): Promise<SyncResult> {
 }
 
 /**
- * Move HEAD from `from` to `to` like `git merge --ff-only` or `git switch` would: uncommitted
- * changes come along, and git refuses (changing nothing) if they or an untracked file would be
- * overwritten. The old tip is backed up first, HEAD moves with a compare-and-swap, and the move
- * can be undone.
+ * Move HEAD from `from` to `to` like `git merge --ff-only` or `git switch` would, uncommitted changes
+ * coming along (merged onto `to` when they're in files it changes; see carry.ts). The old tip is backed
+ * up first, HEAD moves with a compare-and-swap, and the move can be undone.
  */
 export async function carry(repo: Repo, from: string, to: string, label: string) {
   const git = repo.git;
-  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-  const r = await git.run(['read-tree', '-m', '-u', from, to], { allowFail: true });
-  if (r.code !== 0) {
-    throw new GitError(`Your uncommitted changes (or untracked files) are in the way, so nothing was changed. Commit or stash them first.\n${r.err.trim()}`);
-  }
-  try {
+  const note = await moveWork(repo, from, to, label, async () => {
     await repo.backup(from, label);
     const u = await git.run(['update-ref', '-m', `legit: ${label}`, 'HEAD', to, from], { allowFail: true });
     if (u.code !== 0) throw new GitError(`HEAD moved in the meantime; nothing was changed. ${u.err.trim()}`);
-  } catch (e) {
-    await git.run(['read-tree', '-m', '-u', to, from], { allowFail: true });
-    throw e;
-  }
+  });
+  if (note) repo.notes.push(note);
   await repo.record({ label, before: from, after: to });
 }
 
@@ -471,13 +465,7 @@ async function rebaseStopping(
   repo: Repo, head: string, target: string, t: Target, words: { doing: string; done: string }, conflict: string, todo?: RawCommit[],
 ): Promise<SyncResult> {
   const git = repo.git;
-  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-  const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-  if (status) {
-    throw new GitError(
-      `${words.doing} conflicts. ${conflict} Resolving that means stopping at each conflicting commit, which needs a working tree without uncommitted changes (untracked files are fine), so it can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
-    );
-  }
+  const aside = await autostash(repo, t.label);
   await repo.backup(head, t.label);
   const file = todo ? join(tmpdir(), `legit-todo-${randomBytes(6).toString('hex')}`) : null;
   let r: Awaited<ReturnType<Git['run']>>;
@@ -504,15 +492,16 @@ async function rebaseStopping(
     const n = (await unmergedPaths(git)).size;
     return done(
       repo,
-      `${words.doing} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.`,
+      `${words.doing} stopped${n ? ` with conflicts in ${plural(n, 'file')}` : ''}. Resolve them, then continue: it stops again at each commit that conflicts. Abort puts everything back.${aside ? ` ${ASIDE}` : ''}`,
     );
   }
+  const back = await withAutostash(repo, '');
   const after = await repo.head();
   if (r.code !== 0 || !after || after === head) {
     throw new GitError(after === head ? `Rebase failed; nothing was changed.\n${output}` : `Rebase failed.\n${output}`);
   }
   await repo.record({ label: t.label, before: head, after });
-  return done(repo, words.done, [after]);
+  return done(repo, words.done + back, [after]);
 }
 
 // ---- rebuild ----
@@ -606,13 +595,7 @@ export function rebuildBranch(repo: Repo, req: { shas: string[]; branch: string 
  */
 async function merge(repo: Repo, head: string, t: Target, here: string): Promise<SyncResult> {
   const git = repo.git;
-  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-  const status = await git.text(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-  if (status) {
-    throw new GitError(
-      `Merging needs a working tree without uncommitted changes (untracked files are fine), so the merge can always be aborted cleanly. You have:\n${status}\nCommit or stash them first. Nothing was changed.`,
-    );
-  }
+  const aside = await autostash(repo, t.label);
   await repo.backup(head, t.label);
   // The short name gives the usual message ("Merge branch 'x'"), unless it means something else.
   const short = await git.text(['rev-parse', '-q', '--verify', `${t.name}^{commit}`], { allowFail: true });
@@ -625,19 +608,21 @@ async function merge(repo: Repo, head: string, t: Target, here: string): Promise
   const output = (r.err + r.out.toString('utf8')).trim();
   if (inProgress(git) === 'merge') {
     const n = (await unmergedPaths(git)).size;
+    const aside2 = aside ? ` ${ASIDE}` : '';
     return done(
       repo,
       n
-        ? `Merging ${t.name} stopped with conflicts in ${plural(n, 'file')}. Resolve them, then continue (or abort).`
-        : `Merging ${t.name} stopped before committing; continue to commit it (or abort).\n${output}`,
+        ? `Merging ${t.name} stopped with conflicts in ${plural(n, 'file')}. Resolve them, then continue (or abort).${aside2}`
+        : `Merging ${t.name} stopped before committing; continue to commit it (or abort).${aside2}\n${output}`,
     );
   }
+  const back = await withAutostash(repo, '');
   const after = await repo.head();
   if (r.code !== 0 || !after || after === head) {
     throw new GitError(after === head ? `Merge failed; nothing was changed.\n${output}` : `Merge failed.\n${output}`);
   }
   await repo.record({ label: t.label, before: head, after });
-  return done(repo, `Merged ${t.name} into ${here}.`, [after]);
+  return done(repo, `Merged ${t.name} into ${here}.${back}`, [after]);
 }
 
 // ---- resolving conflicts ----
@@ -859,11 +844,12 @@ export async function continueNow(repo: Repo, label?: string): Promise<SyncResul
       }
       throw new GitError(`Couldn't continue the ${kind}; it's still in progress and nothing was lost.\n${output}`);
     }
-    if (r.code !== 0) throw new GitError(`The ${kind} ended with an error.\n${output}`);
+    const back = await withAutostash(repo, '');
+    if (r.code !== 0) throw new GitError(`The ${kind} ended with an error.${back}\n${output}`);
     if (before && after && after !== before && (await repo.currentBranch()) === branch) {
       await repo.record({ label: label ?? kind, before, after });
     }
-    return done(repo, `Finished the ${kind}.`, after ? [after] : []);
+    return done(repo, `Finished the ${kind}.${back}`, after ? [after] : []);
 }
 
 /** Back up `sha` unless it's already the newest backup of `branch`. */
@@ -894,11 +880,12 @@ export async function abortNow(repo: Repo, untracked: string[] = []): Promise<Sy
     if (r.code !== 0) {
       throw new GitError(`Couldn't abort the ${kind}.${saved ? ` (Your work in progress is saved as ${saved}.)` : ''}\n${r.err.trim()}`);
     }
+    const back = await withAutostash(repo, '');
     return done(
       repo,
-      changed
+      (changed
         ? `Aborted the ${kind}. Your files as they were (resolutions included) were saved first, as ${saved}; \`git restore -s ${saved} -- <file>\` brings one back.`
-        : `Aborted the ${kind}.`,
+        : `Aborted the ${kind}.`) + back,
     );
 }
 

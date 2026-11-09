@@ -88,13 +88,11 @@ test('a conflicting rebuild stops at each conflict, continues, and undoes in one
   const head = git('rev-parse', 'HEAD');
   const repo = await Repo.open(t.dir);
 
+  // Uncommitted changes are put aside while it runs, and come back once it's over.
   write('h', 'dirty\n');
-  await assert.rejects(rebuildBranch(repo, { shas: picks, branch: 'main' }), /Rebuilding feature on main conflicts\. .* "mine" conflicts in f\..*Nothing was changed/s);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-  git('checkout', '-q', '--', 'h');
-
   let r = await rebuildBranch(repo, { shas: picks, branch: 'main' });
-  assert.match(r.message, /Rebuilding feature on main stopped with conflicts in 1 file/);
+  assert.match(r.message, /Rebuilding feature on main stopped with conflicts in 1 file.*put aside/s);
+  assert.match(git('stash', 'list', '--format=%gs'), /legit: your changes before rebuild on feature/);
   assert.equal(r.state.conflict?.kind, 'rebase');
   assert.deepEqual(r.state.conflict?.files.map((f) => f.path), ['f']);
   write('f', 'both\n');
@@ -106,6 +104,8 @@ test('a conflicting rebuild stops at each conflict, continues, and undoes in one
   r = await continueOp(repo);
   assert.equal(r.state.conflict, null);
   assert.equal(r.state.branch, 'feature');
+  assert.match(r.message, /uncommitted changes are back/);
+  assert.equal(read('h'), 'dirty\n');
   assert.deepEqual(log(), ['mine too', 'clean', 'mine', 'theirs', 'same', 'base']);
   assert.ok(!t.exists('d'));
   assert.ok((await repo.backups()).some((x) => x.label === 'rebuild' && x.sha === head));

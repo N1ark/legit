@@ -88,7 +88,7 @@ test("another branch's commits, and cherry-picking them onto this one in memory,
 });
 
 test('a conflicting cherry-pick stops for the conflict view, continues, and undoes in one step', async () => {
-  commit('base', { f: '1\n2\n3\n' });
+  commit('base', { f: '1\n2\n3\n', h: 'h\n' });
   git('checkout', '-q', '-b', 'other');
   const x = commit('theirs', { f: '1\ntheirs\n3\n' });
   const y = commit('more', { g: 'g\n' });
@@ -96,19 +96,19 @@ test('a conflicting cherry-pick stops for the conflict view, continues, and undo
   const head = commit('mine', { f: '1\nmine\n3\n' });
   const repo = await Repo.open(t.dir);
 
-  // Uncommitted changes would make an abort unsafe: refused.
-  write('f', 'dirty\n');
-  await assert.rejects(cherryPick(repo, { shas: [x, y] }), /"theirs" conflicts in f\. .*without uncommitted changes.*Nothing was changed/s);
-  assert.equal(git('rev-parse', 'HEAD'), head);
-  git('checkout', '-q', '--', 'f');
-
+  // Uncommitted changes are put aside until it's over, so an abort is always clean.
+  write('h', 'dirty\n');
   let r = await cherryPick(repo, { shas: [x, y] });
-  assert.match(r.message, /stopped with conflicts in 1 file/);
+  assert.match(r.message, /stopped with conflicts in 1 file.*put aside/s);
+  assert.equal(read('h'), 'h\n');
   assert.equal(r.state.conflict?.kind, 'cherry-pick');
   write('f', '1\nboth\n3\n');
   await markResolved(repo, { path: 'f' });
   r = await continueOp(repo);
   assert.equal(r.state.conflict, null);
+  assert.match(r.message, /uncommitted changes are back/);
+  assert.equal(read('h'), 'dirty\n');
+  git('checkout', '-q', '--', 'h');
   assert.deepEqual(log(), ['more', 'theirs', 'mine', 'base']);
   assert.equal(read('f'), '1\nboth\n3\n');
   await repo.undo();

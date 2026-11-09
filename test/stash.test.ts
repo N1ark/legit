@@ -49,7 +49,7 @@ test('apply refuses when uncommitted changes overlap, and when files it creates 
   const sha = (await stash(repo)).state.stashed!.sha;
 
   write('f', 'other\n');
-  await assert.rejects(stashApply(repo, { sha }), /uncommitted changes to files the stash also changes: f\. .*Nothing was changed/);
+  await assert.rejects(stashApply(repo, { sha }), /your uncommitted changes both change f, in ways that can't be merged\. Nothing was changed/);
   assert.equal(read('f'), 'other\n');
   git('checkout', '--', 'f');
 
@@ -64,6 +64,19 @@ test('apply refuses when uncommitted changes overlap, and when files it creates 
   write('g', 'unrelated\n');
   await stashPop(repo, { sha });
   assert.deepEqual([read('f'), read('g'), read('new')], ['stashed\n', 'unrelated\n', 'stashed\n']);
+});
+
+test('a stash restored over uncommitted changes to the same files is merged into them', async () => {
+  commit('base', { f: '1\n2\n3\n' });
+  write('f', '1\n2\nthree\n');
+  const repo = await Repo.open(t.dir);
+  const sha = (await stash(repo)).state.stashed!.sha;
+  write('f', 'one\n2\n3\n');
+  git('add', 'f');
+  await stashPop(repo, { sha });
+  assert.equal(read('f'), 'one\n2\nthree\n');
+  assert.equal(git('show', ':f'), 'one\n2\n3');
+  assert.deepEqual(stashList(), []);
 });
 
 test('apply refuses a stash that would conflict with the branch, leaving no conflict markers', async () => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, beforeEach, test } from 'node:test';
 import { Repo } from '../src/server/repo.ts';
+import { abortOp } from '../src/server/sync.ts';
 
 let dir = '';
 const dirs: string[] = [];
@@ -165,7 +166,7 @@ test('the diff of a squash that would conflict says so', async () => {
   await assert.rejects(repo.diff(`q${c}.${a}`), /conflict: .* "c" with the ones before it, in f. Squashing stops there/);
 });
 
-test('reordering updates a clean working tree and refuses to clobber changes', async () => {
+test('rewriting updates the working tree, merging uncommitted changes onto the result', async () => {
   commit('base', { f: '1\n' });
   const a = commit('a', { f: '1\n2\n' });
   const b = commit('b', { g: 'g\n' });
@@ -174,10 +175,37 @@ test('reordering updates a clean working tree and refuses to clobber changes', a
   assert.equal(read('f'), '1\n');
   await repo.undo();
   assert.equal(read('f'), '1\n2\n');
+
+  // A change to a file the drop changes too: merged, staged and unstaged kept apart.
+  write('f', '0\n1\n2\n');
+  git('add', 'f');
+  write('f', '0\n1\n2\n');
+  write('g', 'g\nmore\n');
+  let r = await repo.drop({ shas: [git('rev-parse', 'HEAD~1')] });
+  assert.equal(r.note, undefined);
+  assert.deepEqual(log(), ['b', 'base']);
+  assert.equal(read('f'), '0\n1\n');
+  assert.equal(git('show', ':f'), '0\n1');
+  assert.equal(read('g'), 'g\nmore\n');
+  assert.equal(git('show', ':g'), 'g');
+  assert.equal(git('stash', 'list'), '');
+
+  // Undone, the same way back.
+  await repo.undo();
+  assert.equal(read('f'), '0\n1\n2\n');
+  assert.equal(git('show', ':f'), '0\n1\n2');
+
+  // One that conflicts: restored with the conflicts left to resolve; aborting puts it in the stash list.
+  git('reset', '-q', '--hard');
   write('f', 'dirty\n');
-  await assert.rejects(repo.drop({ shas: [git('rev-parse', 'HEAD~1')] }), /uncommitted/);
-  assert.equal(read('f'), 'dirty\n');
-  assert.deepEqual(log(), ['b', 'a', 'base']);
+  r = await repo.drop({ shas: [git('rev-parse', 'HEAD~1')] });
+  assert.match(r.note ?? '', /conflict with the result/);
+  assert.equal(r.state.conflict?.kind, 'stash');
+  assert.deepEqual(log(), ['b', 'base']);
+  assert.match(read('f'), /<<<<<<<[\s\S]*dirty[\s\S]*>>>>>>>/);
+  await abortOp(repo);
+  assert.equal(read('f'), '1\n');
+  assert.match(git('stash', 'list', '--format=%gs'), /legit: your changes before drop on main/);
   void b;
 });
 
@@ -217,15 +245,16 @@ test('never overwrites an untracked file', async () => {
   assert.equal(git('rev-parse', 'HEAD'), head);
 });
 
-test('refuses to change files while tracked changes are staged, even unrelated ones', async () => {
+test('staged changes to other files stay staged when files change', async () => {
   commit('base', { f: '1\n', g: '1\n' });
   const a = commit('a', { f: '2\n' });
   write('g', 'staged\n');
   git('add', 'g');
   const repo = await Repo.open(dir);
-  await assert.rejects(repo.drop({ shas: [a] }), /uncommitted changes/);
-  assert.equal(git('rev-parse', 'HEAD'), a);
+  await repo.drop({ shas: [a] });
+  assert.equal(read('f'), '1\n');
   assert.equal(git('diff', '--cached', '--name-only'), 'g');
+  assert.equal(git('show', ':g'), 'staged');
 });
 
 test('every operation leaves a backup ref that can be restored', async () => {
@@ -301,19 +330,13 @@ test('older history loads in pages; a merge lists the commits it brought in', as
   assert.deepEqual(await repo.merged(st.commits[0].sha), { commits: [], total: 0 });
 });
 
-test('switching branches refuses to clobber local changes; undo history is per branch', async () => {
+test('switching branches brings local changes along; undo history is per branch', async () => {
   commit('base', { f: '1\n' });
   git('branch', 'other');
   const a = commit('a', { f: '2\n' });
   const repo = await Repo.open(dir);
   assert.deepEqual((await repo.branches()).map((b) => [b.name, b.current]).sort(), [['main', true], ['other', false]]);
   await repo.edit({ sha: a, subject: 'A', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
-
-  write('f', 'dirty\n');
-  await assert.rejects(repo.switchBranch({ branch: 'other' }), /Couldn't switch/);
-  assert.equal(read('f'), 'dirty\n');
-  assert.equal(git('branch', '--show-current'), 'main');
-  git('checkout', '-q', '--', 'f');
 
   let st = (await repo.switchBranch({ branch: 'other' })).state;
   assert.equal(st.branch, 'other');
@@ -386,7 +409,7 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   await repo.edit({ sha: git('rev-parse', 'HEAD'), subject: 'B2', body: '', author: { name: 'Ann', email: 'ann@x.org' }, coauthors: [] });
 
   // Fetching (without integrating) isn't enough either: --force-if-includes refuses.
-  await assert.rejects(repo.push({ force: true }), (e: any) => e.code === 'not-fetched' && /since you last fetched/.test(e.message));
+  await assert.rejects(repo.push({ force: true }), (e: any) => e.code === 'not-fetched' && /haven't seen yet/.test(e.message));
   // Overwriting what was last fetched is leased on it, so it refuses too.
   await assert.rejects(repo.push({ force: 'overwrite' }), (e: any) => e.code === 'not-fetched');
   assert.equal(remoteHead(), theirs);
@@ -410,7 +433,7 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   og('commit', '-qm', 'again');
   og('push', '-q', 'origin', 'main');
   commit('mine', { h: '1\n' });
-  await assert.rejects(repo.push({}), (e: any) => !e.code && /Fetch, then pull them in/.test(e.message));
+  await assert.rejects(repo.push({}), (e: any) => e.code === 'not-fetched' && /force push anyway/.test(e.message));
   await assert.rejects(repo.push({ force: 'overwrite' }), (e: any) => e.code === 'not-fetched');
   await repo.push({ force: 'fetch' });
   assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
@@ -423,6 +446,47 @@ test('push: publish, fast-forward, and force push only with consent and never ov
   await assert.rejects(repo.push({}), /normal push would be refused/);
   await repo.push({ force: 'overwrite', expect: head });
   assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
+});
+
+test('publishing over a branch of the same name already on the remote offers a force push, which replaces it', async () => {
+  const remote = mkdtempSync(join(tmpdir(), 'legit-remote-'));
+  dirs.push(remote);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { env });
+  commit('base', { f: '1\n' });
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', 'origin', 'main:feature');
+  git('switch', '-q', '-c', 'feature', 'main');
+  git('commit', '-q', '--amend', '-m', 'rewritten');
+  const repo = await Repo.open(dir);
+  const remoteHead = () => execFileSync('git', ['rev-parse', 'feature'], { cwd: remote, env, encoding: 'utf8' }).trim();
+  assert.equal((await repo.state()).push?.publish, true);
+  await assert.rejects(repo.push({}), (e: any) => e.code === 'not-fetched' && /force push anyway/.test(e.message));
+  const st = (await repo.push({ force: 'fetch' })).state;
+  assert.equal(remoteHead(), git('rev-parse', 'HEAD'));
+  assert.equal(st.push?.publish, false);
+  assert.equal(git('rev-parse', '--abbrev-ref', 'feature@{upstream}'), 'origin/feature');
+});
+
+test('pushing works while a merge is in progress: only the branch is sent', async () => {
+  const remote = mkdtempSync(join(tmpdir(), 'legit-remote-'));
+  dirs.push(remote);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { env });
+  commit('base', { f: '1\n' });
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', '-u', 'origin', 'main');
+  git('switch', '-q', '-c', 'side');
+  commit('side', { f: 'side\n' });
+  git('switch', '-q', 'main');
+  const mine = commit('mine', { f: 'mine\n' });
+  try {
+    git('merge', '-q', 'side');
+  } catch {
+    // Conflicts: the merge stays in progress.
+  }
+  const repo = await Repo.open(dir);
+  assert.equal((await repo.state()).conflict?.kind, 'merge');
+  await repo.push({});
+  assert.equal(execFileSync('git', ['rev-parse', 'main'], { cwd: remote, env, encoding: 'utf8' }).trim(), mine);
 });
 
 test('stage/unstage lines and files touch only the index; commit runs hooks', async () => {

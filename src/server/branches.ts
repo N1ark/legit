@@ -9,14 +9,16 @@ import type { BranchInfo, CreateBranchRequest, DeleteBranchesResult, DeletedBran
 import { type Git, GitError } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
-import { stashPush, unstash } from './stash.ts';
+import { baseBranch } from './base.ts';
+import { pushTracked, reapply } from './carry.ts';
+import { restoreStash, stashPush, unstash } from './stash.ts';
 
 export const DELETED = 'refs/legit/deleted';
 
 let lastTime = 0;
 const uniqueTime = () => (lastTime = Math.max(Date.now(), lastTime + 1));
 
-const done = async (repo: Repo): Promise<OpResult> => ({ state: await repo.state(), renamed: {}, focus: [] });
+const done = async (repo: Repo): Promise<OpResult> => ({ state: await repo.state(), renamed: {}, focus: [], note: repo.takeNote() });
 
 function guarded(repo: Repo, fn: () => Promise<void>): Promise<OpResult> {
   return repo.exclusive(async () => {
@@ -41,18 +43,29 @@ const sha = (repo: Repo, ref: string): Promise<string | null> => repo.git.resolv
 const localExists = async (repo: Repo, name: string) => !!(await sha(repo, `refs/heads/${name}`));
 
 /**
- * `git switch <args>`, which refuses rather than overwrite local changes. With `stash`, the
- * uncommitted changes are stashed first (left on the branch they were made on), and put back
- * if the switch fails.
+ * `git switch <args>`. With `stash`, the uncommitted changes are stashed first (left on the branch
+ * they were made on), and put back if the switch fails. Without, they come along: when git won't
+ * switch with them in the way, they're put aside, and brought back on the new branch (with the
+ * conflicts to resolve, if they conflict with it).
  */
 async function switchTo(repo: Repo, args: string[], target: string, stash = false) {
   const where = async () => JSON.stringify(await repo.git.headState());
   const before = await where();
   const stashed = stash ? await stashPush(repo.git, await repo.currentBranch()) : null;
-  const r = await repo.git.run(['switch', '--no-guess', ...args], { allowFail: true });
+  let r = await repo.git.run(['switch', '--no-guess', ...args], { allowFail: true });
   if (r.code === 0) return;
   // A failing post-checkout hook fails the command after the switch happened.
   if ((await where()) !== before) throw new GitError(`Switched to ${target}, but git reported an error:\n${r.err.trim()}`);
+  if (!stash && /would be overwritten|commit your changes or stash them/i.test(r.err)) {
+    const aside = await pushTracked(repo, `switching to ${target}`);
+    r = await repo.git.run(['switch', '--no-guess', ...args], { allowFail: true });
+    if (r.code === 0 || (await where()) !== before) {
+      repo.notes.push(await reapply(repo, aside, 'Your uncommitted changes came along.'));
+      if (r.code !== 0) throw new GitError(`Switched to ${target}, but git reported an error:\n${r.err.trim()}`);
+      return;
+    }
+    await restoreStash(repo.git, aside, true, false).catch(() => {});
+  }
   let back = '';
   if (stashed) {
     try {
@@ -125,12 +138,50 @@ async function checkedOutIn(repo: Repo, branch: string): Promise<string | null> 
   return null;
 }
 
-/** Delete a local branch, after saving its tip under refs/legit/deleted/<branch>/<time>. */
+/**
+ * Delete a local branch, after saving its tip under refs/legit/deleted/<branch>/<time>. The one
+ * you're on is left first (see `leave`).
+ */
 export function deleteBranch(repo: Repo, req: { branch: string }): Promise<OpResult> {
   return guarded(repo, async () => {
+    if (req.branch && (await repo.currentBranch()) === req.branch && (await localExists(repo, req.branch))) {
+      await leave(repo, req.branch, new Set([req.branch]));
+    }
     await deleteOne(repo, req.branch, await repo.currentBranch());
     await pruneRefs(repo.git);
   });
+}
+
+/** Local branches checked out in any worktree. */
+async function checkedOut(repo: Repo): Promise<Set<string>> {
+  const out = await repo.git.text(['worktree', 'list', '--porcelain'], { allowFail: true });
+  return new Set([...out.matchAll(/^branch refs\/heads\/(.+)$/gm)].map((m) => m[1]));
+}
+
+/**
+ * Switch away from `name` to delete it, uncommitted changes coming along: to the default branch (made
+ * from the remote's when there's no local one), else the most recently committed other branch, else a
+ * detached HEAD. None of `avoid`, nor one checked out elsewhere.
+ */
+async function leave(repo: Repo, name: string, avoid: Set<string>) {
+  const git = repo.git;
+  const busy = await checkedOut(repo);
+  const free = (b: string) => !avoid.has(b) && !busy.has(b);
+  let to: { args: string[]; name: string } | null = null;
+  const base = await baseBranch(git, name, await repo.head());
+  if (base) {
+    const remote = (await remotes(repo)).find((r) => base.name.startsWith(`${r}/`));
+    const local = remote ? base.name.slice(remote.length + 1) : base.name;
+    if (await localExists(repo, local)) to = free(local) ? { args: [local], name: local } : null;
+    else if (remote && !avoid.has(local)) to = { args: ['--track', '-c', local, `refs/remotes/${remote}/${local}`], name: local };
+  }
+  if (!to) {
+    const out = await git.text(['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads/']);
+    const other = out.split('\n').map((r) => r.replace(/^refs\/heads\//, '')).find((b) => b && b !== name && free(b));
+    to = other ? { args: [other], name: other } : { args: ['--detach'], name: 'a detached HEAD' };
+  }
+  await switchTo(repo, to.args, to.name);
+  repo.notes.unshift(`You're on ${to.name} now.`);
 }
 
 /** A branch left alone: the message says why in full, `why` in a few words. */
@@ -181,12 +232,15 @@ async function each(items: unknown, one: (item: string) => Promise<string>, what
 }
 
 /**
- * Delete several local branches, each as `deleteBranch` does. The current one and those checked
- * out in another worktree are skipped, saying why.
+ * Delete several local branches, each as `deleteBranch` does (the current one is left first). Those
+ * checked out in another worktree are skipped, saying why.
  */
 export async function deleteBranches(repo: Repo, req: { branches: string[] }): Promise<DeleteBranchesResult> {
   let result: Pick<DeleteBranchesResult, 'deleted' | 'skipped'> = { deleted: [], skipped: [] };
   const done = await guarded(repo, async () => {
+    const here = await repo.currentBranch();
+    const names = Array.isArray(req.branches) ? req.branches.filter((x): x is string => typeof x === 'string') : [];
+    if (here && names.includes(here) && (await localExists(repo, here))) await leave(repo, here, new Set(names));
     const current = await repo.currentBranch();
     result = await each(req.branches, async (name) => (await deleteOne(repo, name, current), name), 'branches');
     await pruneRefs(repo.git);

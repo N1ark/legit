@@ -12,8 +12,7 @@
     !base ? ''
     : app.repo?.blocked ? `${app.repo.blocked} Finish or abort it first.`
     : `${base.name} has ${commits(base.behind)} ${app.repo?.branch} doesn't. Fetches, then replays ${app.repo?.branch}'s own commits ` +
-      `on top; uncommitted changes come along unless they'd be overwritten. Stops at a conflict for you to resolve (only with no ` +
-      `uncommitted changes). ⌘Z undoes it.`,
+      `on top; uncommitted changes come along. Stops at a conflict for you to resolve. ⌘Z undoes it.`,
   );
 </script>
 

@@ -296,7 +296,9 @@ mod commands {
         let current = app.state::<Current>().repo().ok_or("No repository is open.")?;
         let path = PathBuf::from(path);
         let path = path.canonicalize().unwrap_or(path);
-        if !worktrees(&current).contains(&path) {
+        // The worktree shown was just removed: going to a main worktree is still allowed.
+        let allowed = if current.exists() { worktrees(&current) } else { worktrees(&path).into_iter().take(1).collect() };
+        if !allowed.contains(&path) {
             return Err(format!("{} isn't a worktree of this repository.", path.display()));
         }
         if !is_repo(&path) {

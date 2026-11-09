@@ -499,6 +499,7 @@ class App {
       await prepare?.(r).catch(() => {});
       this.gen = Math.max(this.gen, gen);
       this.applyResult(r);
+      if (r.note) toast(r.note, { timeout: 15_000 });
       return true;
     } catch (e) {
       if (optimistic) this.repo = before;

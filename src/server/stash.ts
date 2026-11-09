@@ -9,6 +9,7 @@ import type { CommitDiff, DroppedStash, OpResult, StashEntry, Stashes } from '..
 import { DIFF_ARGS, parseDiff, sortFiles } from './diff.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
+import { mergeIntoWork } from './carry.ts';
 import { pruneRefs } from './retention.ts';
 import { type StashNote, changedPaths, removeStashNote, unmergedPaths, writeStashNote } from './sync.ts';
 
@@ -101,12 +102,9 @@ export async function stashPush(git: Git, branch: string | null): Promise<string
  * Returns the files where its changes would conflict with HEAD's (checked in memory with
  * `git merge-tree`).
  */
-async function checkApply(git: Git, sha: string): Promise<string[]> {
-  const c = await git.commit(sha);
+/** Files with uncommitted changes that stash `sha` changes too. */
+async function overlapping(git: Git, sha: string): Promise<string[]> {
   const { tracked, untracked } = await stashPaths(git, sha);
-  const unmerged = await git.text(['ls-files', '-u']);
-  if (unmerged) throw new GitError('There are unresolved conflicts in the index. Nothing was changed.');
-
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const status = (await git.run(['status', '--porcelain', '-z', '--untracked-files=no', '--no-renames'])).out
     .toString('latin1')
@@ -114,12 +112,22 @@ async function checkApply(git: Git, sha: string): Promise<string[]> {
     .filter(Boolean)
     .map((e) => e.slice(3));
   const mine = new Set([...tracked, ...untracked]);
-  const overlap = status.filter((p) => mine.has(p));
+  return status.filter((p) => mine.has(p));
+}
+
+async function checkApply(git: Git, sha: string): Promise<string[]> {
+  const c = await git.commit(sha);
+  const { tracked, untracked } = await stashPaths(git, sha);
+  const unmerged = await git.text(['ls-files', '-u']);
+  if (unmerged) throw new GitError('There are unresolved conflicts in the index. Nothing was changed.');
+
+  const overlap = await overlapping(git, sha);
   if (overlap.length) {
     throw new GitError(
-      `You have uncommitted changes to files the stash also changes: ${overlap.map(toUtf8).join(', ')}. Commit or stash them first. Nothing was changed.`,
+      `The stash and your uncommitted changes both change ${overlap.map(toUtf8).join(', ')}, in ways that can't be merged. Nothing was changed; the stash is kept. Commit yours, or put them aside with Stash all, then restore this one.`,
     );
   }
+  const mine = new Set([...tracked, ...untracked]);
 
   // Files the stash would create must not exist yet (untracked, ignored, or tracked here).
   const head = (await git.headState()).head ?? '';
@@ -201,7 +209,12 @@ async function applyClean(git: Git, sha: string) {
  * sync.ts) for the conflict view to finish or abort. A popped one is removed from the list even
  * then, so it's kept under refs/legit/stashes, and aborting puts it back.
  */
-async function restore(git: Git, sha: string, pop: boolean, anyway: boolean) {
+export async function restoreStash(git: Git, sha: string, pop: boolean, anyway: boolean) {
+  // Uncommitted changes to the same files: merged in, unless they conflict.
+  if ((await overlapping(git, sha)).length && !(await git.text(['ls-files', '-u'])) && (await mergeIntoWork(git, sha))) {
+    if (pop) await dropEntry(git, sha, 'pop');
+    return;
+  }
   const clashes = await checkApply(git, sha);
   if (clashes.length && !anyway) throw conflicts(clashes, pop);
   if (!clashes.length) {
@@ -242,7 +255,7 @@ async function keep(git: Git, sha: string, label: string) {
  * Remove stash `sha` from the stash list, after saving it under refs/legit/stashes. The stash
  * list is addressed by position, so anything else that left it meanwhile is saved too.
  */
-async function dropEntry(git: Git, sha: string, label: string) {
+export async function dropEntry(git: Git, sha: string, label: string) {
   const before = await list(git);
   const n = before.findIndex((s) => s.sha === sha);
   if (n < 0) throw new GitError('That stash is no longer in the stash list; refresh.');
@@ -286,7 +299,7 @@ export function stash(repo: Repo): Promise<OpResult> {
 export function stashApply(repo: Repo, req: { sha: string; conflicts?: boolean }): Promise<OpResult> {
   return guarded(repo, async () => {
     await known(repo.git, req.sha, true);
-    await restore(repo.git, req.sha, false, req.conflicts === true);
+    await restoreStash(repo.git, req.sha, false, req.conflicts === true);
   });
 }
 
@@ -294,7 +307,7 @@ export function stashApply(repo: Repo, req: { sha: string; conflicts?: boolean }
 export function stashPop(repo: Repo, req: { sha: string; conflicts?: boolean }): Promise<OpResult> {
   return guarded(repo, async () => {
     await known(repo.git, req.sha);
-    await restore(repo.git, req.sha, true, req.conflicts === true);
+    await restoreStash(repo.git, req.sha, true, req.conflicts === true);
   });
 }
 
