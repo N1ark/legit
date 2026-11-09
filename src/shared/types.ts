@@ -69,6 +69,8 @@ export interface RepoState {
   stashed: StashEntry | null;
   /** The default branch to rebase onto (see server/base.ts); null when on it, detached, or there's none. */
   base: BaseBranch | null;
+  /** The `upstream` remote's default branch, when it has commits both HEAD and `base` lack (a fork's original moved on). */
+  upstreamBase: BaseBranch | null;
 }
 
 export interface BaseBranch {

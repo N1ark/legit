@@ -11,7 +11,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type {
   Backup, BranchInfo, CommitDiff, CommitInfo, LocatedCommit, MergedCommits, OlderCommits, CommitRequest, DropRequest, EditLineRequest, FileDiff, PushInfo, StageRequest, EditRequest, OpResult, RemoveChangesRequest, RepoState, ReorderRequest, Selection, SplitRequest, SquashRequest,
 } from '../shared/types.ts';
-import { baseBranch } from './base.ts';
+import { baseBranch, upstreamBase } from './base.ts';
 import { localBranches, switchBranch } from './branches.ts';
 import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
@@ -172,11 +172,14 @@ export class Repo {
       head ? this.git.firstParent(head, LIMIT) : [],
     ]);
     const pushing = head && branch ? this.pushInfo(branch, view, remotes.names) : Promise.resolve(null);
-    const [push, canUndo, canRedo, base, unpushed, commits, github] = await Promise.all([
+    const remote = remoteOf(view, remotes.names);
+    const basing = baseBranch(this.git, branch, head, { remote, refs: view.remotes });
+    const [push, canUndo, canRedo, base, upstreamMain, unpushed, commits, github] = await Promise.all([
       pushing,
       this.applies(stacks.undo.at(-1), 'after', head),
       this.applies(stacks.redo.at(-1), 'before', head),
-      baseBranch(this.git, branch, head, { remote: remoteOf(view, remotes.names), refs: view.remotes }),
+      basing,
+      branch ? basing.then((b) => upstreamBase(this.git, head, b, remote, view.remotes)) : null,
       head ? this.unpushed(head, LIMIT, view) : [],
       this.git.loadCommits(list),
       pushing.then((p) => issueRepo(remotes.urls, p?.remote)),
@@ -197,6 +200,7 @@ export class Repo {
       ...sync,
       stashed,
       base,
+      upstreamBase: upstreamMain,
     };
     if (!head) return state;
 

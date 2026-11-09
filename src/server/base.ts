@@ -51,6 +51,34 @@ export async function baseBranch(
   return { name: target, behind };
 }
 
+/** The remote a fork's original repository goes by. */
+export const UPSTREAM = 'upstream';
+
+/**
+ * The `upstream` remote's default branch (e.g. upstream/main), when the current branch doesn't sync
+ * with that remote and it has commits both HEAD and `base` lack: what "Rebase on main" would miss,
+ * on a fork. Null otherwise. `refs`: every remote-tracking ref (refname → sha).
+ */
+export async function upstreamBase(
+  git: Git, head: string | null, base: BaseBranch | null, remote: string | null, refs: Map<string, string>,
+): Promise<BaseBranch | null> {
+  if (!head || remote === UPSTREAM) return null;
+  const prefix = `refs/remotes/${UPSTREAM}/`;
+  if (![...refs.keys()].some((r) => r.startsWith(prefix))) return null;
+  const names = [...new Set([await remoteDefault(git, UPSTREAM), 'main', 'master'].filter(Boolean))];
+  const name = names.find((n) => refs.has(prefix + n));
+  if (!name) return null;
+  const sha = refs.get(prefix + name)!;
+  const count = (not: string) => git.memo(`behind ${sha} ${not}`, async () => Number(await git.text(['rev-list', '--count', sha, '--not', not])));
+  const behind = await count(head);
+  if (!behind) return null;
+  if (base) {
+    const at = await git.text(['rev-parse', '-q', '--verify', `${base.name}^{commit}`], { allowFail: true });
+    if (at && !(await count(at))) return null;
+  }
+  return { name: `${UPSTREAM}/${name}`, behind };
+}
+
 /** The branch `<remote>/HEAD` points at, e.g. main for origin/main. */
 async function remoteDefault(git: Git, remote: string): Promise<string> {
   const ref = `refs/remotes/${remote}/HEAD`;

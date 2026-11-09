@@ -900,8 +900,8 @@ class App {
     }
   }
 
-  /** Fetching for "Rebase on main", so its button shows it. */
-  fetchingBase = $state(false);
+  /** Fetching for "Rebase on main" (or on upstream's, `'upstreamBase'`), so its button shows it. */
+  fetchingBase = $state<false | 'base' | 'upstreamBase'>(false);
   private userFetching = $state(false);
 
   /**
@@ -913,30 +913,33 @@ class App {
   );
 
   /**
-   * Rebase onto the default branch (see server/base.ts), fetched first so it's the latest. If the
-   * fetch fails, the toast says so and offers to rebase onto what was fetched before.
+   * Rebase onto the default branch (see server/base.ts), or with `'upstreamBase'` the `upstream`
+   * remote's, fetched first so it's the latest. If the fetch fails, the toast says so and offers to
+   * rebase onto what was fetched before.
    */
-  async rebaseOnBase() {
+  async rebaseOnBase(which: 'base' | 'upstreamBase' = 'base') {
     if (this.busy || this.fetchingBase) return;
-    const base = this.repo?.base;
+    const base = this.repo?.[which];
     if (!base) return toast("There's no default branch to rebase on, or you're on it.");
     if (this.repo?.push) {
-      this.fetchingBase = true;
+      this.fetchingBase = which;
       const fetched = await this.fetchRemote(true).finally(() => (this.fetchingBase = false));
       if (!fetched) {
         toast(`${base.name} may not be the latest: ${this.fetchError}`, {
           kind: 'error',
           timeout: 15_000,
-          action: { label: 'Rebase anyway', run: () => this.rebaseOnBaseNow() },
+          action: { label: 'Rebase anyway', run: () => this.rebaseOnBaseNow(which, base.name) },
         });
         return;
       }
     }
-    return this.rebaseOnBaseNow();
+    return this.rebaseOnBaseNow(which, base.name);
   }
 
-  private rebaseOnBaseNow() {
-    const base = this.repo?.base;
+  /** `name`: what was asked for, in case the fetch made it no longer worth showing (upstream's caught up with main). */
+  private rebaseOnBaseNow(which: 'base' | 'upstreamBase', name: string) {
+    const base = this.repo?.[which];
+    if (!base && which === 'upstreamBase') return this.sync('rebase', { branch: name });
     if (!base) return toast("There's no default branch to rebase on, or you're on it.");
     if (!base.behind) return toast(`${this.repo?.branch} already has everything on ${base.name}.`);
     return this.sync('rebase', { branch: base.name });
