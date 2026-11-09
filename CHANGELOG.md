@@ -5,6 +5,7 @@
 - A conflicted file's row in the conflict view has **Keep HEAD**, **Keep *feature*** and **Keep both**, settling every conflict in it at once (also in its right-click menu); the toast's **Undo** puts it back.
 - Resolving a conflict, or files changing on disk, no longer moves the diff: it stays on the same lines, and unchanged lines you showed between changes stay shown.
 - Editing lines in a diff: <kbd>↑</kbd> on the field's first line or <kbd>↓</kbd> on its last takes in the line beyond it, so several lines are edited as one text and saved together (two comment lines rewritten as one, say).
+- Lean files (and ```lean code blocks in markdown) are syntax-highlighted.
 - **Clone Repository…**, in the repository list (⌘T) and the **File** menu: pick one of your GitHub repositories or give any URL, and the window switches to the clone.
 
 ## 0.20.0 — 2026-10-31

@@ -49,6 +49,7 @@ export const LANGS: Record<string, [string[], () => Promise<unknown>]> = {
   sml: [[], () => import('prismjs/components/prism-sml.js')],
   fsharp: [[], () => import('prismjs/components/prism-fsharp.js')],
   coq: [[], () => import('prismjs/components/prism-coq.js')],
+  lean: [[], () => import('./prism-lean.ts')],
   elm: [[], () => import('prismjs/components/prism-elm.js')],
   lisp: [[], () => import('prismjs/components/prism-lisp.js')],
   scheme: [[], () => import('prismjs/components/prism-scheme.js')],
@@ -95,7 +96,7 @@ const EXT: Record<string, string> = {
   c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', m: 'objectivec', mm: 'objectivec',
   glsl: 'glsl', vert: 'glsl', frag: 'glsl', cs: 'csharp', rb: 'ruby', php: 'php', swift: 'swift',
   kt: 'kotlin', kts: 'kotlin', scala: 'scala', sc: 'scala', groovy: 'groovy', gradle: 'groovy', dart: 'dart',
-  hs: 'haskell', lhs: 'haskell', idr: 'idris', purs: 'purescript', agda: 'agda',
+  hs: 'haskell', lhs: 'haskell', idr: 'idris', purs: 'purescript', agda: 'agda', lean: 'lean',
   ml: 'ocaml', mli: 'ocaml', mll: 'ocaml', mly: 'ocaml', sml: 'sml', sig: 'sml', fs: 'fsharp', fsi: 'fsharp', fsx: 'fsharp',
   v: 'coq', elm: 'elm', lisp: 'lisp', el: 'lisp', smt2: 'lisp', scm: 'scheme', ss: 'scheme', rkt: 'racket',
   clj: 'clojure', cljs: 'clojure', cljc: 'clojure', edn: 'clojure', ex: 'elixir', exs: 'elixir', erl: 'erlang', hrl: 'erlang',
@@ -126,7 +127,7 @@ export function language(path: string): string | null {
 /** Code block languages that are neither an extension nor a grammar's name. */
 const FENCES: Record<string, string> = {
   shell: 'bash', console: 'bash', 'shell-session': 'bash', 'c++': 'cpp', 'c#': 'csharp', golang: 'go',
-  objc: 'objectivec', dockerfile: 'docker', make: 'makefile', terraform: 'hcl', elisp: 'lisp', proto3: 'protobuf',
+  objc: 'objectivec', lean4: 'lean', dockerfile: 'docker', make: 'makefile', terraform: 'hcl', elisp: 'lisp', proto3: 'protobuf',
 };
 
 /** A file name for each grammar, the first extension (or file name) that `language` reads as it. */
