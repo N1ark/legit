@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 — 2026-11-09
 
 - A conflicted file's row in the conflict view has **Keep HEAD**, **Keep *feature*** and **Keep both**, settling every conflict in it at once (also in its right-click menu); the toast's **Undo** puts it back.
 - Resolving a conflict, or files changing on disk, no longer moves the diff: it stays on the same lines, and unchanged lines you showed between changes stay shown.
