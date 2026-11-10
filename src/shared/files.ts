@@ -2,14 +2,26 @@
 
 const IMAGES: Record<string, string> = {
   png: 'image/png',
+  apng: 'image/apng',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
+  jpe: 'image/jpeg',
+  jfif: 'image/jpeg',
+  pjpeg: 'image/jpeg',
+  pjp: 'image/jpeg',
   gif: 'image/gif',
   webp: 'image/webp',
   avif: 'image/avif',
   bmp: 'image/bmp',
   ico: 'image/x-icon',
+  cur: 'image/x-icon',
   svg: 'image/svg+xml',
+  // Shown where the webview decodes them (WebKit, as in the app, does).
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jxl: 'image/jxl',
 };
 
 /** The image type of a file a browser can show, by its extension; null for anything else. */

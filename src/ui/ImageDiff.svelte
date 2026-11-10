@@ -29,15 +29,19 @@
   } = $props();
 
   let at = $state(50);
+  /** URLs that didn't load: a format this webview can't decode, or too big. */
+  let failed = $state<Record<string, boolean>>({});
+  const fail = (src: string) => (failed[src] = true);
   const both = $derived(!!before && !!after);
-  const shown = $derived(both ? mode.value : 'side');
+  const comparable = $derived(both && !failed[before!] && !failed[after!]);
+  const shown = $derived(comparable ? mode.value : 'side');
 </script>
 
 <div class="images" class:last style:height="{height}px">
   <div class="bar">
     <span class="muted">{note}</span>
     <span class="spacer"></span>
-    {#if both}
+    {#if comparable}
       {#if shown !== 'side'}
         <input
           class="range"
@@ -65,7 +69,13 @@
       {#each [['Before', before], ['After', after]] as [label, src] (label)}
         {#if src}
           <figure>
-            <div class="stage"><img {src} alt="{label}" draggable="false" decoding="async" /></div>
+            <div class="stage">
+              {#if failed[src]}
+                <span class="muted cant">Can't be shown here</span>
+              {:else}
+                <img {src} alt={label} draggable="false" decoding="async" onerror={() => fail(src)} />
+              {/if}
+            </div>
             {#if both}<figcaption class="muted">{label}</figcaption>{/if}
           </figure>
         {/if}
@@ -73,13 +83,13 @@
     </div>
   {:else}
     <div class="stage over">
-      <img src={before} alt="Before" draggable="false" decoding="async" />
+      <img src={before} alt="Before" draggable="false" decoding="async" onerror={() => fail(before!)} />
       <div
         class="layer"
         style:clip-path={shown === 'slider' ? `inset(0 0 0 ${at}%)` : undefined}
         style:opacity={shown === 'onion' ? at / 100 : undefined}
       >
-        <img src={after} alt="After" draggable="false" decoding="async" />
+        <img src={after} alt="After" draggable="false" decoding="async" onerror={() => fail(after!)} />
       </div>
       {#if shown === 'slider'}<span class="handle" style:left="{at}%"></span>{/if}
     </div>
@@ -162,6 +172,14 @@
     max-height: calc(100% - 2 * var(--gap-3));
     object-fit: contain;
     user-select: none;
+  }
+
+  .cant {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: var(--fs-sm);
   }
 
   .handle {

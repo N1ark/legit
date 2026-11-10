@@ -611,7 +611,7 @@
   }
 
   /** Height of what comes before each file's lines: its images. */
-  const leads = $derived(files.map((f) => (imageType(f.path) && f.oldSha !== f.newSha ? IMG : 0)));
+  const leads = $derived(files.map((f) => (imageType(f.path) && (f.untracked || f.oldSha !== f.newSha) ? IMG : 0)));
   const lead = (i: number) => leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) =>
