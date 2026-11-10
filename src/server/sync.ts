@@ -296,16 +296,17 @@ interface Target {
   ref: string;
   /** Short name for messages, e.g. origin/main. */
   name: string;
-  how: 'ff' | 'rebase' | 'merge';
+  how: 'ff' | 'rebase' | 'merge' | 'reset';
   /** Backup and undo label. */
   label: string;
 }
 
 /**
  * Bring the current branch's upstream in: fetch it, then fast-forward when only behind. When
- * the branch has diverged, `how` says whether to rebase onto it or merge it.
+ * the branch has diverged, `how` says whether to rebase onto it, merge it, or reset the branch to it
+ * (its own commits kept in a backup, and undoable).
  */
-export async function pull(repo: Repo, req: { how?: 'rebase' | 'merge' }): Promise<SyncResult> {
+export async function pull(repo: Repo, req: { how?: 'rebase' | 'merge' | 'reset' }): Promise<SyncResult> {
   const why = repo.blocked();
   if (why) throw new GitError(why);
   const branch = await repo.currentBranch();
@@ -316,8 +317,8 @@ export async function pull(repo: Repo, req: { how?: 'rebase' | 'merge' }): Promi
   const [ref, remote, name] = out.split('\0');
   if (!ref) throw new GitError(`${branch} doesn't track a remote branch, so there's nothing to pull.`);
   if (remote && remote !== '.') await fetchFrom(repo.git, remote);
-  const how = req.how === 'rebase' || req.how === 'merge' ? req.how : 'ff';
-  return repo.exclusive(() => integrate(repo, { ref, name, how, label: 'pull' }));
+  const how = req.how === 'rebase' || req.how === 'merge' || req.how === 'reset' ? req.how : 'ff';
+  return repo.exclusive(() => integrate(repo, { ref, name, how, label: how === 'reset' ? 'reset' : 'pull' }));
 }
 
 /** `git merge <branch>` into the current branch (a fast-forward when it's only behind). */
@@ -360,8 +361,12 @@ async function integrate(repo: Repo, t: Target): Promise<SyncResult> {
   if (t.how === 'ff') {
     throw new GitError(
       `${here} and ${t.name} have diverged (${onlyHere} commit${onlyHere === 1 ? '' : 's'} only here, ${onlyThere} only there), ` +
-        'so they need a rebase or a merge. Nothing was changed.',
+        'so they need a rebase, a merge or a reset. Nothing was changed.',
     );
+  }
+  if (t.how === 'reset') {
+    await carry(repo, head, target, t.label);
+    return done(repo, `Reset ${here} to ${t.name}, setting aside its ${plural(onlyHere, 'commit')} only here (in Backups).`, [target]);
   }
   return t.how === 'rebase' ? rebase(repo, head, target, t, here) : merge(repo, head, t, here);
 }

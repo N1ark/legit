@@ -2,12 +2,13 @@
   // Syncing with the remote, as GitHub Desktop does it: Fetch (also every five minutes in the
   // background, and on focus after a minute), plus one button for the obvious next step:
   // Publish, Push ↑N or Pull ↓N. When the branch has diverged because the remote has new
-  // commits, Pull asks whether to rebase or merge. When it diverged because pushed commits were
-  // rewritten here, it's a force push instead (confirmed by a second click), with a lease that
-  // git refuses if the remote has commits this branch never had. Whenever the remote has commits
-  // the branch doesn't, Force push beside Pull overwrites them (as fetched) after a second click.
+  // commits, Pull asks whether to rebase, merge or reset to the remote's. When it diverged
+  // because pushed commits were rewritten here, it's a force push instead (confirmed by a second
+  // click), with a lease that git refuses if the remote has commits this branch never had.
+  // Whenever the remote has commits the branch doesn't, Force push beside Pull overwrites them
+  // (as fetched) after a second click.
   import { Button, ConfirmButton, formatFull, formatRelative, menu, toast } from 'purr';
-  import { ArrowsClockwiseRegular, CaretDownRegular, CloudArrowDownRegular, CloudArrowUpRegular, GitMergeRegular, GitPullRequestRegular, WarningBold, WarningRegular } from 'purr/glyphs';
+  import { ArrowCounterClockwiseRegular, ArrowsClockwiseRegular, CaretDownRegular, CloudArrowDownRegular, CloudArrowUpRegular, GitMergeRegular, GitPullRequestRegular, WarningBold, WarningRegular } from 'purr/glyphs';
   import { onMount } from 'svelte';
   import { app } from './lib/app.svelte.ts';
   import { progressSummary } from './lib/progress.ts';
@@ -110,6 +111,12 @@
           note: 'Adds a merge commit; conflicts can be resolved here',
           run: () => app.sync('pull', { how: 'merge' }),
         },
+        {
+          label: `Reset to ${where}`,
+          icon: ArrowCounterClockwiseRegular,
+          note: `Drops your ${commits(info.ahead)} for theirs (kept in Backups, and undoable); uncommitted changes come along`,
+          run: () => app.sync('pull', { how: 'reset' }, undefined, true),
+        },
       ],
       `Bring in ${where}'s ${commits(info.behind)}`,
     );
@@ -127,7 +134,7 @@
     !info ? ''
     : mode === 'diverged'
       ? `${where} has ${commits(info.behind)} your branch doesn't, and yours has ${commits(info.ahead)} it doesn't. ` +
-        'Pull brings theirs in, by rebase or merge.'
+        'Pull brings theirs in, by rebase or merge, or resets your branch to theirs.'
     : `${where} has ${commits(info.behind)} your branch doesn't. Pull fetches and moves your branch up to them; ` +
       "uncommitted changes come along.",
   );

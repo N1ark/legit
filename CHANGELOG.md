@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- When your branch and the remote's have diverged, **Pull** also offers **Reset to *origin/main***: your branch takes the remote's commits, yours kept in Backups and undoable, uncommitted changes coming along.
+
 ## 0.22.0 — 2026-11-09
 
 - On a fork, **Rebase on upstream/main** shows beside **Rebase on main** when the `upstream` remote's default branch has commits your fork's main doesn't yet: one click instead of pulling main from upstream first.

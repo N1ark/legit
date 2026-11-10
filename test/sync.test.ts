@@ -251,6 +251,27 @@ test('pull with merge: a clean merge is one undoable step; uncommitted changes c
   assert.equal(existsSync(join(dir, 't')), false);
 });
 
+test('pull with reset: the branch takes the remote tip, its own commits backed up; undoable', async () => {
+  const repo = await Repo.open(dir);
+  const theirs = theyPush('theirs', { t: '1\n' });
+  commit('mine', { m: '1\n' });
+  const head = commit('mine 2', { m: '2\n' });
+  write('g', 'dirty\n');
+  write('untracked', 'u\n');
+  const r = await pull(repo, { how: 'reset' });
+  assert.match(r.message, /Reset main to origin\/main, setting aside its 2 commits only here/);
+  assert.equal(git('rev-parse', 'HEAD'), theirs);
+  assert.equal(read('t'), '1\n');
+  assert.equal(existsSync(join(dir, 'm')), false);
+  assert.equal(read('g'), 'dirty\n');
+  assert.equal(read('untracked'), 'u\n');
+  assert.ok((await repo.backups()).some((b) => b.label === 'reset' && b.sha === head));
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(read('m'), '2\n');
+  assert.equal(read('g'), 'dirty\n');
+});
+
 test('merge conflicts: listed, marked resolved only without markers, then continued', async () => {
   const repo = await Repo.open(dir);
   theyPush('theirs', { f: '1\nTHEIRS\n3\n', g: 'theirs\n', t: '1\n' });
