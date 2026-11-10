@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.23.0 — 2026-11-10
 
 - When your branch and the remote's have diverged, **Pull** also offers **Reset to *origin/main***: your branch takes the remote's commits, yours kept in Backups and undoable, uncommitted changes coming along.
 - New untracked images show in the uncommitted changes' diff, and more formats show: APNG, `.jfif`, `.cur`, and TIFF, HEIC and JPEG XL in the app. An image that can't be decoded says so instead of showing broken.
