@@ -80,10 +80,27 @@ test('a thread from a rewritten commit is found by its text near where it was', 
   const { placed, elsewhere } = at([t]);
   assert.deepEqual(placed.map((p) => [p.row, p.moved]), [[3, true]]);
   assert.deepEqual(elsewhere, []);
-  // Text that isn't in the diff (or only as context) places nothing, and it isn't this commit's.
+  // Text that isn't in the diff places nothing, and it isn't this commit's.
   const other = thread({ commit: GONE, originalLine: 11, hunk: '@@ -1 +1 @@\n+  return 3;' });
-  const ctx = thread({ commit: GONE, originalLine: 10, hunk: '@@ -1 +1 @@\n function f() {' });
-  assert.deepEqual(at([other, ctx]), { placed: [], elsewhere: [] });
+  assert.deepEqual(at([other]), { placed: [], elsewhere: [] });
+});
+
+test('a thread on an unchanged line shows where that line does, once lines around a hunk are shown', () => {
+  // Made below the hunk on GitHub, on a commit since rewritten: found by its text, among the lines shown.
+  const t = thread({ commit: GONE, originalLine: 13, hunk: '@@ -10,4 +10,5 @@\n+  // two\n }' });
+  assert.deepEqual(at([t]).placed.map((p) => [p.row, p.moved]), [[5, true]]);
+  const file = { lines: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'function f() {', '  return 1;', '}', 'tail();', 'more();'], noNewline: false };
+  const hunks = [{ header: '@@ -10,3 +10,4 @@', oldStart: 10, newStart: 10, types: ' -++ ', text: ['function f() {', '  return 1;', '  return 2;', '  // two', '}'], eof: [] }];
+  const below = thread({ commit: GONE, originalLine: 14, hunk: '@@ -10,4 +10,6 @@\n }\n tail();' });
+  const folded = buildRows(hunks, true, { file, top: [], bottom: [] });
+  assert.equal(placeThreads([below], folded, { sha: A, head: false, base: false }).placed.length, 0);
+  const shown = buildRows(hunks, true, { file, top: [0, 2], bottom: [] });
+  assert.deepEqual(placeThreads([below], shown, { sha: A, head: false, base: false }).placed.map((p) => shown.text[p.row]), ['tail();']);
+  // On the head, by its number: folded away it's off the diff, shown it's on its line.
+  const head = { sha: null, head: true, base: false };
+  const onHead = thread({ commit: GONE, line: 14, originalLine: 14, hunk: '@@ -10,4 +10,6 @@\n }\n tail();' });
+  assert.deepEqual(placeThreads([onHead], folded, head).elsewhere, [onHead]);
+  assert.deepEqual(placeThreads([onHead], shown, head).placed.map((p) => [shown.n[p.row], p.moved]), [[14, false]]);
 });
 
 test('short lines need their context to agree, long ones only need to be near', () => {

@@ -84,7 +84,7 @@ const NEAR = 100;
 /** The row with the hunk's last line, found by its text near line `expect`; -1 when none is convincing. */
 export function matchText(rows: RowsLike, lines: HunkLine[], expect: number | null): number {
   const last = lines[lines.length - 1];
-  if (!last || last.kind === ' ') return -1;
+  if (!last) return -1;
   const side = sideOf(last.kind);
   const want = strip(last.text);
   let best = -1;
@@ -152,6 +152,8 @@ export function placeThread(t: ReviewThread, rows: RowsLike, ctx: DiffContext): 
     if (p) return p;
   }
   if (!last || (ctx.head && t.outdated)) return null;
+  // On an unchanged line whose number is known here, it's only folded away: it shows once that line does.
+  if (last.kind === ' ' && ((ctx.head && t.line !== null) || (ctx.sha && first?.originalCommit === ctx.sha))) return null;
   const row = matchText(rows, lines, (ctx.head ? t.line : null) ?? t.originalLine);
   if (row < 0) return null;
   return { thread: t, row, start: rangeStart(rows, row, span(t.originalStartLine, t.originalLine)), moved: true };
