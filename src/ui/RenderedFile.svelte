@@ -1,8 +1,9 @@
 <script lang="ts">
   // A file shown as it reads rather than as lines: markdown as a document (an edited one as the diff of its
-  // versions), CSV and TSV as a table. Its height is its content's: the diff measures it, and the view
+  // versions), CSV and TSV as a table, JSON as a tree of its values. Its height is its content's: the diff measures it, and the view
   // scrolls past it as past a diff.
   import type { RenderKind } from '../shared/files.ts';
+  import JsonTree from './JsonTree.svelte';
   import Markdown from './Markdown.svelte';
   import { type CsvIndex, indexDelimited, laterRows, numericColumns } from './lib/csv.ts';
   import type { Fold } from './lib/md-diff.ts';
@@ -53,7 +54,7 @@
     lines: [number, number];
   }
   const delimiter = $derived(kind === 'tsv' ? '\t' : ',');
-  const index = $derived(kind === 'markdown' ? null : (table ?? indexDelimited(text, delimiter, TABLE_ROWS)));
+  const index = $derived(kind === 'csv' || kind === 'tsv' ? (table ?? indexDelimited(text, delimiter, TABLE_ROWS)) : null);
   const head = $derived(index ? 1 + Math.max(50, Math.min(MAX_ROWS, Math.floor(MAX_CELLS / Math.max(1, index.columns)))) : 0);
   // Apart from the changed rows after them, so those coming in doesn't redraw these.
   const first = $derived(index ? index.rows.slice(0, head).map((fields, n): Row => ({ fields, n, lines: index.lines[n] })) : []);
@@ -143,6 +144,12 @@
     {#if removed}<span class="sr-only">Removed:</span>{/if}
     <Markdown {text} file={path} {changed} {old} {fold} {onprogress} images />
   </div>
+{:else if kind === 'json'}
+  <div class="rendered json" class:removed>
+    {#if removed}<span class="sr-only">Removed:</span>{/if}
+    <!-- Opened afresh for another text. -->
+    {#key text}<JsonTree {text} {changed} />{/key}
+  </div>
 {:else if index}
   <div class="rendered csv">
     {#if shown.length}
@@ -209,6 +216,10 @@
   /* A file deleted: all of it removed. */
   .removed {
     background: var(--del-bg);
+  }
+
+  .json {
+    padding: var(--sp-4) var(--sp-5);
   }
 
   .csv {

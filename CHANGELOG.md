@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- JSON files can be shown rendered (the eye in their header): a tree of their values to open and close, the parts holding a change open from the start and changed entries washed green. Right-click an entry for **Expand all**, **Collapse all**, **Copy as JSON** and **Copy path**. Comments and trailing commas (`tsconfig.json`, say) are fine.
 - The conflict view's diff lists conflicted files first, tagged **conflicted**, with a **Merged** rule before the rest; the file tree beside it has a **Conflicted** tree above the rest's. Each conflict stands out: its markers in amber, HEAD's side tinted blue and the incoming side purple (diff3's base grey).
 - Editing lines in a diff: <kbd>⌘↩</kbd> adds a line below (indented like the one above), <kbd>⌘⇧K</kbd> deletes the caret's line, and deleting every line in the field takes them out of the commit. A line's menu also has **Insert line below** and **Delete line**.
 - Review comments on unchanged lines (just below a change, say) show in a rewritten commit's diff too, once the lines around them are shown.

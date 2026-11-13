@@ -31,9 +31,20 @@ export function imageType(path: string): string | null {
 }
 
 /** Files a diff can also show rendered, by kind. */
-export type RenderKind = 'markdown' | 'csv' | 'tsv';
+export type RenderKind = 'markdown' | 'csv' | 'tsv' | 'json';
 
-const RENDERED: Record<string, RenderKind> = { md: 'markdown', markdown: 'markdown', mdown: 'markdown', mkd: 'markdown', csv: 'csv', tsv: 'tsv' };
+const RENDERED: Record<string, RenderKind> = {
+  md: 'markdown',
+  markdown: 'markdown',
+  mdown: 'markdown',
+  mkd: 'markdown',
+  csv: 'csv',
+  tsv: 'tsv',
+  json: 'json',
+  jsonc: 'json',
+  geojson: 'json',
+  webmanifest: 'json',
+};
 
 /** How a file can be shown rendered, by its extension; null when it can't. */
 export function renderKind(path: string): RenderKind | null {
