@@ -960,7 +960,7 @@ export class Repo {
 
   /** Give a working-tree diff a key, keeping the previous key if nothing changed. */
   snapshot(kind: string, d: CommitDiff): CommitDiff {
-    const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token).join('\0');
+    const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token + (f.conflicted ? '\0!' : '')).join('\0');
     let key = this.snapshotIds.get(content);
     if (!key || !this.snapshots.has(key)) {
       key = `w${this.nextSnapshot++}`;

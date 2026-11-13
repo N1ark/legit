@@ -46,3 +46,11 @@ test("a collapsed folder hides what's in it", () => {
   assert.deepEqual(show(treeRows(tree, { 'a/b': true })), ['a/', '  b/', '  d.ts #1', 'e.ts #2']);
   assert.deepEqual(show(treeRows(tree, { a: true })), ['a/', 'e.ts #2']);
 });
+
+test('a tree of some of the paths keeps their indices; folders collapse by prefixed key', () => {
+  const paths = ['src/a.ts', 'src/b.ts', 'top.md'];
+  const tree = fileTree(paths, (i) => i !== 0);
+  assert.deepEqual(show(treeRows(tree, {})), ['src/', '  b.ts #1', 'top.md #2']);
+  assert.deepEqual(show(treeRows(tree, { 'x:src': true }, 'x:')), ['src/', 'top.md #2']);
+  assert.deepEqual(show(treeRows(tree, { src: true }, 'x:')), ['src/', '  b.ts #1', 'top.md #2']);
+});

@@ -274,7 +274,7 @@ test('pull with reset: the branch takes the remote tip, its own commits backed u
 
 test('merge conflicts: listed, marked resolved only without markers, then continued', async () => {
   const repo = await Repo.open(dir);
-  theyPush('theirs', { f: '1\nTHEIRS\n3\n', g: 'theirs\n', t: '1\n' });
+  theyPush('theirs', { f: '1\nTHEIRS\n3\n', g: 'theirs\n', t: '1\n', a: '1\n' });
   commit('mine', { f: '1\nMINE\n3\n', g: 'mine\n' });
   const head = git('rev-parse', 'HEAD');
   const r = await pull(repo, { how: 'merge' });
@@ -284,7 +284,7 @@ test('merge conflicts: listed, marked resolved only without markers, then contin
   assert.equal(c.title, "Merge remote-tracking branch 'origin/main'");
   assert.deepEqual(c.files.map((f) => [f.path, f.status, f.markers]).sort(), [['f', 'both modified', true], ['g', 'both modified', true]]);
   assert.equal(c.files.find((f) => f.path === 'f')!.line, 2);
-  assert.deepEqual(c.resolved, ['t']);
+  assert.deepEqual(c.resolved, ['a', 't']);
   assert.match(r.state.blocked!, /merge is in progress/);
   assert.ok((await repo.backups()).some((b) => b.label === 'pull' && b.sha === head));
 
@@ -293,7 +293,8 @@ test('merge conflicts: listed, marked resolved only without markers, then contin
 
   // The diff shows what finishing would change, markers included.
   const d = await conflictDiff(repo);
-  assert.deepEqual(d.files.map((f) => f.path).sort(), ['f', 'g', 't']);
+  // Conflicted files first.
+  assert.deepEqual(d.files.map((f) => [f.path, !!f.conflicted]), [['f', true], ['g', true], ['a', false], ['t', false]]);
   assert.ok(d.files.find((f) => f.path === 'f')!.hunks.some((h) => h.lines.some((l) => l.s.startsWith('<<<<<<<'))));
 
   await assert.rejects(continueOp(repo), /Still conflicted: .*Nothing was changed/);
@@ -302,7 +303,8 @@ test('merge conflicts: listed, marked resolved only without markers, then contin
   await markResolved(repo, { path: 'g', force: true });
   write('f', '1\nBOTH\n3\n');
   const s = (await markResolved(repo, { path: 'f' })).state.conflict!;
-  assert.deepEqual([s.files, s.resolved.sort()], [[], ['f', 'g', 't']]);
+  assert.deepEqual([s.files, s.resolved.sort()], [[], ['a', 'f', 'g', 't']]);
+  assert.deepEqual((await conflictDiff(repo)).files.map((f) => [f.path, !!f.conflicted]), [['a', false], ['f', false], ['g', false], ['t', false]]);
   await assert.rejects(markResolved(repo, { path: 'f' }), /isn't conflicted/);
 
   const done = await continueOp(repo);

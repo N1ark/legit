@@ -23,11 +23,12 @@ export type TreeNode = TreeDir | TreeFile;
 /** A row of the tree as shown, with collapsed folders' contents left out. */
 export type TreeRow = (TreeDir | TreeFile) & { depth: number };
 
-/** The tree of `paths`, ordered as in Zed: folders first, then files, by name (see `comparePaths`). */
-export function fileTree(paths: string[]): TreeNode[] {
+/** The tree of `paths` (those `include` keeps, by index), ordered as in Zed: folders first, then files, by name (see `comparePaths`). */
+export function fileTree(paths: string[], include?: (index: number) => boolean): TreeNode[] {
   const root: TreeDir = { kind: 'dir', name: '', path: '', children: [] };
   const dirs = new Map<string, TreeDir>();
   paths.forEach((path, index) => {
+    if (include && !include(index)) return;
     const parts = path.split('/');
     let dir = root;
     for (let k = 0; k < parts.length - 1; k++) {
@@ -61,12 +62,12 @@ function merge(node: TreeNode): TreeNode {
   return { ...dir, name, children: dir.children.map(merge) };
 }
 
-/** The rows to show, depth first, skipping what's inside collapsed folders. */
-export function treeRows(nodes: TreeNode[], collapsed: Record<string, boolean>, depth = 0): TreeRow[] {
+/** The rows to show, depth first, skipping what's inside collapsed folders (keyed by `prefix` and their path). */
+export function treeRows(nodes: TreeNode[], collapsed: Record<string, boolean>, prefix = '', depth = 0): TreeRow[] {
   const out: TreeRow[] = [];
   for (const n of nodes) {
     out.push({ ...n, depth });
-    if (n.kind === 'dir' && !collapsed[n.path]) out.push(...treeRows(n.children, collapsed, depth + 1));
+    if (n.kind === 'dir' && !collapsed[prefix + n.path]) out.push(...treeRows(n.children, collapsed, prefix, depth + 1));
   }
   return out;
 }

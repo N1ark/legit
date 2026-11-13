@@ -1046,5 +1046,10 @@ export async function conflictDiff(repo: Repo): Promise<CommitDiff> {
   const note = await readStashNote(git);
   const tree = await worktreeTree(git, head, note ? [...new Set([...note.tracked, ...note.untracked])] : await changedPaths(git));
   const { out } = await git.run(['diff-tree', ...DIFF_ARGS, await git.treeOf(head), tree]);
-  return repo.snapshot('conflict', parseDiff(out.toString('latin1'), ''));
+  const d = parseDiff(out.toString('latin1'), '');
+  // Conflicted files first, each group in the tree's order.
+  const unmerged = await unmergedPaths(git);
+  for (const f of d.files) if (unmerged.has(f.path)) f.conflicted = true;
+  d.files.sort((a, b) => +!!b.conflicted - +!!a.conflicted);
+  return repo.snapshot('conflict', d);
 }

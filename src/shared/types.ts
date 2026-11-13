@@ -145,6 +145,8 @@ export interface FileDiff {
   mixed?: number[];
   /** Uncommitted changes: the index differs in a way no line shows. */
   unshown?: string;
+  /** The conflict view: the file is still conflicted (unmerged). */
+  conflicted?: boolean;
   hunks: Hunk[];
   added: number;
   removed: number;

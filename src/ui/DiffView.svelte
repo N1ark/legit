@@ -63,6 +63,7 @@
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { cutWords, wordDiff } from './lib/worddiff.ts';
+  import { conflictRoles } from './lib/conflicts.ts';
   import {
     ADDED,
     type Expansion,
@@ -150,6 +151,8 @@
   const STEP = 20;
   /** An image file's before and after, above its lines if it has any. */
   const IMG = 320;
+  /** The rule between the conflicted files and the rest, in the conflict view. */
+  const SEP = 34;
 
   // Which files are collapsed as generated, and their grammars, come from the settings: when those
   // change, the summary's fetched again and those two taken from it, in place (nothing else can change).
@@ -617,9 +620,15 @@
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) =>
     rendered[i] ? renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
+  /** The first file that isn't conflicted, after some that are (they come first): the rule goes above it; else -1. */
+  const merged = $derived.by(() => {
+    const k = files.findIndex((f) => !f.conflicted);
+    return k > 0 ? k : -1;
+  });
+  const sepAfter = (i: number) => (i === merged - 1 ? SEP : 0);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
-  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP));
-  const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP;
+  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP + sepAfter(i)));
+  const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP - sepAfter(i);
 
   /** [first, end) of the files overlapping the viewport plus overscan; the same array while they stay the same, as they do for most frames of scrolling. */
   let lastRange: [number, number] = [0, 0];
@@ -1636,6 +1645,16 @@
     ]);
   }
 
+  /** Each row's part in a conflict, in the conflict view (see lib/conflicts.ts). */
+  const roleCache = new WeakMap<FileRows, Uint8Array>();
+  function roleOf(rows: FileRows, r: number): number {
+    if (!onresolve) return 0;
+    let roles = roleCache.get(rows);
+    if (!roles) roleCache.set(rows, (roles = conflictRoles(rows)));
+    return roles[r];
+  }
+  const ROLE = ['', 'cf-mark', 'cf-ours', 'cf-base', 'cf-theirs'];
+
   // Conflict markers (in the conflict view): the sides named as their markers name them, e.g. HEAD and feature.
   const OPENS = /^<{7}(?: |$)/;
   const sideName = (marker: string, or: string) => marker.slice(8).trim() || or;
@@ -1706,6 +1725,11 @@
       {/if}
     </div>
     <div class="files" bind:this={filesEl} style:height="{Math.max(0, tops[files.length] - GAP)}px">
+      {#if merged > 0}
+        <div class="merged muted" style:top="{tops[merged] - SEP}px" role="separator" aria-label="Files without conflicts below">
+          <span>Merged</span>
+        </div>
+      {/if}
       {#each visible as i (i)}
         {@const f = files[i]}
         {@const state = fileState(f)}
@@ -1740,6 +1764,7 @@
               ondblclick={() => openFile(i)}
               >{#if f.oldPath}<span class="old">{f.oldPath}</span> <span class="muted">→</span>{' '}{/if}{f.path}</span
             >
+            {#if f.conflicted}<span use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if onstage && (f.unshown || mixed.has(f.path))}
@@ -1902,7 +1927,7 @@
                         {@const edit = editing?.i === i && editing.r === r ? editing : null}
                         {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
                         <div
-                          class="line {KIND[kind]}"
+                          class="line {KIND[kind]} {ROLE[roleOf(rows, r)]}"
                           class:sel={pick === 2}
                           class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
@@ -2066,6 +2091,31 @@
 
   .files {
     position: relative;
+  }
+
+  /* Between the conflicted files and the rest. */
+  .merged {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+
+  .merged::before,
+  .merged::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-strong);
+  }
+
+  .merged::before {
+    flex: 0 0 var(--sp-4);
   }
 
   .file {
@@ -2521,6 +2571,37 @@
   /* The lines a review thread is about: a bar just inside the code, joined across them. */
   .line.gh-range .code {
     background: linear-gradient(to right, transparent 2px, var(--theme2) 2px 5px, transparent 5px) no-repeat;
+  }
+
+  /* A conflict, in the conflict view: its markers in the warning colour, each side a tint of its own, over a
+     change's green; a strip down the gutter joins them. */
+  .line.cf-mark {
+    background: color-mix(in oklab, var(--warn) 30%, var(--code-bg));
+    font-weight: 600;
+  }
+
+  .line.cf-ours {
+    background: color-mix(in oklab, var(--info) 14%, var(--code-bg));
+  }
+
+  .line.cf-base {
+    background: color-mix(in oklab, var(--muted) 14%, var(--code-bg));
+  }
+
+  .line.cf-theirs {
+    background: color-mix(in oklab, var(--theme2) 14%, var(--code-bg));
+  }
+
+  .line:is(.cf-mark, .cf-ours, .cf-base, .cf-theirs) .gutter {
+    background: inherit;
+  }
+
+  .line:is(.cf-mark, .cf-ours, .cf-base, .cf-theirs) .blk {
+    box-shadow: inset 4px 0 0 var(--warn);
+  }
+
+  .line.cf-mark .mark {
+    color: var(--warn);
   }
 
   .away {
