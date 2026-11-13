@@ -194,6 +194,18 @@ test('edit several lines at once: two added lines become one', async () => {
   await assert.rejects(repo.editLine({ sha: head, path: 'f', line: 2, count: 0, text: 'x' }), /how many lines/);
 });
 
+test('delete lines of a commit, added or unchanged', async () => {
+  commit('base', { f: 'a\nb\nc' });
+  const c = commit('change', { f: 'a\nB\nnew\nc' });
+  const repo = await Repo.open(t.dir);
+  await repo.editLine({ sha: c, path: 'f', line: 3, text: null });
+  assert.equal(blob('HEAD', 'f'), 'a\nB\nc');
+  await repo.editLine({ sha: git('rev-parse', 'HEAD'), path: 'f', line: 1, count: 2, text: null });
+  assert.equal(blob('HEAD', 'f'), 'c');
+  await repo.editLine({ sha: git('rev-parse', 'HEAD'), path: 'f', line: 1, text: null });
+  assert.equal(blob('HEAD', 'f'), '');
+});
+
 test('editing an unchanged line makes the commit change it', async () => {
   commit('base', { f: 'a\nb\nc\n' });
   const c = commit('change', { f: 'a\nb\nc\nd\n' });

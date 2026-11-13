@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Editing lines in a diff: <kbd>⌘↩</kbd> adds a line below (indented like the one above), <kbd>⌘⇧K</kbd> deletes the caret's line, and deleting every line in the field takes them out of the commit. A line's menu also has **Insert line below** and **Delete line**.
 - Review comments on unchanged lines (just below a change, say) show in a rewritten commit's diff too, once the lines around them are shown.
 
 ## 0.23.0 — 2026-11-10

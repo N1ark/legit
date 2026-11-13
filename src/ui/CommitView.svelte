@@ -167,7 +167,7 @@
     }
   }
 
-  function editLine(path: string, line: number, text: string, count: number) {
+  function editLine(path: string, line: number, text: string | null, count: number) {
     return app.editDiff('editLine', { sha: commit.sha, path, line, text, count }, diffView?.position() ?? null);
   }
 

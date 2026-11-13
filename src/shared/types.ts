@@ -231,8 +231,8 @@ export interface EditLineRequest {
   line: number;
   /** Lines replaced, from `line` (1 by default). */
   count?: number;
-  /** What replaces them: the new text, as many lines as it has, separated by '\n'. */
-  text: string;
+  /** What replaces them: the new text, as many lines as it has, separated by '\n'; null deletes them. */
+  text: string | null;
 }
 
 export interface SquashRequest {

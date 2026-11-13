@@ -30,6 +30,7 @@
     Tag,
     Twisty,
     fixedRange,
+    matches,
     menu,
     offsets,
     persisted,
@@ -39,7 +40,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, TextIndentRegular, TrashRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -118,8 +119,8 @@
     onremove?: (selection: Selection) => void;
     /** Conflicts: keep one side (or both) of the conflict whose `<<<<<<<` is on new-side line `line` of `path`. */
     onresolve?: (path: string, line: number, side: 'ours' | 'theirs' | 'both') => void;
-    /** Replace `count` lines from line `line` of the commit's version of file `path` with `text` (lines separated by \n). */
-    oneditline?: (path: string, line: number, text: string, count: number) => Promise<boolean>;
+    /** Replace `count` lines from line `line` of the commit's version of file `path` with `text` (lines separated by \n; null deletes them). */
+    oneditline?: (path: string, line: number, text: string | null, count: number) => Promise<boolean>;
     /**
      * Uncommitted changes: `sel` is what's staged, and picking lines stages or unstages them at once
      * (`on`). Files' `mixed` lines show as neither until picked.
@@ -1349,6 +1350,54 @@
     caret = null;
   }
 
+  /** Edit row r with a new line after it, indented as it is, the caret on that one. */
+  function insertBelow(i: number, r: number) {
+    if (saving || !canEdit(i, r)) return;
+    const orig = lineText(i, r);
+    const text = `${orig}\n${/^[ \t]*/.exec(orig)![0]}`;
+    editing = { i, r, end: r, text, orig };
+    focusEditor = true;
+    caret = [text.length, text.length, 'none'];
+  }
+
+  /** Take row r's line out of the commit's version of the file. */
+  async function deleteLine(i: number, r: number) {
+    if (saving || !canEdit(i, r) || !oneditline) return;
+    saving = true;
+    try {
+      await oneditline(files[i].path, contents[i].n[r], null, 1);
+    } finally {
+      saving = false;
+    }
+  }
+
+  /** ⌘↩ in the field: a new line after the caret's, indented as it is. */
+  function newLineBelow(el: HTMLTextAreaElement) {
+    const v = el.value;
+    const at = el.selectionDirection === 'backward' ? el.selectionStart : el.selectionEnd;
+    const start = v.lastIndexOf('\n', at - 1) + 1;
+    const end = v.indexOf('\n', at) < 0 ? v.length : v.indexOf('\n', at);
+    el.setSelectionRange(end, end);
+    // As typed, so ⌘Z takes it back.
+    document.execCommand('insertText', false, `\n${/^[ \t]*/.exec(v.slice(start, end))![0]}`);
+  }
+
+  /** ⌘⇧K in the field: the lines the selection touches go; all of them deletes them from the file. */
+  function deleteFieldLines(el: HTMLTextAreaElement) {
+    const ed = editing;
+    if (!ed || saving) return;
+    const v = el.value;
+    const start = v.lastIndexOf('\n', el.selectionStart - 1) + 1;
+    const nl = v.indexOf('\n', Math.max(el.selectionStart, el.selectionEnd - 1));
+    if (start === 0 && nl < 0) return void saveEdit(null);
+    // The line break before them goes when they're the last ones, else the one after.
+    const [a, b] = nl < 0 ? [start - 1, v.length] : [start, nl + 1];
+    el.setSelectionRange(a, b);
+    document.execCommand('delete');
+    const at = el.value.lastIndexOf('\n', el.selectionStart - 1) + 1;
+    el.setSelectionRange(at, at);
+  }
+
   /** The commit's next line after row r of file i (`dir` 1) or before it (-1), when it can be edited; removed lines are passed over. */
   function nextLine(i: number, r: number, dir: 1 | -1): number {
     const rows = contents[i];
@@ -1406,9 +1455,10 @@
   }
   let moving = false;
 
-  async function saveEdit() {
+  /** Save the field (`text` null: delete its lines). */
+  async function saveEdit(text: string | null = editing?.text ?? null) {
     if (!editing || saving || !oneditline) return;
-    const { i, r, text, orig } = editing;
+    const { i, r, orig } = editing;
     if (text === orig) {
       editing = null;
       return;
@@ -1425,7 +1475,14 @@
     // The field's keys are its own (Esc mustn't also clear the picked lines, say).
     e.stopPropagation();
     if (e.isComposing) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+    const el = e.currentTarget as HTMLTextAreaElement;
+    if (matches('⌘↩', e)) {
+      e.preventDefault();
+      if (!saving) newLineBelow(el);
+    } else if (matches('⌘⇧K', e)) {
+      e.preventDefault();
+      deleteFieldLines(el);
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       saveEdit();
     } else if (e.key === 'Escape') {
@@ -1435,7 +1492,7 @@
       e.preventDefault();
       document.execCommand('insertText', false, '\t');
     } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (extendEdit(e, e.currentTarget as HTMLTextAreaElement)) e.preventDefault();
+      if (extendEdit(e, el)) e.preventDefault();
     }
   }
 
@@ -1476,7 +1533,14 @@
     return [
       ...(changeActions && ci >= 0 ? changeActions(f, mine, block) : []),
       commentEntry(i, r),
-      canEdit(i, r) && { label: 'Edit line', icon: PencilSimpleRegular, note: 'Or double-click it; ↑/↓ take in more lines', run: () => startEdit(i, r) },
+      canEdit(i, r) && {
+        label: 'Edit line',
+        icon: PencilSimpleRegular,
+        note: 'Or double-click it; ↑/↓ take in more lines, ⌘↩ adds one below, ⌘⇧K deletes one',
+        run: () => startEdit(i, r),
+      },
+      canEdit(i, r) && { label: 'Insert line below', icon: TextIndentRegular, run: () => insertBelow(i, r) },
+      canEdit(i, r) && { label: 'Delete line', icon: TrashRegular, note: 'From the commit', run: () => deleteLine(i, r) },
       !!onremove && !readonly && ci >= 0 && f.partial && {
         label: many
           ? `Remove ${count} picked changes from commit`
