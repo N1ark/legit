@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.0 — 2026-11-14
 
 - In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.
 - **Keep HEAD** and **Keep *feature*** are tinted like the side of the conflict they keep, in the diff and in the conflicted files' list.
