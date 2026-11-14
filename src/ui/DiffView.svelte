@@ -1957,9 +1957,9 @@
                             {#if s}
                               {@const at = rows.n[r]}
                               <span class="resolve" role="group" aria-label="Resolve this conflict"
-                                ><button use:tooltip={`Keep what's above =======, from ${s.ours}`} onclick={() => onresolve(f.path, at, 'ours')}
+                                ><button class="ours" use:tooltip={`Keep what's above =======, from ${s.ours}`} onclick={() => onresolve(f.path, at, 'ours')}
                                   >Keep {s.ours}</button
-                                ><button use:tooltip={`Keep what's below =======, from ${s.theirs}`} onclick={() => onresolve(f.path, at, 'theirs')}
+                                ><button class="theirs" use:tooltip={`Keep what's below =======, from ${s.theirs}`} onclick={() => onresolve(f.path, at, 'theirs')}
                                   >Keep {s.theirs}</button
                                 ><button use:tooltip={`Keep both: ${s.ours}'s, then ${s.theirs}'s`} onclick={() => onresolve(f.path, at, 'both')}>Keep both</button
                               ></span>
@@ -2331,6 +2331,15 @@
     cursor: default;
   }
 
+  /* Tinted as the side each keeps. */
+  .resolve button.ours {
+    background: var(--conflict-ours);
+  }
+
+  .resolve button.theirs {
+    background: var(--conflict-theirs);
+  }
+
   .resolve button:focus-visible {
     outline: 2px solid var(--theme2);
   }
@@ -2338,6 +2347,14 @@
   @media (hover: hover) {
     .resolve button:hover {
       background: var(--theme-soft);
+    }
+
+    .resolve button.ours:hover {
+      background: color-mix(in oklab, var(--info) 26%, var(--code-bg));
+    }
+
+    .resolve button.theirs:hover {
+      background: color-mix(in oklab, var(--theme2) 26%, var(--code-bg));
     }
   }
 
@@ -2576,20 +2593,20 @@
   /* A conflict, in the conflict view: its markers in the warning colour, each side a tint of its own, over a
      change's green; a strip down the gutter joins them. */
   .line.cf-mark {
-    background: color-mix(in oklab, var(--warn) 30%, var(--code-bg));
+    background: var(--conflict-mark);
     font-weight: 600;
   }
 
   .line.cf-ours {
-    background: color-mix(in oklab, var(--info) 14%, var(--code-bg));
+    background: var(--conflict-ours);
   }
 
   .line.cf-base {
-    background: color-mix(in oklab, var(--muted) 14%, var(--code-bg));
+    background: var(--conflict-base);
   }
 
   .line.cf-theirs {
-    background: color-mix(in oklab, var(--theme2) 14%, var(--code-bg));
+    background: var(--conflict-theirs);
   }
 
   .line:is(.cf-mark, .cf-ours, .cf-base, .cf-theirs) .gutter {

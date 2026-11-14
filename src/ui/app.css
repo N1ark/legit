@@ -2,6 +2,11 @@
 
 :root {
   --font-size: 13px;
+  /* A conflict's parts, in the conflict view: its markers, each side, and diff3's base. */
+  --conflict-mark: color-mix(in oklab, var(--warn) 30%, var(--code-bg));
+  --conflict-ours: color-mix(in oklab, var(--info) 14%, var(--code-bg));
+  --conflict-theirs: color-mix(in oklab, var(--theme2) 14%, var(--code-bg));
+  --conflict-base: color-mix(in oklab, var(--muted) 14%, var(--code-bg));
 }
 
 /* Tooltips that list things (files, a path and its status) put each on its own line. */

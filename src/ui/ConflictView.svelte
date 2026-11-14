@@ -183,10 +183,10 @@
               {#if f.sides}
                 {@const s = f.sides}
                 <span class="keep" role="group" aria-label="Resolve every conflict in {f.path}">
-                  <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'ours')} {@attach tip(`Keep what's above ======= in ${each(s.blocks)}, from ${s.ours}`)}
+                  <Button size="sm" variant="ghost" class="ours" disabled={app.busy} onclick={() => keep(f.path, null, 'ours')} {@attach tip(`Keep what's above ======= in ${each(s.blocks)}, from ${s.ours}`)}
                     ><span class="side">Keep {s.ours}</span></Button
                   >
-                  <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'theirs')} {@attach tip(`Keep what's below ======= in ${each(s.blocks)}, from ${s.theirs}`)}
+                  <Button size="sm" variant="ghost" class="theirs" disabled={app.busy} onclick={() => keep(f.path, null, 'theirs')} {@attach tip(`Keep what's below ======= in ${each(s.blocks)}, from ${s.theirs}`)}
                     ><span class="side">Keep {s.theirs}</span></Button
                   >
                   <Button size="sm" variant="ghost" disabled={app.busy} onclick={() => keep(f.path, null, 'both')} {@attach tip(`Keep both sides of ${each(s.blocks)}: ${s.ours}'s, then ${s.theirs}'s`)}
@@ -423,6 +423,25 @@
     min-width: 0;
     padding-left: var(--gap-4);
     border-left: 1px solid var(--border);
+  }
+
+  /* Tinted as the diff tints the side each keeps. */
+  .keep :global(.ours) {
+    background: var(--conflict-ours);
+  }
+
+  .keep :global(.theirs) {
+    background: var(--conflict-theirs);
+  }
+
+  @media (hover: hover) {
+    .keep :global(.ours:hover:not(:disabled)) {
+      background: color-mix(in oklab, var(--info) 26%, var(--code-bg));
+    }
+
+    .keep :global(.theirs:hover:not(:disabled)) {
+      background: color-mix(in oklab, var(--theme2) 26%, var(--code-bg));
+    }
   }
 
   .side {

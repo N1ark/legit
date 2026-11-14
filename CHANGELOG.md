@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Keep HEAD** and **Keep *feature*** are tinted like the side of the conflict they keep, in the diff and in the conflicted files' list.
 - JSON files can be shown rendered (the eye in their header): a tree of their values to open and close, the parts holding a change open from the start and changed entries washed green. Right-click an entry for **Expand all**, **Collapse all**, **Copy as JSON** and **Copy path**. Comments and trailing commas (`tsconfig.json`, say) are fine.
 - The conflict view's diff lists conflicted files first, tagged **conflicted**, with a **Merged** rule before the rest; the file tree beside it has a **Conflicted** tree above the rest's. Each conflict stands out: its markers in amber, HEAD's side tinted blue and the incoming side purple (diff3's base grey).
 - Editing lines in a diff: <kbd>⌘↩</kbd> adds a line below (indented like the one above), <kbd>⌘⇧K</kbd> deletes the caret's line, and deleting every line in the field takes them out of the commit. A line's menu also has **Insert line below** and **Delete line**.
@@ -53,7 +54,6 @@
 
 ## 0.18.0 — 2026-10-30
 
-- A rendered markdown file shows what the commit changed, as GitHub's rich diff does: added blocks green, removed ones red where they were, edited paragraphs, list items, table cells and code lines marked word by word or line by line. Only the changes show, with a little around them; the rest folds into gaps that open with the arrows, as in a code diff.
 - Switching a file between its diff and its rendered view keeps your place, and so do images loading or the window resizing while you read it.
 - Rendered files are much faster: they show the moment they're switched on, stay rendered at no cost as you go through commits, and never freeze the window, however big (markdown up to 1 MB, CSV and TSV up to 5 MB).
 
@@ -136,7 +136,6 @@
 - The branch list shows remote branches' pull requests too, and remote branches can be selected and deleted along with local ones. Deleting a remote branch that's already gone there removes it (kept under Recently deleted).
 - **P** shows the current branch's pull request from anywhere, and its title in the pull request card opens it.
 - Open a pull request's checks from its merge box and its commit list.
-- Review threads mark the lines they're about with a bar, and the pull request view fits a narrow pane.
 - ⇧-clicking a range of branches keeps the ⌘-clicked ones, as in Finder; a worktree is removed with two clicks on its bin, like other deletions.
 - Less text everywhere, with tooltips that show at once; the branch list shows only the current branch's upstream.
 - GitHub keeps working after the Mac sleeps or the network changes, without reloading: dropped connections are retried on fresh ones, the token is looked for again, and the branch's pull request comes back.
