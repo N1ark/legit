@@ -2,8 +2,9 @@
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
   // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
   // right-clicking a file or a folder opens its menu. Conflicted files have a tree of their own, above the rest.
+  // Once a row has the focus (clicked), ↑/↓ go to the file above or below instead of the next commit.
   import { Twisty, fixedRange, tooltip } from 'purr';
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
   import { type TreeRow, fileTree, treeRows } from './lib/tree.ts';
 
@@ -77,6 +78,26 @@
     if (to !== y) list.scrollTop = scrollTop = Math.max(0, Math.min(to, n * ROW + 2 * pad - h));
   });
 
+  /** ↑/↓ on a row: the file above or below it is picked, and takes the focus. */
+  async function onkeydown(e: KeyboardEvent) {
+    if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const at = Number((e.target as HTMLElement).closest<HTMLElement>('[data-k]')?.dataset.k ?? -1);
+    if (at < 0) return;
+    // The commit list's own ↑/↓ stay out of it, even with no file further on.
+    e.preventDefault();
+    e.stopPropagation();
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    let k = at + dir;
+    while (k >= 0 && k < rows.length && rows[k].kind !== 'file') k += dir;
+    const r = rows[k];
+    if (!r || r.kind !== 'file') return;
+    onpick(r.index);
+    // Scrolled into the mounted rows first, when it's past them.
+    if (k < shown[0] || k >= shown[1]) list.scrollTop = scrollTop = Math.max(0, pad + k * ROW - height / 2);
+    await tick();
+    list.querySelector<HTMLElement>(`[data-k="${k}"]`)?.focus({ preventScroll: true });
+  }
+
   const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
   const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed', R: 'renamed', C: 'copied' };
 
@@ -93,23 +114,29 @@
   bind:this={list}
   bind:clientHeight={height}
   role="tree"
+  tabindex="-1"
   aria-label="Changed files"
+  {onkeydown}
   onscroll={() => (scrollTop = list.scrollTop)}
 >
   <div bind:this={above} style:height="{shown[0] * ROW}px"></div>
-  {#each rows.slice(shown[0], shown[1]) as r (r.kind === 'label' ? `l:${r.group}` : r.kind === 'dir' ? `d:${r.group}${r.path}` : r.index)}
+  {#each rows.slice(shown[0], shown[1]) as r, j (r.kind === 'label' ? `l:${r.group}` : r.kind === 'dir' ? `d:${r.group}${r.path}` : r.index)}
     {#if r.kind === 'label'}
       <div class="label" class:conflicts={r.group} class:first={r.first} role="presentation">{r.text}</div>
     {:else if r.kind === 'dir'}
       {@const key = r.group + r.path}
       <button
         class="row dir"
+        data-k={shown[0] + j}
         style:--depth={r.depth}
         role="treeitem"
         aria-selected="false"
         aria-expanded={!collapsed[key]}
         use:tooltip={r.path}
-        onclick={() => (collapsed[key] = !collapsed[key])}
+        onclick={(e) => {
+          e.currentTarget.focus();
+          collapsed[key] = !collapsed[key];
+        }}
         oncontextmenu={ondirmenu && ((e) => ondirmenu(e, r.path))}
       >
         <Twisty open={!collapsed[key]} size={10} />
@@ -119,12 +146,17 @@
       {@const f = files[r.index]}
       <button
         class="row file"
+        data-k={shown[0] + j}
         class:is-current={r.index === current}
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
         use:tooltip={`${f.path}\n${f.conflicted ? 'conflicted, ' : ''}${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
-        onclick={() => onpick(r.index)}
+        onclick={(e) => {
+          // WebKit doesn't focus a clicked button: the arrows need it to.
+          e.currentTarget.focus();
+          onpick(r.index);
+        }}
         ondblclick={onopen && (() => onopen(r.index))}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >

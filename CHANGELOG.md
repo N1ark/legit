@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.
 - **Keep HEAD** and **Keep *feature*** are tinted like the side of the conflict they keep, in the diff and in the conflicted files' list.
 - JSON files can be shown rendered (the eye in their header): a tree of their values to open and close, the parts holding a change open from the start and changed entries washed green. Right-click an entry for **Expand all**, **Collapse all**, **Copy as JSON** and **Copy path**. Comments and trailing commas (`tsconfig.json`, say) are fine.
 - The conflict view's diff lists conflicted files first, tagged **conflicted**, with a **Merged** rule before the rest; the file tree beside it has a **Conflicted** tree above the rest's. Each conflict stands out: its markers in amber, HEAD's side tinted blue and the incoming side purple (diff3's base grey).
