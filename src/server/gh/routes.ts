@@ -11,6 +11,7 @@ import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
 import { reviewGet, reviewPost } from './review.ts';
+import { inboxGet } from './inbox.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
 import type { GithubRepoInfo } from '../../shared/types.ts';
 import type { Repo } from '../repo.ts';
@@ -57,6 +58,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...checksGet,
   ...prviewGet,
   ...reviewGet,
+  ...inboxGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,

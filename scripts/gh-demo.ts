@@ -41,6 +41,7 @@ commit('Fix a typo in the README (#9)', {
   'README.md': '# widgets\n\nWidgets, specified in `.widget` files.\n\n## Usage\n\n```sh\nwidgets build specs/\n```\n\nSee `docs/` for the format.\n',
 });
 git('push', '-q', '-u', 'origin', 'main');
+git('push', '-q', 'origin', 'HEAD:refs/pull/9/head');
 
 git('switch', '-q', '-c', 'feature/parser');
 commit('Add a tokenizer for widget specs', {
@@ -93,6 +94,7 @@ commit('Parse tokens into widget specs', {
   'src/build.ts': "import { readFileSync } from 'node:fs';\nimport { parse } from './parser.ts';\n\nexport function build(path: string): string {\n  const specs = parse(readFileSync(path, 'utf8'));\n  return JSON.stringify(specs, null, 2);\n}\n",
 });
 git('push', '-q', '-u', 'origin', 'feature/parser');
+git('push', '-q', 'origin', 'HEAD:refs/pull/12/head');
 
 git('switch', '-q', '-c', 'feature/parser-errors');
 commit('Report parse errors with line numbers', {
@@ -132,16 +134,34 @@ commit('Throw a ParseError on a missing brace', {
   ].join('\n'),
 });
 git('push', '-q', '-u', 'origin', 'feature/parser-errors');
+git('push', '-q', 'origin', 'HEAD:refs/pull/13/head');
 
 git('switch', '-q', '-c', 'feature/pretty-errors');
 commit('Pretty-print parse errors with the offending line', {
   'src/pretty.ts': "import type { ParseError } from './errors.ts';\n\nexport function pretty(e: ParseError, src: string): string {\n  const text = src.split('\\n')[e.line - 1] ?? '';\n  return `${e.message}\\n  ${e.line} | ${text}`;\n}\n",
 });
 git('push', '-q', '-u', 'origin', 'feature/pretty-errors');
+git('push', '-q', 'origin', 'HEAD:refs/pull/14/head');
 
 git('switch', '-q', '-c', 'feature/cache', 'main');
 commit('Cache built specs by file hash', {
   'src/cache.ts': "const cache = new Map<string, string>();\n\nexport function cached(key: string, make: () => string): string {\n  if (!cache.has(key)) cache.set(key, make());\n  return cache.get(key)!;\n}\n",
 });
+
+// Pull requests with no local branch: one on origin (#16), a fork's (#15) and a closed one (#10), only as refs/pull/N/head.
+git('switch', '-q', '-c', 'docs/format', 'main');
+commit('Document the widget spec format', {
+  'docs/format.md': '# The widget spec format\n\nA spec is a name and a block of `key: value;` pairs:\n\n```\nbutton {\n  label: 1;\n}\n```\n',
+});
+git('push', '-q', 'origin', 'docs/format', 'HEAD:refs/pull/16/head');
+git('switch', '-q', '-c', 'fix-crlf', 'main');
+commit('Handle CRLF line endings when building', {
+  'src/build.ts': "import { readFileSync } from 'node:fs';\n\nexport function build(path: string): string {\n  const text = readFileSync(path, 'utf8').replace(/\\r\\n/g, '\\n');\n  return text.trim();\n}\n",
+});
+git('push', '-q', 'origin', 'HEAD:refs/pull/15/head');
+git('switch', '-q', '-c', 'try/yaml', 'main');
+commit('Read specs from YAML too', { 'src/yaml.ts': "export const isYaml = (path: string) => path.endsWith('.widget.yaml');\n" });
+git('push', '-q', 'origin', 'HEAD:refs/pull/10/head');
 git('switch', '-q', 'feature/parser-errors');
+git('branch', '-q', '-D', 'docs/format', 'fix-crlf', 'try/yaml');
 console.log(`demo repo: ${dir}\nLEGIT_GITHUB_MOCK=1 node bin/legit.ts --dev --no-open --port 4321 ${dir}`);

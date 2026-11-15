@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The repository's pull requests, in GitHub's lists: **Review requested** (from you, or a team you're on), **Yours**, **Assigned** and **All open**, each with its author, head and base, review decision, checks and last update. Open it with <kbd>⇧P</kbd>, the pull requests button in the header (which counts the reviews waiting for you) or **Pull requests…** in the GitHub menu; type to filter, <kbd>⇥</kbd> for the next list, <kbd>↩</kbd> to open one's overview. `#123`, `123` or a pull request's URL opens any one, closed or merged too.
+
 ## 0.24.0 — 2026-11-14
 
 - In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.
