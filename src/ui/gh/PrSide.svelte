@@ -12,6 +12,8 @@
   import PickMany, { type Choice } from './PickMany.svelte';
   import RefIcon from './RefIcon.svelte';
   import { refStateWords } from '../lib/gh-links.ts';
+  import { addClosing, removeClosing } from '../lib/closing.ts';
+  import type { IssueRef } from '../../shared/gh-issues.ts';
   import ReviewerActions from './ReviewerActions.svelte';
 
   interface Props {
@@ -25,7 +27,7 @@
   const open = $derived(isLive(pr.state));
   /** `owner/name`, to name another repository's issues in full. */
   const here = $derived(pr.url.split('/').slice(3, 5).join('/').toLowerCase());
-  const CLOSES_TIP = 'Write “Closes #N” in the description to link an issue';
+  const CLOSES_TIP = 'Issues named by “Closes #N” in the description: linking one adds that line, unlinking takes it out';
 
   const REVIEW: Record<PrReviewer['state'], { icon: GlyphComponent; color: string }> = {
     approved: { icon: CheckCircleFill, color: 'var(--success)' },
@@ -113,6 +115,37 @@
         found.push(...more.map((c) => ({ login: c.key, avatar: c.avatar ?? '' })));
         return more;
       },
+    };
+  }
+
+  /** Issues to link: recent open ones, or those matching what's typed (pull requests left out). */
+  const issues = (q: string) =>
+    ghRequest<IssueRef[]>('issuesSearch', { q }).then((list) =>
+      list.filter((i) => !i.isPullRequest).map((i): Choice => ({ key: `${i.repo}#${i.number}`, label: `#${i.number} ${i.title}`, description: refStateWords(i) })),
+    );
+
+  async function pickIssues(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
+    if (picking) return picker?.close();
+    const anchor = e.currentTarget;
+    const now = pr.closes.map((i) => `${i.repo}#${i.number}`);
+    const linked = pr.closes.map((i): Choice => ({ key: `${i.repo}#${i.number}`, label: `${i.repo.toLowerCase() === here ? '' : i.repo}#${i.number} ${i.title}` }));
+    const recent = await issues('').catch(() => [] as Choice[]);
+    picking = {
+      anchor,
+      title: 'Link issues this pull request closes',
+      choices: [...linked, ...recent.filter((c) => !now.includes(c.key))],
+      chosen: now,
+      apply: (keys) => {
+        const ref = (k: string) => {
+          const [repo, n] = k.split('#');
+          return [repo, Number(n)] as const;
+        };
+        let body = pr.body;
+        for (const k of now.filter((k) => !keys.includes(k))) body = removeClosing(body, ...ref(k), here);
+        for (const k of keys.filter((k) => !now.includes(k))) body = addClosing(body, ...ref(k), here);
+        if (body !== pr.body) act('prviewEdit', { body }, 'Linked issues updated in the description');
+      },
+      search: issues,
     };
   }
 
@@ -254,6 +287,9 @@
     <header>
       <h3>Closes</h3>
       <button class="info muted" aria-label={CLOSES_TIP} use:tooltip={CLOSES_TIP}><InfoRegular /></button>
+      {#if pr.canUpdate}
+        <IconButton label="Link issues" size="sm" disabled={working} onclick={pickIssues}><GearRegular /></IconButton>
+      {/if}
     </header>
     {#if pr.closes.length}
       <ul>
