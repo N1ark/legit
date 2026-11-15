@@ -29,6 +29,8 @@ const FIXTURES: Fixture[] = [
   },
   { job: 'test', failed: true, path: 'test/parser.test.ts', line: 42, level: 'failure', title: 'parser > reports the line of a missing brace', message: "AssertionError: expected 'line 1' to be 'line 3'" },
   { job: 'lint', path: 'src/parser.ts', find: 'type Token', level: 'warning', title: '@typescript-eslint/no-unused-vars', message: "'Token' is defined but never used." },
+  // Between the diff's hunks: only seen by expanding the lines there.
+  { job: 'lint', path: 'src/parser.ts', find: 'let i = 0;', level: 'warning', title: 'prefer-const', message: "'i' is reassigned, but a for loop would scope it." },
   {
     job: 'lint', path: 'src/parser.ts', find: "while (tokens[i] && tokens[i].text !== '}')", span: 5, level: 'notice', title: 'complexity',
     message: 'This loop takes four tokens per property without looking at them: a missing `:` or `;` shifts every property after it.',

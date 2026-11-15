@@ -57,6 +57,7 @@
   import { addedLines, renderSide, renderedDiff, renderedPaths } from './lib/rendered.ts';
   import { DocDiff, type Fold } from './lib/md-diff.ts';
   import Annotation from './gh/Annotation.svelte';
+  import type { Annotation as CiNote } from '../shared/gh-files.ts';
   import Composer from './gh/Composer.svelte';
   import FileMarks from './gh/FileMarks.svelte';
   import ReviewProgress from './gh/ReviewProgress.svelte';
@@ -401,6 +402,15 @@
 
   // A file's threads that have no line here, listed from its header.
   let away = $state<{ i: number; el: HTMLElement } | null>(null);
+  // Likewise its CI annotations on lines it doesn't show.
+  let notesAway = $state<{ i: number; el: HTMLElement } | null>(null);
+  const awayNotes = (i: number) => (track && contents[i] ? track.place(files[i].path, contents[i]).elsewhere : []);
+
+  async function showNote(i: number, note: CiNote) {
+    notesAway = null;
+    if (await showLine(i, note.startLine)) reviews.focus = { id: `note:${note.key}`, path: files[i].path };
+    else toast(`Line ${note.startLine} of ${files[i].path} isn't in this diff's version of the file.`);
+  }
   function openAway(i: number) {
     const el = filesEl?.querySelector<HTMLElement>(`[data-away="${i}"]`);
     if (el) away = { i, el };
@@ -488,6 +498,11 @@
   // rows (v), not the FileRows' (r), which everything else keeps working in: vrow() goes from one to the other.
   const SIDE_GUTTER = 62;
   /** About 22 columns of code a side: narrower, it stays one above the other, and the switch says so. */
+  /** A hunk header (`@@ -12,12 +13,14 @@ fn`) as one half of a side-by-side row shows it: that side's lines, and the context. */
+  const halfHeader = (text: string, half: 'old' | 'new') => {
+    const m = /^@@ -(\S+) \+(\S+) @@ ?(.*)$/.exec(text);
+    return m ? `@@ ${half === 'old' ? `-${m[1]}` : `+${m[2]}`} @@ ${m[3]}`.trimEnd() : text;
+  };
   const SIDE_MIN = 520;
   const tooNarrow = $derived(sideBySide.value && !onresolve && (paneWidth || knownPaneWidth) < SIDE_MIN);
   const wantSide = $derived(sideBySide.value && !onresolve && !editing && !tooNarrow);
@@ -826,8 +841,11 @@
     return k > 0 ? k : -1;
   });
   const sepAfter = (i: number) => (i === merged - 1 ? SEP : 0);
+  /** Under "Files you own", the files the viewer doesn't own are left out of the diff as of the tree. */
+  const ownedOnly = $derived(!!track && tracking.ownedOnly && track.ownsAny(paths) > 0);
+  const shown = (i: number) => !ownedOnly || !!track?.mine(files[i].path);
   /** tops[i] = y of file i; tops[n] = total height (plus one trailing gap). */
-  const tops = $derived(offsets(files.length, (i) => HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP + sepAfter(i)));
+  const tops = $derived(offsets(files.length, (i) => (shown(i) ? HEAD + (collapsed[i] ? 0 : bodyHeight(i)) + GAP + sepAfter(i) : 0)));
   const fileHeight = (i: number) => tops[i + 1] - tops[i] - GAP - sepAfter(i);
 
   /** [first, end) of the files overlapping the viewport plus overscan; the same array while they stay the same, as they do for most frames of scrolling. */
@@ -1075,6 +1093,35 @@
     replaceRows(i, build(i, before.hunks));
   }
 
+  /** Show new line `n` of file i where it's hidden between hunks (all of that gap); false when no gap here has it. */
+  async function showLine(i: number, n: number): Promise<boolean> {
+    const x = (expansions[i] ??= noExpansion());
+    if (!x.file) {
+      try {
+        x.file = await app.oldLines(summary.sha, i);
+      } catch (e) {
+        toast.error(e);
+        return false;
+      }
+      if (!alive) return false;
+    }
+    const rows = build(i, contents[i].hunks);
+    for (let r = 0; r < rows.kind.length; r++) {
+      const k = rows.gap[r];
+      if (!isHead(rows.kind[r]) || k < 0) continue;
+      const before = r > 0 && !isHead(rows.kind[r - 1]) ? rows.n[r - 1] : 0;
+      const after = r + 1 < rows.kind.length && !isHead(rows.kind[r + 1]) ? rows.n[r + 1] : Infinity;
+      if (n <= before || n >= after) continue;
+      const left = rows.hidden[k] ?? 0;
+      if (!left) return false;
+      const s = k === 0 ? 'bottom' : 'top';
+      x[s][k] = (x[s][k] ?? 0) + left;
+      replaceRows(i, build(i, contents[i].hunks));
+      return true;
+    }
+    return false;
+  }
+
   /** File i shown as `rows` now: lines keep their highlighting (and the line being edited stays so) where they moved to. */
   function replaceRows(i: number, rows: FileRows) {
     const before = contents[i];
@@ -1108,6 +1155,12 @@
       }
       keepHeld();
     });
+  });
+
+  // "Files you own" on or off: the file at the top of the view stays there (the next shown, if it's left out).
+  $effect(() => {
+    void ownedOnly;
+    untrack(keepHeld);
   });
 
   // ⌘F: matches of the find bar's query in every file's lines, collapsed files included (all
@@ -1966,7 +2019,7 @@
       <div class="summary muted" bind:clientHeight={summaryHeight}>
         <div class="stats">
           <div class="stat">
-            <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
+            <span>{ownedOnly ? `${files.filter((_, i) => shown(i)).length} of ` : ''}{files.length} {files.length === 1 ? 'file' : 'files'}</span>
             <span class="add">+{totals.a}</span>
             <span class="del">−{totals.r}</span>
             {#if generatedCount}
@@ -2012,7 +2065,7 @@
             ondirmenu={openDirMenu}
             mark={review ? treeMark : undefined}
             onthreads={showThreads}
-            only={track && tracking.ownedOnly && track.ownsAny(paths) ? (i) => !!track?.mine(files[i].path) : null}
+            only={ownedOnly ? shown : null}
             bind:natural={treeNatural}
           />
         </nav>
@@ -2034,7 +2087,7 @@
           <span>Merged</span>
         </div>
       {/if}
-      {#each visible as i (i)}
+      {#each visible.filter(shown) as i (i)}
         {@const f = files[i]}
         {@const state = fileState(f)}
         {@const rows = contents[i]}
@@ -2096,6 +2149,16 @@
                   color="var(--theme2)"
                   label="{n} {n === 1 ? 'comment' : 'comments'} off the diff"
                   onclick={(e) => (away = { i, el: e.currentTarget as HTMLElement })}
+                />
+              </span>
+            {/if}
+            {#if awayNotes(i).length}
+              {@const n = awayNotes(i).length}
+              <span class="away tg" use:tooltip={"CI annotations on this file's lines that its diff doesn't show"}>
+                <Tag
+                  color="var(--warn)"
+                  label="{n} {n === 1 ? 'annotation' : 'annotations'} off the diff"
+                  onclick={(e) => (notesAway = { i, el: e.currentTarget as HTMLElement })}
                 />
               </span>
             {/if}
@@ -2288,7 +2351,7 @@
   </div>
 </div>
 
-{#snippet hunkRow(i: number, rows: FileRows, r: number)}
+{#snippet hunkRow(i: number, rows: FileRows, r: number, half?: 'old' | 'new')}
   {@const k = rows.gap[r]}
   {@const left = k >= 0 ? rows.hidden[k] : 0}
   {@const tail = rows.kind[r] === TAIL}
@@ -2315,7 +2378,7 @@
           disabled={opening[i]}
           onclick={() => expand(i, k, 'top')}><ArrowsOutLineVerticalRegular size={12} /></button
         >{/if}</span
-    ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
+    ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : half ? halfHeader(rows.text[r], half) : rows.text[r]}</span>
   </div>
 {/snippet}
 
@@ -2366,7 +2429,9 @@
           {#if r < 0}
             <div class="line filler" style:height></div>
           {:else if isHead(rows.kind[r])}
-            {#if h === 0}{@render hunkRow(i, rows, r)}{:else}<div class="hunk" class:tail={rows.kind[r] === TAIL} data-r={r}></div>{/if}
+            {#if h === 0}{@render hunkRow(i, rows, r, 'old')}{:else}<div class="hunk" class:tail={rows.kind[r] === TAIL} data-r={r}>
+                <span class="gutter xp"></span><span class="code">{rows.kind[r] === TAIL ? '' : halfHeader(rows.text[r], 'new')}</span>
+              </div>{/if}
           {:else}
             {@const kind = rows.kind[r]}
             {@const ci = rows.ci[r]}
@@ -2426,7 +2491,35 @@
   </Popover>
 {/if}
 
+{#if notesAway}
+  {@const i = notesAway.i}
+  <Popover
+    anchor={notesAway.el}
+    label="CI annotations not on a line shown"
+    onclose={() => (notesAway = null)}
+    width="min(600px, calc(100vw - 32px))"
+    maxHeight="70vh"
+    padding="var(--sp-4)"
+  >
+    <div class="away-list">
+      {#each awayNotes(i) as note (note.key)}
+        <div class="away-note">
+          <Annotation {note} />
+          <Button size="sm" variant="ghost" onclick={() => showNote(i, note)}>Show line {note.startLine}</Button>
+        </div>
+      {/each}
+    </div>
+  </Popover>
+{/if}
+
 <style>
+  .away-note {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--gap-2);
+  }
+
   .diff {
     padding: var(--sp-4) var(--sp-5) calc(var(--sp-5) + var(--sp-4));
     container-type: inline-size;
