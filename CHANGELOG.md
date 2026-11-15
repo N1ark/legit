@@ -5,6 +5,7 @@
 - Assign people to a pull request from its overview, picked as labels are (tick several, applied together when the picker closes), or **assign yourself** when no one is. Assigning shows in the conversation.
 - A pull request's overview shows its milestone, how far along it is and when it's due; set or clear it from the side panel.
 - The overview's side panel lists the issues a pull request will close, open or closed; click one to open it on GitHub. “Closes #N” in the description links one.
+- Diffs can be shown side by side (**Side by side** above the diff, or <kbd>S</kbd>): old lines on the left, new ones on the right, each removed line beside the line it became with its changed words marked. Picking lines, commenting, review threads, ⌘F, wrapping and showing more lines between changes all work there; editing a line goes back to one above the other while you edit, and a narrow window always shows it so.
 
 ## 0.24.0 — 2026-11-14
 

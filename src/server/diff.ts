@@ -7,6 +7,7 @@ import { CONTEXT_LINES, expandable, moreAfter } from '../shared/context.ts';
 import { comparePaths } from '../shared/paths.ts';
 import type { CommitDiff, DiffLine, DiffSummary, FileDiff, FileLines, HunkData, Hunk } from '../shared/types.ts';
 import { imageType } from '../shared/files.ts';
+import { pairedRows } from '../shared/side-by-side.ts';
 import { whitespacePairs } from '../shared/whitespace.ts';
 import { type Git, GitError, toUtf8 } from './git.ts';
 
@@ -126,9 +127,16 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
       let rows = 0;
       let width = 0;
       let ws = 0;
+      let paired = 0;
+      let pairedWs = 0;
       for (const h of hunks) {
         rows += h.lines.length + 1;
-        ws += whitespacePairs(h.lines.map((l) => l.t).join(''), h.lines.map((l) => l.s), (k) => !!h.lines[k].eof).size;
+        const types = h.lines.map((l) => l.t).join('');
+        const text = h.lines.map((l) => l.s);
+        const pairs = whitespacePairs(types, text, (k) => !!h.lines[k].eof);
+        ws += pairs.size;
+        paired += pairedRows(types, text);
+        pairedWs += pairedRows(types, text, pairs);
         for (const l of h.lines) {
           let w = l.s.length;
           for (let k = l.s.indexOf('\t'); k >= 0; k = l.s.indexOf('\t', k + 1)) w += 3;
@@ -141,7 +149,7 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
       }
       const { token: _, ...rest } = f;
       const grammar = syntax.get(f.path);
-      return { ...rest, path: toUtf8(f.path), ...(f.oldPath === undefined ? {} : { oldPath: toUtf8(f.oldPath) }), rows, width, ws, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
+      return { ...rest, path: toUtf8(f.path), ...(f.oldPath === undefined ? {} : { oldPath: toUtf8(f.oldPath) }), rows, width, ws, paired, pairedWs, generated: generated.has(f.path), ...(grammar ? { syntax: grammar } : {}) };
     }),
   };
 }

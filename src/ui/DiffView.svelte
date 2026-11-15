@@ -56,7 +56,7 @@
   import Thread from './gh/Thread.svelte';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
-  import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
+  import { type DiffPosition, app, hideWhitespace, highlightKey, sideBySide } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
@@ -88,6 +88,7 @@
     shownRanges,
   } from './lib/rows.ts';
   import { type Anchor, type Knot, anchorAt, readKnots, rowAnchor, rowOfAnchor, yOf } from './lib/place.ts';
+  import { type SideBySide, rowOn, sideBlocks, sideOffsets, sideWords, sideBySide as pairSides } from './lib/side-by-side.ts';
 
   let {
     summary,
@@ -237,8 +238,22 @@
     for (const [k, v] of Object.entries(placedThreads)) if (v.blocks.length) out[+k] = layOut(v.blocks, blockHeight);
     return out;
   });
+  /** The same, under the rows side by side that show their rows. */
+  const sideLayout = $derived.by(() => {
+    const out: Record<number, BlockLayout<Block>> = {};
+    for (const [k, a] of Object.entries(blockLayout)) {
+      const s = sbs(+k);
+      if (s) out[+k] = layOut(sideBlocks([...a.byRow.values()].flat(), s), blockHeight);
+    }
+    return out;
+  });
+  /** File i's blocks, under its rows as they show. */
+  const blocksOf = (i: number): BlockLayout<Block> | undefined => (side ? sideLayout[i] : blockLayout[i]);
   /** Height of file i's blocks under the rows before row r. */
-  const blocksAbove = (i: number, r: number) => (blockLayout[i] ? heightAbove(blockLayout[i], r) : 0);
+  const blocksAbove = (i: number, r: number) => {
+    const a = blocksOf(i);
+    return a ? heightAbove(a, r) : 0;
+  };
 
   function measureBlock(b: Block) {
     return (el: HTMLElement) => {
@@ -275,10 +290,11 @@
         if (placed.elsewhere.some((t) => t.id === f.id)) tick().then(() => openAway(i));
         return;
       }
-      const same = blockLayout[i]?.byRow.get(b.row) ?? [];
-      let y = tops[i] + HEAD + lead(i) + rowY(i, b.row) + rowSpan(i, b.row) * ROW;
+      const v = vrow(i, b.row);
+      const same = blocksOf(i)?.byRow.get(v) ?? [];
+      let y = tops[i] + HEAD + lead(i) + rowY(i, v) + rowSpan(i, v) * ROW;
       for (const x of same) {
-        if (x === b) break;
+        if (x.key === b.key) break;
         y += blockHeight(x);
       }
       if (y < view.top + HEAD || y + Math.min(blockHeight(b), (view.bottom - view.top) / 2) > view.bottom) {
@@ -352,15 +368,70 @@
     editing ? editing.text.split('\n').reduce((n, l) => n + wrappedRows(l, cols), 0) : 1,
   );
 
-  /** File i's rows: the summary's count until its contents (and any lines shown between hunks) are in. */
-  const rowCount = (i: number) => contents[i]?.kind.length ?? files[i].rows - (hideWhitespace.value ? files[i].ws : 0);
+  // Side by side (the setting, where the diff is wide enough, and not while a line's edited): lib/side-by-side.ts
+  // pairs each file's rows, drawn in two columns that scroll sideways apart. The geometry below is then in those
+  // rows (v), not the FileRows' (r), which everything else keeps working in: vrow() goes from one to the other.
+  const SIDE_GUTTER = 62;
+  const SIDE_MIN = 760;
+  const wantSide = $derived(sideBySide.value && !onresolve && !editing && (paneWidth || knownPaneWidth) >= SIDE_MIN);
+  let side = $state(untrack(() => wantSide));
+  const sideCache = new WeakMap<FileRows, SideBySide>();
+  /** File i's rows side by side, when they show so. */
+  function sbs(i: number): SideBySide | null {
+    const rows = contents[i];
+    if (!side || !rows) return null;
+    let s = sideCache.get(rows);
+    if (!s) sideCache.set(rows, (s = pairSides(rows)));
+    return s;
+  }
+  /** The row in view of file i's row r: itself, or the row side by side it's on. */
+  function vrow(i: number, r: number): number {
+    const s = sbs(i);
+    return !s ? r : r < s.at.length ? s.at[r] : s.left.length;
+  }
+  /** Columns each side wraps at, side by side. */
+  const sideCols = $derived.by(() => {
+    const { wrap, wrapColumn } = app.display;
+    if (wrap === 'none' || !charWidth || !paneWidth) return 0;
+    const fit = Math.max(20, Math.floor((paneWidth / 2 - SIDE_GUTTER - 20) / charWidth) - 1);
+    return wrap === 'column' ? Math.min(wrapColumn, fit) : fit;
+  });
+
+  $effect(() => {
+    const want = wantSide;
+    if (want !== untrack(() => side)) untrack(() => setSide(want));
+  });
+
+  /** Show the files side by side or not, the line at the top of the view staying there. */
+  function setSide(on: boolean) {
+    const k = held?.k ?? -1;
+    const y = k >= 0 ? view.top - tops[k] - HEAD - lead(k) : -1;
+    const at = y >= 0 && contents[k] && !rendered[k] && !collapsed[k] && y < linesHeight(k) ? rowAtY(k, y) : null;
+    hoverBlock = null;
+    side = on;
+    tick().then(() => {
+      if (!alive || !scroller) return;
+      if (!at) return keepHeld();
+      scroller.scrollTop += tops[k] + HEAD + lead(k) + yOfRow(k, at.r, at.frac) - view.top;
+      measure();
+    });
+  }
+
+  /** File i's rows (side by side, pairs of them): the summary's count until its contents (and any lines shown between hunks) are in. */
+  function rowCount(i: number): number {
+    const rows = contents[i];
+    if (rows) return sbs(i)?.left.length ?? rows.kind.length;
+    const f = files[i];
+    return f.rows - (hideWhitespace.value ? f.ws + (side ? f.pairedWs : 0) : side ? f.paired : 0);
+  }
   /** Where each of file i's rows starts, in rows, when some of its lines wrap; null when none can. */
-  const wrapCache = new WeakMap<FileRows, { cols: number; at: Uint32Array }>();
+  const wrapCache = new WeakMap<FileRows, { cols: number; side: boolean; at: Uint32Array }>();
   function wrapped(i: number): Uint32Array | null {
     const rows = contents[i];
-    if (!cols || !rows || files[i].width <= cols) return null;
+    const c = side ? sideCols : cols;
+    if (!c || !rows || files[i].width <= c) return null;
     let w = wrapCache.get(rows);
-    if (w?.cols !== cols) wrapCache.set(rows, (w = { cols, at: wrappedOffsets(rows, cols) }));
+    if (w?.cols !== c || w.side !== side) wrapCache.set(rows, (w = { cols: c, side, at: side ? sideOffsets(rows, sbs(i)!, c) : wrappedOffsets(rows, c) }));
     return w.at;
   }
   /** Rows of file i's lines a..b take, as they show when not edited. */
@@ -382,6 +453,19 @@
     const y = (at ? at[r] : r) * ROW + blocksAbove(i, r);
     if (editing?.i !== i || editing.r >= r) return y;
     return y + (editRows - plainSpan(i, editing.r, Math.min(r - 1, editing.end))) * ROW;
+  }
+  /** File i's row (of its FileRows) `y` px into its lines, and how far down it; past the end, the count. */
+  function rowAtY(i: number, y: number): { r: number; frac: number } {
+    const n = rowCount(i);
+    const [v] = rowsIn(n, (k) => rowY(i, k), y, y + 1);
+    if (v >= n) return { r: contents[i].kind.length, frac: 0 };
+    const s = sbs(i);
+    return { r: s ? rowOn(s, v) : v, frac: (y - rowY(i, v)) / (rowSpan(i, v) * ROW) };
+  }
+  /** Y in file i's lines of its row r, `frac` of the way down it. */
+  function yOfRow(i: number, r: number, frac = 0): number {
+    const v = vrow(i, r);
+    return rowY(i, v) + frac * rowSpan(i, v) * ROW;
   }
   // Markdown and CSV files can be shown rendered instead of as lines (the button in their header).
   // A rendered file is as tall as it was laid out, measured as it shows (and as it changes: images
@@ -514,9 +598,8 @@
     }
     const rows = contents[i];
     if (!rows) return null;
-    const y = above - lead(i);
-    const [r] = rowsIn(rows.kind.length, (k) => rowY(i, k), y, y + 1);
-    return rowAnchor(rows, r, r < rows.kind.length ? (y - rowY(i, r)) / (rowSpan(i, r) * ROW) : 0, renderSide(files[i]) ?? 'new');
+    const { r, frac } = rowAtY(i, above - lead(i));
+    return rowAnchor(rows, r, frac, renderSide(files[i]) ?? 'new');
   }
 
   /** Scroll place `at` of file i to the top of the view, as file i shows now; false when it can't be found yet. */
@@ -534,7 +617,7 @@
       const rows = contents[i];
       if (!rows) return false;
       const { r, frac } = rowOfAnchor(rows, at, renderSide(files[i]) ?? 'new');
-      y = lead(i) + rowY(i, r) + frac * rowSpan(i, r) * ROW;
+      y = lead(i) + yOfRow(i, r, frac);
     }
     const drift = tops[i] + y - view.top;
     if (Math.abs(drift) >= 0.5) {
@@ -643,7 +726,7 @@
     const y = tops[i] + HEAD + lead(i);
     // Rows of varying height are searched for, not listed: this runs for every frame of scrolling.
     const [a, b] =
-      blockLayout[i] || wrapped(i)
+      blocksOf(i) || wrapped(i)
         ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - OVERSCAN - y, view.bottom + OVERSCAN - y)
         : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
     const out: number[] = [];
@@ -944,14 +1027,17 @@
   };
   const hitNow = $derived(found[finder.currentIn(source)] ?? null);
 
-  // Words changed within a line, worked out as its rows are shown.
+  // Words changed within a line, worked out as its rows are shown (side by side, against the line beside it).
   const words = new WeakMap<FileRows, (r: number) => number[] | null>();
+  const sideWordsOf = new WeakMap<FileRows, (r: number) => number[] | null>();
 
   /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`, at `at`); null when it's plain text. */
   function lineSegments(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
     const text = rows.text[r];
-    let diff = words.get(rows);
-    if (!diff) words.set(rows, (diff = wordDiff(rows)));
+    const s = sbs(i);
+    const cache = s ? sideWordsOf : words;
+    let diff = cache.get(rows);
+    if (!diff) cache.set(rows, (diff = s ? sideWords(rows, s) : wordDiff(rows)));
     const changed = diff(r);
     if (!tok && !changed && !at) return null;
     const segs: { t: string; c: string; w?: boolean; m?: number }[] = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
@@ -1032,7 +1118,7 @@
       collapsed[m.i] = false;
       flushSync();
     }
-    const y = tops[m.i] + HEAD + lead(m.i) + rowY(m.i, m.r);
+    const y = tops[m.i] + HEAD + lead(m.i) + yOfRow(m.i, m.r);
     if (y < view.top + HEAD + ROW || y > view.bottom - 2 * ROW) {
       scroller.scrollTop += y - view.top - (view.bottom - view.top) / 3;
       measure();
@@ -1093,8 +1179,8 @@
     if (rows?.kind.length) {
       const y = view.top - tops[at] - HEAD - lead(at);
       if (y >= 0) {
-        const [r] = rowsIn(rows.kind.length, (k) => rowY(at, k), y, y + 1);
-        if (r < rows.kind.length) row = rowPlace(rows, r, (y - rowY(at, r)) / (rowSpan(at, r) * ROW));
+        const { r, frac } = rowAtY(at, y);
+        if (r < rows.kind.length) row = rowPlace(rows, r, frac);
       }
     }
     return {
@@ -1121,7 +1207,7 @@
     if (!rows) return;
     flushSync();
     const { r, frac } = rowOfPlace(rows, p.row);
-    const y = tops[p.i] + HEAD + lead(p.i) + rowY(p.i, r) + frac * rowSpan(p.i, r) * ROW;
+    const y = tops[p.i] + HEAD + lead(p.i) + yOfRow(p.i, r, frac);
     if (Math.abs(y - view.top) >= 0.5) {
       scroller.scrollTop += y - view.top;
       measure();
@@ -1353,6 +1439,7 @@
 
   function startEdit(i: number, r: number) {
     if (saving || !canEdit(i, r)) return;
+    if (side) setSide(false);
     const text = lineText(i, r);
     editing = { i, r, end: r, text, orig: text };
     focusEditor = true;
@@ -1362,6 +1449,7 @@
   /** Edit row r with a new line after it, indented as it is, the caret on that one. */
   function insertBelow(i: number, r: number) {
     if (saving || !canEdit(i, r)) return;
+    if (side) setSide(false);
     const orig = lineText(i, r);
     const text = `${orig}\n${/^[ \t]*/.exec(orig)![0]}`;
     editing = { i, r, end: r, text, orig };
@@ -1706,6 +1794,19 @@
               <span>· {totals.ws} whitespace-only</span>
             {/if}
           </div>
+          {#if !onresolve}
+            <div class="line">
+              <label
+                class="ws"
+                use:tooltip={sideBySide.value && !side && !editing
+                  ? 'The diff is too narrow to show side by side, so it shows one above the other (S)'
+                  : 'Old lines on the left, new ones on the right (S)'}
+              >
+                <Switch label="Side by side" bind:checked={sideBySide.value} />
+                Side by side
+              </label>
+            </div>
+          {/if}
         </div>
       </div>
       {#if showTree}
@@ -1869,8 +1970,10 @@
                   : f.oldMode === f.newMode ? 'Empty file' : `Mode ${f.oldMode} → ${f.newMode}`}
               </div>
             {:else if f.rows}
-              <div class="body" class:loading={!rows} style:height="{linesHeight(i)}px">
-                {#if rows}
+              <div class="body" class:loading={!rows} class:sbs={side} style:height="{linesHeight(i)}px">
+                {#if rows && side}
+                  {@render sideRows(i, rows, tok, fileHits)}
+                {:else if rows}
                   {@const shown = rowRange(i)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
@@ -1893,34 +1996,7 @@
                     {/each}
                     {#each shown as r (r)}
                       {#if isHead(rows.kind[r])}
-                        {@const k = rows.gap[r]}
-                        {@const left = k >= 0 ? rows.hidden[k] : 0}
-                        {@const tail = rows.kind[r] === TAIL}
-                        <div class="hunk" class:tail data-r={r}>
-                          <span class="gutter xp"
-                            >{#if left === null || (left > STEP && tail)}<button
-                                use:tooltip={`Show ${STEP} more lines`}
-                                aria-label="Show {STEP} more lines"
-                                disabled={opening[i]}
-                                onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
-                              >{:else if left > STEP}{#if k > 0}<button
-                                  use:tooltip={`Show ${STEP} more lines below the hunk above`}
-                                  aria-label="Show {STEP} more lines below the hunk above"
-                                  disabled={opening[i]}
-                                  onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
-                                >{/if}<button
-                                use:tooltip={`Show ${STEP} more lines above`}
-                                aria-label="Show {STEP} more lines above"
-                                disabled={opening[i]}
-                                onclick={() => expand(i, k, 'bottom')}><ArrowLineUpRegular size={12} /></button
-                              >{:else if left > 0}<button
-                                use:tooltip={`Show ${left} hidden ${left === 1 ? 'line' : 'lines'}`}
-                                aria-label="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
-                                disabled={opening[i]}
-                                onclick={() => expand(i, k, 'top')}><ArrowsOutLineVerticalRegular size={12} /></button
-                              >{/if}</span
-                          ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
-                        </div>
+                        {@render hunkRow(i, rows, r)}
                       {:else if !inField(i, r)}
                         {@const kind = rows.kind[r]}
                         {@const ci = rows.ci[r]}
@@ -1969,13 +2045,7 @@
                       {/if}
                       {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
                         <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
-                          <div {@attach measureBlock(b)}>
-                            {#if b.thread && review?.data}
-                              <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
-                            {:else if b.draft && review}
-                              <Composer {review} draft={b.draft} />
-                            {/if}
-                          </div>
+                          <div {@attach measureBlock(b)}>{@render blockBody(b)}</div>
                         </div>
                       {/each}
                     {/each}
@@ -1989,6 +2059,117 @@
     </div>
   </div>
 </div>
+
+{#snippet hunkRow(i: number, rows: FileRows, r: number)}
+  {@const k = rows.gap[r]}
+  {@const left = k >= 0 ? rows.hidden[k] : 0}
+  {@const tail = rows.kind[r] === TAIL}
+  <div class="hunk" class:tail data-r={r}>
+    <span class="gutter xp"
+      >{#if left === null || (left > STEP && tail)}<button
+          use:tooltip={`Show ${STEP} more lines`}
+          aria-label="Show {STEP} more lines"
+          disabled={opening[i]}
+          onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
+        >{:else if left > STEP}{#if k > 0}<button
+            use:tooltip={`Show ${STEP} more lines below the hunk above`}
+            aria-label="Show {STEP} more lines below the hunk above"
+            disabled={opening[i]}
+            onclick={() => expand(i, k, 'top')}><ArrowLineDownRegular size={12} /></button
+          >{/if}<button
+          use:tooltip={`Show ${STEP} more lines above`}
+          aria-label="Show {STEP} more lines above"
+          disabled={opening[i]}
+          onclick={() => expand(i, k, 'bottom')}><ArrowLineUpRegular size={12} /></button
+        >{:else if left > 0}<button
+          use:tooltip={`Show ${left} hidden ${left === 1 ? 'line' : 'lines'}`}
+          aria-label="Show {left} hidden {left === 1 ? 'line' : 'lines'}"
+          disabled={opening[i]}
+          onclick={() => expand(i, k, 'top')}><ArrowsOutLineVerticalRegular size={12} /></button
+        >{/if}</span
+    ><span class="code">{tail ? (left === null ? 'More lines below' : `${left} more ${left === 1 ? 'line' : 'lines'}`) : rows.text[r]}</span>
+  </div>
+{/snippet}
+
+{#snippet blockBody(b: Block)}
+  {#if b.thread && review?.data}
+    <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
+  {:else if b.draft && review}
+    <Composer {review} draft={b.draft} />
+  {/if}
+{/snippet}
+
+<!-- Side by side: each half its own column, scrolling sideways on its own; threads over both, under their row. -->
+{#snippet sideRows(i: number, rows: FileRows, tok: Tokens | undefined, fileHits: Map<number, number[]> | undefined)}
+  {@const f = files[i]}
+  {@const s = sbs(i)!}
+  {@const shown = rowRange(i)}
+  {@const blocks = sideLayout[i]}
+  {#each [s.left, s.right] as half, h (h)}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="half"
+      class:right={h === 1}
+      onmousedown={(e) => down(e, i)}
+      onmouseover={(e) => over(e, i)}
+      onpointerover={(e) => lineTip(e, i)}
+      onmouseleave={() => (hoverBlock = null)}
+      ondblclick={(e) => startEdit(i, rowOf(e))}
+      oncontextmenu={(e) => openMenu(e, i)}
+      onfocus={() => {}}
+    >
+      <div
+        class="lines mono"
+        class:readonly
+        class:wrap={sideCols > 0}
+        style:--cols={sideCols}
+        style:top="{rowY(i, shown[0] ?? 0)}px"
+        style:min-width="max(100%, calc({SIDE_GUTTER + 20}px + {sideCols ? Math.min(sideCols, f.width) : f.width}ch))"
+      >
+        {#each app.display.guides as col (col)}
+          <span class="guide" style:left="calc({SIDE_GUTTER + 8}px + {col}ch)"></span>
+        {/each}
+        {#each shown as v (v)}
+          {@const r = half[v]}
+          {@const height = sideCols ? `${rowSpan(i, v) * ROW}px` : undefined}
+          {#if r < 0}
+            <div class="line filler" style:height></div>
+          {:else if isHead(rows.kind[r])}
+            {#if h === 0}{@render hunkRow(i, rows, r)}{:else}<div class="hunk" class:tail={rows.kind[r] === TAIL} data-r={r}></div>{/if}
+          {:else}
+            {@const kind = rows.kind[r]}
+            {@const ci = rows.ci[r]}
+            {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
+            <div
+              class="line {KIND[kind]}"
+              class:sel={pick === 2}
+              class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
+              class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
+              class:gh-range={blockLayout[i]?.on.has(r)}
+              style:height
+              data-r={r}
+            >
+              <span class="gutter"
+                ><span class="blk"></span><span>{(h ? rows.n[r] : rows.o[r]) || ''}</span><span class="mark">{MARK[kind]}</span></span
+              ><span class="code" {@attach code(i, r, rows, tok, fileHits?.get(r))}></span>
+            </div>
+          {/if}
+          {#if blocks?.byRow.has(v)}
+            <div style:height="{blocksAbove(i, v + 1) - blocksAbove(i, v)}px"></div>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  {/each}
+  {#each shown as v (v)}
+    {#each blocks?.byRow.get(v) ?? [] as b, k (b.key)}
+      {@const y = rowY(i, v) + rowSpan(i, v) * ROW + (blocks.byRow.get(v) ?? []).slice(0, k).reduce((n, x) => n + blockHeight(x), 0)}
+      <div class="gh-slot over" style:top="{y}px" style:height="{blockHeight(b)}px">
+        <div {@attach measureBlock(b)}>{@render blockBody(b)}</div>
+      </div>
+    {/each}
+  {/each}
+{/snippet}
 
 {#if away && review?.data}
   <Popover
@@ -2588,6 +2769,58 @@
   /* The lines a review thread is about: a bar just inside the code, joined across them. */
   .line.gh-range .code {
     background: linear-gradient(to right, transparent 2px, var(--theme2) 2px 5px, transparent 5px) no-repeat;
+  }
+
+  /* Side by side: two columns, each scrolling sideways on its own, threads over both. */
+  .body.sbs {
+    overflow-x: hidden;
+  }
+
+  .half {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 50%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .half::-webkit-scrollbar {
+    display: none;
+  }
+
+  .half.right {
+    left: 50%;
+    box-shadow: inset 1px 0 0 var(--border);
+  }
+
+  .half .gutter {
+    width: 62px;
+  }
+
+  .half .gutter > span:not(.blk, .mark) {
+    width: 36px;
+  }
+
+  .half.right .gutter {
+    box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
+  }
+
+  .half .hunk:empty {
+    cursor: default;
+  }
+
+  .line.filler {
+    background: var(--bg3);
+    opacity: 0.5;
+  }
+
+  .gh-slot.over {
+    position: absolute;
+    left: 0;
+    right: 0;
   }
 
   /* A conflict, in the conflict view: its markers in the warning colour, each side a tint of its own, over a

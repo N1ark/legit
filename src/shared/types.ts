@@ -167,6 +167,9 @@ export interface FileSummary extends Omit<FileDiff, 'hunks'> {
   rows: number;
   /** Removed lines that come back added with only their whitespace changed (rows saved when whitespace is hidden). */
   ws: number;
+  /** Rows side by side saves, removed lines beside added ones (`pairedWs`: with whitespace hidden, as well). */
+  paired: number;
+  pairedWs: number;
   /** Widest line, in columns (tabs count as 4). */
   width: number;
   /** Binary files and images: their size in bytes before and after (absent on a side without one). */

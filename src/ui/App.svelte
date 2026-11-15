@@ -34,7 +34,7 @@
   import CommitView from './CommitView.svelte';
   import WorkView from './WorkView.svelte';
   import Brand from './Brand.svelte';
-  import { WORK, app } from './lib/app.svelte.ts';
+  import { WORK, app, sideBySide } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -135,7 +135,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'sideBySide';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -167,6 +167,7 @@
     { keys: '⌘F', action: 'find', label: 'Find in the diff' },
     { keys: '⌘G', action: 'findNext', label: 'Next match' },
     { keys: '⇧⌘G', action: 'findPrev', label: 'Previous match' },
+    { keys: 's', action: 'sideBySide', label: 'Diffs side by side, or one above the other' },
     { keys: '?', action: 'help', label: 'Show shortcuts' },
   ];
   const keymap = createKeymap(bindings);
@@ -193,6 +194,7 @@
     else if (action === 'pr') gh.togglePr();
     else if (action === 'settings') settings = 'syntax';
     else if (action === 'find') finder.start();
+    else if (action === 'sideBySide') sideBySide.value = !sideBySide.value;
     else if (action === 'findNext' || action === 'findPrev') {
       if (finder.open) finder.step(action === 'findNext' ? 1 : -1);
       else finder.start();
