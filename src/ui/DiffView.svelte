@@ -24,12 +24,16 @@
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
     type MaybeEntry,
+    Button,
     IconButton,
+    Kbd,
     Popover,
     ResizeEdge,
     Tag,
     Twisty,
     fixedRange,
+    hasOverlay,
+    isTyping,
     matches,
     menu,
     offsets,
@@ -40,7 +44,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -63,6 +67,7 @@
   import { type DiffPosition, app, hideWhitespace, highlightKey, sideBySide } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
+  import { tip } from './lib/tip.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -422,7 +427,7 @@
   function commentEntry(i: number, r: number): MaybeEntry {
     if (!review?.pr) return false;
     const rows = contents[i];
-    const p = sel[files[i].path]?.size ? pickedRows(i) : null;
+    const p = commenting ? (span?.i === i ? [span.a, span.b] : null) : sel[files[i].path]?.size ? pickedRows(i) : null;
     const [a, b] = Array.isArray(p) && r >= p[0] && r <= p[1] ? p : [r, r];
     const why = review.why(files[i].path, rows, a, b);
     return {
@@ -444,6 +449,19 @@
   /** Commenting on the picked lines, for the view's own buttons: why not, and how; null without a pull request. */
   export function pickedComment(): { why: string | null; run: () => void } | null {
     if (!review?.pr) return null;
+    if (commenting) {
+      const p = span;
+      const rows = p && contents[p.i];
+      if (!p || !rows) return null;
+      const path = files[p.i].path;
+      return {
+        why: review.why(path, rows, p.a, p.b),
+        run: () => {
+          span = null;
+          review.compose(path, rows, p.a, p.b);
+        },
+      };
+    }
     const i = files.findIndex((f) => sel[f.path]?.size);
     if (i < 0) return null;
     const p = pickedRows(i);
@@ -1071,6 +1089,10 @@
       if (r >= 0 && end >= r) [editing.r, editing.end] = [r, end];
       else editing = null;
     }
+    if (span?.i === i) {
+      const [a, b, from] = [moved[span.a], moved[span.b], moved[span.from]];
+      span = a >= 0 && b >= 0 && from >= 0 ? { i, a, b, from } : null;
+    }
     hoverBlock = null;
     contents = { ...contents, [i]: rows };
     queueHighlight(i, rows);
@@ -1185,7 +1207,8 @@
       const r = Number(el.closest<HTMLElement>('[data-r]')?.dataset.r ?? -1);
       if (!rows || r < 0) return null;
       if (el.classList.contains('mark')) return rows.kind[r] === SPACED ? 'Only whitespace changed' : null;
-      return rows.ci[r] >= 0 && !readonly ? (onstage ? 'Stage or unstage this block' : 'Pick this block') : null;
+      if (rows.ci[r] < 0) return null;
+      return commenting ? 'Pick this block, to comment on it' : readonly ? null : onstage ? 'Stage or unstage this block' : 'Pick this block';
     });
   }
 
@@ -1388,6 +1411,63 @@
   let drag: { path: string; on: boolean; last: number; block: boolean; touched: Set<number> } | null = null;
   let hoverBlock = $state<{ i: number; a: number; b: number } | null>(null);
 
+  // A read-only diff of a pull request's commits picks lines to comment on instead: any rows of one file, a..b
+  // (from the one picked first), by a click, a drag or ⇧-click, a block on its strip, or a hunk on its header.
+  const commenting = $derived(readonly && !!review?.pr && !onresolve);
+  let span = $state<{ i: number; a: number; b: number; from: number } | null>(null);
+  let spanning = false;
+  const inSpan = (i: number, r: number) => !!span && span.i === i && r >= span.a && r <= span.b;
+  const pickSpan = (i: number, from: number, to: number) => (span = { i, from, a: Math.min(from, to), b: Math.max(from, to) });
+  /** Pick rows a..b of file i, or unpick them when they're what's picked. */
+  function toggleSpan(i: number, a: number, b: number) {
+    if (span?.i === i && span.a === a && span.b === b) span = null;
+    else span = { i, a, b, from: a };
+  }
+
+  function pickDown(e: MouseEvent, i: number, r: number, rows: FileRows | undefined) {
+    if (r < 0 || !rows || e.button !== 0) return;
+    if (rows.kind[r] === HUNK) {
+      let end = r + 1;
+      while (end < rows.kind.length && !isHead(rows.kind[end])) end++;
+      if (end > r + 1) toggleSpan(i, r + 1, end - 1);
+      return;
+    }
+    if (isHead(rows.kind[r])) return;
+    if (e.shiftKey && span?.i === i) {
+      e.preventDefault();
+      return void pickSpan(i, span.from, r);
+    }
+    if (rows.ci[r] >= 0 && onStrip(e)) {
+      e.preventDefault();
+      const [a, b] = blockAt(rows, r);
+      return toggleSpan(i, a, b);
+    }
+    // A drag over the code selects its text, to copy; a plain click picks its line.
+    if (!(e.target as HTMLElement).closest('.gutter')) return void (pending = { i, r, x: e.clientX, y: e.clientY });
+    e.preventDefault();
+    toggleSpan(i, r, r);
+    if (span) spanning = true;
+  }
+
+  /** Esc lets go of the picked lines (before anything else takes it, as going back to the overview). */
+  function pickKey(e: KeyboardEvent) {
+    if (!span || e.key !== 'Escape' || e.defaultPrevented || isTyping(e.target as Element) || hasOverlay()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    span = null;
+  }
+
+  // The shortcut comments on the picked lines, in whichever mode picks them.
+  onMount(() =>
+    reviews.onComment(() => {
+      const c = pickedComment();
+      if (!c) return false;
+      if (c.why) toast.error(c.why);
+      else c.run();
+      return true;
+    }),
+  );
+
   /** Rows [a, b] of the run of consecutive changed lines around row r. */
   function blockAt(rows: FileRows, r: number): [number, number] {
     let a = r;
@@ -1444,6 +1524,7 @@
     const r = rowOf(e);
     const rows = contents[i];
     if (rows?.kind[r] === TAIL && e.button === 0) return void expand(i, rows.gap[r], 'top');
+    if (commenting) return pickDown(e, i, r, rows);
     if (readonly || r < 0 || !rows || e.button !== 0) return;
     if (rows.kind[r] === HUNK) return toggleHunk(i, r);
     const ci = rows.ci[r];
@@ -1482,9 +1563,11 @@
 
   function up(e: MouseEvent) {
     endDrag();
+    spanning = false;
     const p = pending;
     pending = null;
     if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) return;
+    if (commenting) return toggleSpan(p.i, p.r, p.r);
     const rows = contents[p.i];
     const ci = rows?.ci[p.r] ?? -1;
     if (ci < 0) return;
@@ -1507,8 +1590,9 @@
     const rows = contents[i];
     if (!rows || r < 0) return;
     const ci = rows.ci[r];
+    if (spanning && span?.i === i && !isHead(rows.kind[r])) pickSpan(i, span.from, r);
     // Preview the block the strip would toggle.
-    const strip = !readonly && ci >= 0 && onStrip(e);
+    const strip = (!readonly || commenting) && ci >= 0 && onStrip(e);
     if (strip) {
       const [a, b] = blockAt(rows, r);
       if (hoverBlock?.i !== i || hoverBlock.a !== a) hoverBlock = { i, a, b };
@@ -1778,7 +1862,8 @@
     if (f.status === 'D') return [];
     const s = sel[f.path];
     const lines = [lineFor(rows, r) ?? 0];
-    if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
+    if (span && inSpan(i, r)) for (let k = span.a; k <= span.b; k++) lines.push(lineFor(rows, k) ?? 0);
+    else if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
       for (let k = 0; k < rows.ci.length; k++) if (s.has(rows.ci[k]) || s.has(rows.c2[k])) lines.push(lineFor(rows, k) ?? 0);
     }
     return lineEntries(summary.sha, f.path, lines);
@@ -1869,7 +1954,7 @@
   const KIND = ['', 'tc', 'ta', 'td', '', 'tw'];
 </script>
 
-<svelte:window onmouseup={up} />
+<svelte:window onmouseup={up} onkeydowncapture={pickKey} />
 
 <div class="diff" style:--inset="{inset}px">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
@@ -2107,7 +2192,8 @@
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="lines mono"
-                    class:readonly
+                    class:readonly={readonly && !commenting}
+                    class:pickrows={commenting}
                     class:wrap={cols > 0}
                     style:--cols={cols}
                     style:top="{rowY(i, shown[0] ?? 0)}px"
@@ -2133,7 +2219,7 @@
                         {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
                         <div
                           class="line {KIND[kind]} {ROLE[roleOf(rows, r)]}"
-                          class:sel={pick === 2}
+                          class:sel={pick === 2 || inSpan(i, r)}
                           class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
@@ -2182,6 +2268,21 @@
         </div>
       {/each}
     </div>
+    {#if span && contents[span.i]}
+      {@const c = pickedComment()}
+      {@const n = span.b - span.a + 1}
+      <div class="pick-at">
+        <div class="pickbar" role="toolbar" aria-label="Picked lines">
+          <ChatCircleTextRegular />
+          <span class="count">{n} {n === 1 ? 'line' : 'lines'} of <span class="mono">{files[span.i].path.slice(files[span.i].path.lastIndexOf('/') + 1)}</span></span>
+          {#if c?.why}<span class="why">{c.why}</span>{/if}
+          <Button variant="primary" size="sm" disabled={!c || !!c.why} onclick={() => c?.run()} {@attach tip(`Comment on these lines on #${review?.pr?.number}`)}>
+            Comment <Kbd hint="c" />
+          </Button>
+          <IconButton label="Clear selection" shortcut="Esc" size="sm" onclick={() => (span = null)}><XRegular /></IconButton>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -2247,7 +2348,8 @@
     >
       <div
         class="lines mono"
-        class:readonly
+        class:readonly={readonly && !commenting}
+        class:pickrows={commenting}
         class:wrap={sideCols > 0}
         style:--cols={sideCols}
         style:top="{rowY(i, shown[0] ?? 0)}px"
@@ -2269,7 +2371,7 @@
             {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
             <div
               class="line {KIND[kind]}"
-              class:sel={pick === 2}
+              class:sel={pick === 2 || inSpan(i, r)}
               class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
               class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
               class:gh-range={blockLayout[i]?.on.has(r)}
@@ -2820,6 +2922,20 @@
     background: var(--theme-soft);
   }
 
+  .line.sel:not(.ta, .td, .tw) {
+    background: var(--theme-soft);
+  }
+
+  .lines.pickrows .gutter {
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .lines.pickrows .line:not(.sel, .filler):hover .gutter {
+      background: var(--theme-soft);
+    }
+  }
+
   .line.sel .gutter {
     background: var(--theme);
     color: var(--on-accent);
@@ -3043,6 +3159,53 @@
   .tg {
     display: inline-flex;
     min-width: 0;
+  }
+
+  /* Lines picked to comment on, in a read-only diff: what to do with them, below the diff, kept in view over a longer one. */
+  .pick-at {
+    grid-column: -2 / -1;
+    position: sticky;
+    bottom: var(--sp-4);
+    z-index: calc(var(--z-sticky) + 1);
+    display: flex;
+    justify-content: center;
+    margin-top: var(--sp-4);
+    pointer-events: none;
+  }
+
+  .pickbar {
+    pointer-events: auto;
+    max-width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    padding: var(--gap-4) var(--gap-4) var(--gap-4) var(--sp-5);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--theme-mid);
+    color: var(--theme2);
+    font-size: var(--fs-sm);
+    animation: rise var(--dur) var(--ease);
+  }
+
+  .pickbar .count {
+    color: var(--color2);
+    white-space: nowrap;
+  }
+
+  .pickbar .why {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    min-width: 0;
+  }
+
+  @keyframes rise {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
   }
 
   .away-list {
