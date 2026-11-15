@@ -19,6 +19,10 @@ const DESCRIPTIONS: Record<string, string> = {
   'good first issue': 'Good for newcomers',
 };
 const USERS = ['octocat', 'hubot', 'monalisa', 'defunkt', 'mojombo'];
+const MILESTONES = [
+  { number: 3, title: 'v0.4', url: 'https://github.com/acme/widgets/milestone/3', dueOn: ago(-24 * 12), progressPercentage: 62.5 },
+  { number: 4, title: 'v1.0', url: 'https://github.com/acme/widgets/milestone/4', dueOn: null, progressPercentage: 18.2 },
+];
 
 let ids = 100;
 const nextId = (prefix: string) => `${prefix}_kwDO${++ids}`;
@@ -38,6 +42,7 @@ interface Extra {
   createdAt: string;
   labels: string[];
   assignees: string[];
+  milestone?: number | null;
   /** Logins, or `org/team` for a team. */
   requested: string[];
   checks: 'SUCCESS' | 'FAILURE' | 'PENDING' | null;
@@ -53,6 +58,13 @@ interface Extra {
 }
 
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
+
+/** The issues "Closes #N" (or fixes, resolves) in a description names, as GitHub links them. */
+const closing = (body: string) =>
+  [...(body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #(\d+)/gi)]
+    .map((m) => db.issues?.find((i: any) => i.number === Number(m[1])))
+    .filter(Boolean)
+    .map((i: any) => ({ __typename: 'Issue', ...i, url: `https://github.com/acme/widgets/issues/${i.number}`, repository: { nameWithOwner: 'acme/widgets' } }));
 
 // #14 comes from someone else, so the viewer can review it.
 if (pull(14)) pull(14).author = actor('monalisa');
@@ -70,7 +82,7 @@ if (pull(12)) {
   ].join('\n');
 }
 if (pull(13)) pull(13).body = 'Stacked on #12.\n\nParse errors now say where they happened:\n\n```\nspec.widget:12:4: expected `}`\n```';
-if (pull(14)) pull(14).body = 'Stacked on #13.\n\nColours the location and points a caret at the column.';
+if (pull(14)) pull(14).body = 'Stacked on #13.\n\nColours the location and points a caret at the column.\n\nCloses #16';
 
 db.prview = {
   9: {
@@ -84,7 +96,7 @@ db.prview = {
     ],
   },
   12: {
-    createdAt: ago(52), labels: ['enhancement', 'parser'], assignees: ['octocat'], requested: ['hubot'], checks: 'SUCCESS',
+    createdAt: ago(52), labels: ['enhancement', 'parser'], assignees: ['octocat'], milestone: 3, requested: ['hubot'], checks: 'SUCCESS',
     additions: 214, deletions: 37, changedFiles: 6, autoMerge: null,
     timeline: [
       event('ReviewRequestedEvent', 'octocat', 51, { requestedReviewer: { login: 'monalisa' } }),
@@ -210,6 +222,8 @@ onGraphql('PrViewOverview', (v) => {
         viewerCanDisableAutoMerge: !!e.autoMerge,
         labels: { nodes: e.labels.map((name) => ({ name, color: LABELS[name] ?? 'ededed' })) },
         assignees: { nodes: e.assignees.map(actor) },
+        milestone: MILESTONES.find((m) => m.number === e.milestone) ?? null,
+        closingIssuesReferences: { nodes: closing(p.body) },
         reviewRequests: {
           nodes: e.requested.map((r) => ({ requestedReviewer: r.includes('/') ? { combinedSlug: r, avatarUrl: avatar(r.split('/')[0]) } : actor(r) })),
         },
@@ -241,6 +255,7 @@ onGraphql('PrViewOptions', () => ({
     assignableUsers: { nodes: USERS.map(actor) },
     labels: { nodes: Object.entries(LABELS).map(([name, color]) => ({ name, color, description: DESCRIPTIONS[name] ?? null })) },
     refs: { nodes: Object.keys(db.tips).filter((t) => !t.startsWith('origin/')).map((name) => ({ name })) },
+    milestones: { nodes: MILESTONES },
   },
 }));
 
@@ -354,6 +369,38 @@ onRest('DELETE /repos/:owner/:repo/pulls/:number/requested_reviewers', (params, 
   const gone = [...body.reviewers, ...(body.team_reviewers ?? []).map((t: string) => `acme/${t}`)];
   e.requested = e.requested.filter((r) => !gone.includes(r));
   for (const r of gone) e.timeline.push(event('ReviewRequestRemovedEvent', db.viewer, 0, { requestedReviewer: reviewer(r) }));
+  return { number: Number(params.number) };
+});
+
+onRest('POST /repos/:owner/:repo/issues/:number/assignees', (params, _, body) => {
+  const e = extra(Number(params.number));
+  for (const login of body.assignees as string[]) {
+    if (e.assignees.includes(login) || !USERS.includes(login)) continue;
+    e.assignees.push(login);
+    e.timeline.push(event('AssignedEvent', db.viewer, 0, { assignee: { login } }));
+  }
+  return { number: Number(params.number), assignees: e.assignees.map(actor) };
+});
+
+onRest('DELETE /repos/:owner/:repo/issues/:number/assignees', (params, _, body) => {
+  const e = extra(Number(params.number));
+  for (const login of body.assignees as string[]) {
+    if (!e.assignees.includes(login)) continue;
+    e.assignees = e.assignees.filter((a) => a !== login);
+    e.timeline.push(event('UnassignedEvent', db.viewer, 0, { assignee: { login } }));
+  }
+  return { number: Number(params.number), assignees: e.assignees.map(actor) };
+});
+
+onRest('PATCH /repos/:owner/:repo/issues/:number', (params, _, body) => {
+  const e = extra(Number(params.number));
+  if (body.milestone !== undefined && body.milestone !== e.milestone) {
+    const title = (n: number | null | undefined) => MILESTONES.find((m) => m.number === n)?.title;
+    if (body.milestone !== null && !title(body.milestone)) throw new GithubError('GitHub: Validation Failed', 422);
+    if (e.milestone) e.timeline.push(event('DemilestonedEvent', db.viewer, 0, { milestoneTitle: title(e.milestone) }));
+    if (body.milestone) e.timeline.push(event('MilestonedEvent', db.viewer, 0, { milestoneTitle: title(body.milestone) }));
+    e.milestone = body.milestone;
+  }
   return { number: Number(params.number) };
 });
 

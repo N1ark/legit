@@ -1006,6 +1006,9 @@ export const highlightKey = (d: DiffSummary, i: number, syntax: string | undefin
 /** Show lines whose only change is whitespace as unchanged, in every diff. */
 export const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false);
 
+/** Show diffs side by side, old on the left and new on the right, where they're wide enough. */
+export const sideBySide = persisted<boolean>('legit:side-by-side', false);
+
 /** Bigger files aren't highlighted ahead of being shown: the worker can't be interrupted. */
 const PREHIGHLIGHT_ROWS = 3000;
 

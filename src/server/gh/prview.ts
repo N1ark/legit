@@ -4,11 +4,13 @@
 
 import { GithubError, MOCK, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
+import { toIssueRef } from './issues.ts';
 import { db } from './mock/registry.ts';
 import { forgetPrs, prState } from './pulls.ts';
 import type { GhUser } from '../../shared/github.ts';
+import type { IssueRef } from '../../shared/gh-issues.ts';
 import type {
-  CheckState, MergeMethod, MergeState, PrCommit, PrItem, PrLabel, PrOptions, PrOverview, PrReviewer, ReviewEvent, ReviewState,
+  CheckState, MergeMethod, MergeState, PrCommit, PrItem, PrLabel, PrMilestone, PrOptions, PrOverview, PrReviewer, ReviewEvent, ReviewState,
 } from '../../shared/gh-prview.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
 import type { Repo } from '../repo.ts';
@@ -30,11 +32,16 @@ const EVENTS = `
   ... on UnlabeledEvent { id actor { ${ACTOR} } createdAt label { name color } }
   ... on BaseRefChangedEvent { id actor { ${ACTOR} } createdAt previousRefName currentRefName }
   ... on RenamedTitleEvent { id actor { ${ACTOR} } createdAt previousTitle currentTitle }
-  ... on HeadRefDeletedEvent { id actor { ${ACTOR} } createdAt headRefName }`;
+  ... on HeadRefDeletedEvent { id actor { ${ACTOR} } createdAt headRefName }
+  ... on AssignedEvent { id actor { ${ACTOR} } createdAt assignee { ... on User { login } ... on Bot { login } } }
+  ... on UnassignedEvent { id actor { ${ACTOR} } createdAt assignee { ... on User { login } ... on Bot { login } } }
+  ... on MilestonedEvent { id actor { ${ACTOR} } createdAt milestoneTitle }
+  ... on DemilestonedEvent { id actor { ${ACTOR} } createdAt milestoneTitle }`;
 
 const ITEM_TYPES = `[ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT,
   REOPENED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, LABELED_EVENT,
-  UNLABELED_EVENT, BASE_REF_CHANGED_EVENT, RENAMED_TITLE_EVENT, HEAD_REF_DELETED_EVENT]`;
+  UNLABELED_EVENT, BASE_REF_CHANGED_EVENT, RENAMED_TITLE_EVENT, HEAD_REF_DELETED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT,
+  MILESTONED_EVENT, DEMILESTONED_EVENT]`;
 
 export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
@@ -47,6 +54,8 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
       viewerCanUpdate viewerDidAuthor viewerCanEnableAutoMerge viewerCanDisableAutoMerge
       labels(first: 50) { nodes { name color } }
       assignees(first: 20) { nodes { ${ACTOR} } }
+      milestone { number title url dueOn progressPercentage }
+      closingIssuesReferences(first: 20) { nodes { __typename number title url state stateReason repository { nameWithOwner } } }
       reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { ${ACTOR} } ... on Team { combinedSlug avatarUrl } } } }
       latestOpinionatedReviews(first: 50) { nodes { author { ${ACTOR} } state } }
       latestReviews(first: 50) { nodes { author { ${ACTOR} } state } }
@@ -65,6 +74,8 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
 const user = (u: any): GhUser | null => (u?.login ? { login: u.login, avatar: u.avatarUrl ?? '' } : null);
 const check = (s: string | undefined | null): CheckState => (s ? (s.toLowerCase() as CheckState) : null);
 const METHODS: Record<string, MergeMethod> = { MERGE: 'merge', SQUASH: 'squash', REBASE: 'rebase' };
+const milestone = (m: any): PrMilestone | null =>
+  m?.number ? { number: m.number, title: m.title, url: m.url ?? null, dueOn: m.dueOn ?? null, progress: m.progressPercentage ?? null } : null;
 
 export function reviewState(s: string): ReviewState {
   return s === 'APPROVED' ? 'approved' : s === 'CHANGES_REQUESTED' ? 'changes' : s === 'DISMISSED' ? 'dismissed' : s === 'PENDING' ? 'pending' : 'commented';
@@ -150,6 +161,14 @@ export function timeline(nodes: any[]): PrItem[] {
       case 'HeadRefDeletedEvent':
         out.push({ ...base, kind: 'event', type: 'head-deleted', subject: n.headRefName });
         break;
+      case 'AssignedEvent':
+      case 'UnassignedEvent':
+        out.push({ ...base, kind: 'event', type: n.__typename === 'AssignedEvent' ? 'assigned' : 'unassigned', subject: n.assignee?.login ?? 'someone' });
+        break;
+      case 'MilestonedEvent':
+      case 'DemilestonedEvent':
+        out.push({ ...base, kind: 'event', type: n.__typename === 'MilestonedEvent' ? 'milestoned' : 'demilestoned', subject: n.milestoneTitle });
+        break;
     }
   }
   return out;
@@ -211,6 +230,8 @@ export function toOverview(d: any): PrOverview {
     mine: !!pr.viewerDidAuthor,
     labels: (pr.labels?.nodes ?? []).map((l: any): PrLabel => ({ name: l.name, color: l.color })),
     assignees: (pr.assignees?.nodes ?? []).map(user).filter(Boolean),
+    milestone: milestone(pr.milestone),
+    closes: (pr.closingIssuesReferences?.nodes ?? []).map(toIssueRef).filter((r: IssueRef | null): r is IssueRef => !!r),
     reviewers: reviewers(pr),
     suggested: (pr.suggestedReviewers ?? []).map((s: any) => user(s.reviewer)).filter(Boolean),
     commits,
@@ -248,6 +269,7 @@ async function options(repo: Repo, number: unknown): Promise<PrOptions> {
         assignableUsers(first: 100) { nodes { ${ACTOR} } }
         labels(first: 100, orderBy: { field: NAME, direction: ASC }) { nodes { name color description } }
         refs(refPrefix: "refs/heads/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) { nodes { name } }
+        milestones(first: 50, states: OPEN, orderBy: { field: DUE_DATE, direction: ASC }) { nodes { number title url dueOn progressPercentage } }
       }
     }`,
     { owner: r.owner, name: r.name },
@@ -256,6 +278,7 @@ async function options(repo: Repo, number: unknown): Promise<PrOptions> {
     users: (d.repository?.assignableUsers.nodes ?? []).map(user).filter(Boolean),
     labels: d.repository?.labels.nodes ?? [],
     branches: (d.repository?.refs.nodes ?? []).map((b: any) => b.name),
+    milestones: (d.repository?.milestones?.nodes ?? []).map(milestone).filter(Boolean),
   };
 }
 
@@ -326,6 +349,17 @@ export const prviewPost: Record<string, PostRoute> = {
     const remove = list(b.remove);
     if (add.length) await rest('POST', `${r.path}/pulls/${r.number}/requested_reviewers`, split(add));
     if (remove.length) await rest('DELETE', `${r.path}/pulls/${r.number}/requested_reviewers`, split(remove));
+  }),
+  prviewAssignees: change(async (r, b) => {
+    const add = list(b.add);
+    const remove = list(b.remove);
+    if (add.length) await rest('POST', `${r.path}/issues/${r.number}/assignees`, { assignees: add });
+    if (remove.length) await rest('DELETE', `${r.path}/issues/${r.number}/assignees`, { assignees: remove });
+  }),
+  prviewMilestone: change((r, b) => {
+    const n = b.milestone === null ? null : Number(b.milestone);
+    if (n !== null && !(Number.isInteger(n) && n > 0)) throw new GithubError('Which milestone?', 400);
+    return rest('PATCH', `${r.path}/issues/${r.number}`, { milestone: n });
   }),
   prviewLabels: change(async (r, b) => {
     const add = list(b.add);

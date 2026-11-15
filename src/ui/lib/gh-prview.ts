@@ -46,6 +46,10 @@ export function eventText(e: PrEvent): string {
     case 'base-changed': return `changed the base branch from ${e.before} to ${e.subject}`;
     case 'renamed': return `changed the title from “${e.before}” to “${e.subject}”`;
     case 'head-deleted': return `deleted the ${e.subject} branch`;
+    case 'assigned': return e.subject === e.actor?.login ? 'self-assigned this' : `assigned ${e.subject}`;
+    case 'unassigned': return e.subject === e.actor?.login ? 'removed their assignment' : `unassigned ${e.subject}`;
+    case 'milestoned': return `added this to the ${e.subject} milestone`;
+    case 'demilestoned': return `removed this from the ${e.subject} milestone`;
   }
 }
 
