@@ -122,9 +122,10 @@ db.prview = {
 db.pending ??= {};
 db.pending[12] ??= {
   id: nextId('PRR'),
+  // Each becomes a thread of the review in progress (mock/review.ts); `commit` is the index of the one it's on.
   comments: [
-    { path: 'src/parser.ts', line: 42, body: 'Nit: `expect()` could name the token it wanted.' },
-    { path: 'src/tokenizer.ts', line: 17, body: 'Is `\\r` handled here?' },
+    { path: 'src/parser.ts', line: 18, commit: 1, body: 'Nit: this could say which token it wanted when `tokens[i + 2]` is missing.' },
+    { path: 'src/tokenizer.ts', line: 7, commit: 0, body: 'Is `\\r\\n` counted as one line here?' },
   ],
 };
 

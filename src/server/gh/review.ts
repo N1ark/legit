@@ -1,6 +1,7 @@
 // Pull request review threads: reading them (one GraphQL query per refresh), commenting on lines
-// (now, or in the viewer's pending review), replying, resolving, editing, deleting, reacting, and
-// applying a suggestion to the working tree. Submitting a review is the PR overview's.
+// or files (now, or in the viewer's pending review, which can be discarded), replying, resolving,
+// editing, deleting, reacting, and applying a suggestion to the working tree. Submitting a review
+// is the PR overview's.
 
 import { randomBytes } from 'node:crypto';
 import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
@@ -282,6 +283,13 @@ export const reviewPost: Record<string, PostRoute> = {
     return reload(repo, num(b.number, 'pull request number'));
   },
   reviewApply: (repo, b: ApplySuggestion) => applySuggestion(repo, b),
+  reviewDiscard: async (repo, b: { number: number }) => {
+    const number = num(b.number, 'pull request number');
+    const { review } = await load(repo, number, true);
+    if (!review.pending) throw new GithubError('You have no review in progress on this pull request any more.', 409);
+    await graphql(`mutation DiscardReview($id: ID!) { deletePullRequestReview(input: { pullRequestReviewId: $id }) { clientMutationId } }`, { id: review.pending.id });
+    return reload(repo, number);
+  },
 };
 
 // Applying a suggestion: the commented lines are replaced in the working tree's file, only where

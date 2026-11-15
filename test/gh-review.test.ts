@@ -11,6 +11,7 @@ import {
   hunkLines,
   linesLabel,
   newText,
+  pendingOf,
   placeThreads,
   splitSuggestions,
   suggestionBlock,
@@ -249,4 +250,18 @@ test('blocks under rows push the rows after them down', () => {
   assert.deepEqual([0, 2, 3, 7, 8, 100].map((r) => heightAbove(a, r)), [0, 0, 15, 15, 35, 35]);
   assert.deepEqual([...a.on].sort(), [1, 2, 7]);
   assert.equal(a.byRow.get(2)?.length, 2);
+});
+
+test('the pending review: its comments by file and line, and how many on how many files', () => {
+  const mine = (body: string) => ({ ...thread().comments[0], id: body, body, pending: true });
+  const a = thread({ id: 'A', path: 'b.ts', line: 3 });
+  a.comments = [thread().comments[0], mine('reply')];
+  const b = thread({ id: 'B', path: 'a.ts', line: 9 });
+  b.comments = [mine('first')];
+  const c = thread({ id: 'C', path: 'b.ts', line: 1 });
+  c.comments = [mine('second')];
+  const p = pendingOf([a, b, thread({ id: 'D' }), c]);
+  assert.deepEqual(p.items.map((x) => x.comment.body), ['first', 'second', 'reply']);
+  assert.equal(p.summary, '3 comments on 2 files');
+  assert.equal(pendingOf([b]).summary, '1 comment on 1 file');
 });

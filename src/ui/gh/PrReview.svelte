@@ -1,10 +1,13 @@
 <script lang="ts">
   // Review a pull request: a few words and a verdict (comment, approve, request changes). When the
-  // viewer has diff comments waiting in a review of theirs, that review is the one submitted.
+  // viewer has diff comments waiting in a review of theirs, that review is the one submitted: what
+  // it holds is said above the verdicts, and listed (to show, edit or delete them, or discard it).
   import { Button, Kbd, Popover, TextArea, matches, tooltip } from 'purr';
   import { CaretDownRegular, ChatCircleRegular } from 'purr/glyphs';
+  import PendingReview from './PendingReview.svelte';
   import type { PrOverview, ReviewEvent } from '../../shared/gh-prview.ts';
   import { reviewNeeds, reviewRefusal } from '../lib/gh-prview.ts';
+  import { reviews } from '../lib/gh-review.svelte.ts';
 
   interface Props {
     pr: PrOverview;
@@ -25,13 +28,17 @@
   ];
   const DONE: Record<ReviewEvent, string> = { COMMENT: 'Reviewed', APPROVE: 'Approved', REQUEST_CHANGES: 'Requested changes on' };
 
-  const pending = $derived(pr.pending?.comments ?? 0);
-  const refused = $derived(reviewRefusal(pr, event));
-  const needs = $derived(reviewNeeds(pr, event, body));
+  // The diff's threads know of comments added or deleted since the overview loaded.
+  const threads = $derived(reviews.byNumber[pr.number] ?? null);
+  const current = $derived(threads ? { ...pr, pending: threads.pending } : pr);
+  const pending = $derived(current.pending?.comments ?? 0);
+  const refused = $derived(reviewRefusal(current, event));
+  const needs = $derived(reviewNeeds(current, event, body));
 
   async function submit() {
     if (refused || needs || working) return;
     if (await act('prviewReview', { id: pr.id, event, body }, `${DONE[event]} #${pr.number}`)) {
+      reviews.load(pr.number, true);
       body = '';
       event = 'COMMENT';
       open = false;
@@ -71,6 +78,7 @@
     <div class="review">
       <b>Finish review</b>
       <TextArea bind:value={body} rows={5} placeholder="Comment…" aria-label="Review comment" data-autofocus />
+      <PendingReview number={pr.number} ondone={() => (open = false)} collapsible />
       <fieldset>
         <legend class="sr-only">Verdict</legend>
         {#each CHOICES as c (c.id)}
@@ -84,9 +92,6 @@
           </label>
         {/each}
       </fieldset>
-      {#if pending}
-        <p class="muted pending">Includes {pending} pending comment{pending === 1 ? '' : 's'} on the diff</p>
-      {/if}
       <div class="actions">
         <span class="muted why">{refused ?? needs ?? ''}</span>
         <Button variant="primary" disabled={!!refused || !!needs || working} onclick={submit}>Submit review <Kbd hint="⌘↩" /></Button>
@@ -142,13 +147,8 @@
   }
 
   .note,
-  .pending,
   .why {
     font-size: var(--fs-sm);
-  }
-
-  .pending {
-    margin: 0;
   }
 
   .actions {

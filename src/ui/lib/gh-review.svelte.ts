@@ -119,6 +119,35 @@ class Reviews {
     return ok;
   }
 
+  /** Delete the viewer's review in progress on pull request `number`, with its comments. */
+  async discard(number: number): Promise<boolean> {
+    const ok = await this.post('reviewDiscard', { number });
+    if (ok) toast('Discarded your pending review');
+    return ok;
+  }
+
+  /** The commits to show thread `t` of pull request `number` on: the one it was made on, else the pull request's up to its head; or why it can't be. */
+  where(number: number, t: ReviewThread): string[] | string {
+    const data = this.byNumber[number];
+    const made = t.comments[0]?.originalCommit;
+    if (made && app.bySha.has(made)) return [made];
+    if (!data || t.outdated) return "It was made on a commit that isn't in your history any more.";
+    const local = data.commits.filter((c) => app.bySha.has(c));
+    if (local.length !== data.commits.length || !local.length) return "The pull request's commits on GitHub aren't the ones in your history.";
+    return local.toReversed();
+  }
+
+  /** Select the commits thread `t` is on (see `where`) and bring it into view there, open. */
+  show(number: number, t: ReviewThread): boolean {
+    const w = this.where(number, t);
+    if (typeof w === 'string') return false;
+    app.select(w[0]);
+    if (w.length > 1) app.select(w[w.length - 1], 'range');
+    this.opened[t.id] = true;
+    this.focus = { id: t.id, path: t.path };
+    return true;
+  }
+
   /** Apply a suggestion to the working tree's file; true when it was. */
   async apply(path: string, startLine: number, lines: string[], replacement: string[]): Promise<boolean> {
     try {

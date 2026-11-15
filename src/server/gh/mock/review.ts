@@ -128,6 +128,17 @@ const addPending = (r: Pending, c: MockComment, path: string, line: number | nul
 };
 
 const threads = (): MockThread[] => db.threads;
+
+// The fixture's reviews in progress (mock/prview.ts) have their comments as threads.
+for (const [n, r] of Object.entries(db.pending as Record<string, Pending>)) {
+  if (!Array.isArray(r?.comments)) continue;
+  r.comments = r.comments.map((c: any) => {
+    if (c.id) return c;
+    const t: MockThread = { id: `PRRT_${next++}`, pr: +n, path: c.path, side: 'RIGHT', line: c.line, commit: c.commit ?? 0, comments: [say(db.viewer, 2, c.body, { review: r.id })] };
+    db.threads.push(t);
+    return { id: t.comments[0].id, path: c.path, line: c.line, body: c.body };
+  });
+}
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
 const git = (): Git | undefined => db.reviewGit;
 const tip = (b: string) => db.tips[`origin/${b}`] ?? db.tips[b];
@@ -344,6 +355,15 @@ onGraphql('DeleteReviewComment', (v) => {
   const r = c.review ? pendingById(c.review)?.[1] : undefined;
   if (r) r.comments = Array.isArray(r.comments) ? r.comments.filter((x: any) => x.id !== c.id) : Math.max(0, pendingCount(r) - 1);
   return { deletePullRequestReviewComment: { clientMutationId: null } };
+});
+
+onGraphql('DiscardReview', (v) => {
+  const found = pendingById(v.id);
+  if (!found) throw new GithubError('GitHub: Could not resolve to a node with the global id.', 200);
+  delete db.pending[found[0]];
+  for (const t of threads()) t.comments = t.comments.filter((c) => c.review !== v.id);
+  db.threads = threads().filter((t) => t.comments.length);
+  return { deletePullRequestReview: { clientMutationId: null } };
 });
 
 const react = (v: Record<string, any>, on: boolean) => {

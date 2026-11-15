@@ -3,7 +3,7 @@
 // when there is something (the commit it was made on is the one shown, or the diff shown ends at
 // the pull request's head) and otherwise by the text of the line it's on, near where it was.
 
-import type { DiffSide, PrLines, ReviewThread } from '../../shared/gh-review.ts';
+import type { DiffSide, PrLines, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 
 /** What placing needs of a file's rows (lib/rows.ts's FileRows). */
 export interface RowsLike {
@@ -317,4 +317,12 @@ export function heightAbove(a: BlockLayout<unknown>, r: number): number {
     else hi = m;
   }
   return a.sum[lo];
+}
+
+/** The viewer's comments in their review in progress, by file and line, and "3 comments on 2 files". */
+export function pendingOf(threads: ReviewThread[]): { items: { thread: ReviewThread; comment: ReviewComment }[]; summary: string } {
+  const items = [...threads].sort(threadOrder).flatMap((thread) => thread.comments.filter((c) => c.pending).map((comment) => ({ thread, comment })));
+  const files = new Set(items.map((x) => x.thread.path)).size;
+  const n = (k: number, what: string) => `${k} ${what}${k === 1 ? '' : 's'}`;
+  return { items, summary: `${n(items.length, 'comment')} on ${n(files, 'file')}` };
 }

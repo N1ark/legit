@@ -62,3 +62,18 @@ test("what GitHub takes comments on in a file at a commit: the pull request's di
   assert.deepEqual([t?.side, t?.line], ['LEFT', 15]);
   db.threads = db.threads.filter((x: { id: string }) => x.id !== t?.id);
 });
+
+test('discarding the pending review deletes its comments, and its replies in threads that stay', async () => {
+  // #12's fixture review holds two comments, each a thread of its own.
+  let r = await get('reviewThreads', { number: '12', fresh: '1' });
+  assert.equal(r.pending?.comments, 2);
+  assert.equal(r.threads.filter((t) => t.comments.some((c) => c.pending)).length, 2);
+  const other = r.threads.find((t) => !t.comments.some((c) => c.pending))!;
+  r = await post('reviewReply', { number: 12, threadId: other.id, commentDatabaseId: other.comments[0].databaseId, body: 'Pending reply', pending: true });
+  assert.equal(r.pending?.comments, 3);
+  r = await post('reviewDiscard', { number: 12 });
+  assert.equal(r.pending, null);
+  assert.ok(r.threads.every((t) => t.comments.every((c) => !c.pending)));
+  assert.equal(r.threads.find((t) => t.id === other.id)?.comments.length, other.comments.length);
+  await assert.rejects(post('reviewDiscard', { number: 12 }), /no review in progress/);
+});

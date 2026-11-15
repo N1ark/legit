@@ -4,6 +4,7 @@
 
 - Comment on a whole file: the comment button in a file's header in the diff, or **Comment on this file…** in its right-click menu (in the file tree too), alone or in your review. Comments on whole files show at the top of the file's diff, instead of in a list behind its header.
 - Comment on removed lines in any commit of a pull request (not only its first), and on ranges spanning removed and added lines. A line GitHub won't take a comment on (further from a change than the three lines around it its diff shows, or a file the pull request doesn't change by then) says why in its menu, instead of failing when you post.
+- Your pending review is listed above the review threads (the **N unresolved** button and the overview) and in **Review**: each comment's file and line and its first words; click one to show it in the diff, edit or delete it, or **Discard review** (click twice) to throw it all away. **Review** says what it will submit (*2 comments on 1 file*) above the verdicts, and its count follows comments added from the diff.
 
 ## 0.24.0 — 2026-11-14
 
