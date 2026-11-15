@@ -13,7 +13,7 @@ interface MockComment {
   body: string;
   createdAt: string;
   lastEditedAt?: string;
-  /** Set while it's part of a pending review. */
+  /** The review it was made in (mock/prview.ts's, or the pending one); else one of its own, as a single comment is. */
   review?: string;
   reactions: Record<string, string[]>;
 }
@@ -52,18 +52,19 @@ db.threads = [
   {
     id: 'PRRT_1', pr: 13, path: 'src/errors.ts', side: 'RIGHT', line: 3, commit: 0,
     comments: [
-      say('hubot', 50, 'Should the message carry the column too? Editors jump straight to `line:col`.', { reactions: { THUMBS_UP: ['monalisa'] } }),
+      say('hubot', 50, 'Should the message carry the column too? Editors jump straight to `line:col`.', { review: 'PRR_13_column', reactions: { THUMBS_UP: ['monalisa'] } }),
       say('octocat', 47, "Tokens don't track columns yet. I'll add them in a follow-up and change this then."),
-      say('hubot', 30, 'Sounds good :+1:'),
+      say('hubot', 25.1, 'Sounds good :+1:', { review: 'PRR_13_crlf' }),
     ],
   },
   {
     id: 'PRRT_2', pr: 13, path: 'src/parser.ts', side: 'RIGHT', line: 16, commit: 1,
     comments: [
       say(
-        'monalisa', 26,
+        'monalisa', 26.2,
         "When the brace is missing this points at the name's line, but the token we tripped on is the useful one:\n\n" +
           "```suggestion\n    if (tokens[i]?.text !== '{') throw new ParseError(`expected { after ${name}`, (tokens[i] ?? tokens[i - 1]).line);\n```",
+        { review: 'PRR_13_parser' },
       ),
     ],
   },
@@ -71,17 +72,18 @@ db.threads = [
     id: 'PRRT_3', pr: 13, path: 'src/parser.ts', side: 'RIGHT', startLine: 18, line: 22, commit: 1,
     comments: [
       say(
-        'hubot', 25,
+        'hubot', 25.2,
         "This loop assumes every prop is `key: value;`. A missing `:` or `;` silently shifts everything after it by one token.\n\n" +
           'Worth a `ParseError` here too? Something like:\n\n```ts\nif (tokens[i + 1]?.text !== \':\') throw new ParseError(`expected : after ${key}`, tokens[i].line);\n```',
+        { review: 'PRR_13_crlf' },
       ),
     ],
   },
   {
     id: 'PRRT_4', pr: 13, path: 'src/parser.ts', side: 'RIGHT', line: 1, commit: 1, resolvedBy: 'octocat',
     comments: [
-      say('monalisa', 28, 'Nit: we usually sort imports.'),
-      say('octocat', 27, 'They are sorted: `errors` comes before `tokenizer`.'),
+      say('monalisa', 26.5, 'Nit: we usually sort imports.', { review: 'PRR_13_parser' }),
+      say('octocat', 25.9, 'They are sorted: `errors` comes before `tokenizer`.'),
     ],
   },
   {
@@ -89,7 +91,7 @@ db.threads = [
     hunk:
       "@@ -12,7 +13,7 @@ export function parse(src: string): Spec[] {\n   while (i < tokens.length) {\n     const name = tokens[i++].text;\n" +
       "     const props: Record<string, string> = {};\n-    i++; // '{'\n+    if (tokens[i].text !== '{') throw new Error('expected {');",
-    comments: [say('hubot', 70, 'Throw a `ParseError` here, so the line number shows up.'), say('octocat', 69, 'Done, thanks!')],
+    comments: [say('hubot', 70, 'Throw a `ParseError` here, so the line number shows up.', { review: 'PRR_13_first' }), say('octocat', 60.5, 'Done, thanks!')],
   },
   {
     id: 'PRRT_6', pr: 13, path: 'src/parser.ts', side: 'RIGHT', line: 23, originalLine: 22, commit: OLD,
@@ -97,7 +99,7 @@ db.threads = [
       "@@ -16,9 +16,10 @@ export function parse(src: string): Spec[] {\n     while (tokens[i] && tokens[i].text !== '}') {\n" +
       '       const key = tokens[i].text;\n       props[key] = tokens[i + 2].text;\n       i += 4;\n     }\n' +
       "+    if (!tokens[i]) throw new ParseError(`unclosed ${name}`, tokens[i - 1].line);",
-    comments: [say('monalisa', 68, 'Nice, this is the case that used to loop forever on `a {`.', { reactions: { HEART: ['hubot', 'octocat'] } })],
+    comments: [say('monalisa', 68, 'Nice, this is the case that used to loop forever on `a {`.', { review: 'PRR_13_loop', reactions: { HEART: ['hubot', 'octocat'] } })],
   },
   {
     id: 'PRRT_7', pr: 13, path: 'src/errors.ts', side: 'RIGHT', line: null, commit: 0, file: true,
@@ -114,11 +116,11 @@ db.threads = [
   },
   {
     id: 'PRRT_8', pr: 12, path: 'src/tokenizer.ts', side: 'RIGHT', line: 6, commit: 0,
-    comments: [say('hubot', 90, '`12abc` comes out as a number and then a word. Is that what we want, or should it be an error?')],
+    comments: [say('hubot', 45, '`12abc` comes out as a number and then a word. Is that what we want, or should it be an error?')],
   },
   {
     id: 'PRRT_9', pr: 12, path: 'src/build.ts', side: 'RIGHT', line: 6, commit: 1,
-    comments: [say('monalisa', 80, 'Files we write should end with a newline:\n\n```suggestion\n  return JSON.stringify(specs, null, 2) + \'\\n\';\n```')],
+    comments: [say('monalisa', 20.5, 'Files we write should end with a newline:\n\n```suggestion\n  return JSON.stringify(specs, null, 2) + \'\\n\';\n```', { review: 'PRR_12_mona' })],
   },
 ] satisfies MockThread[];
 

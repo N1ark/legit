@@ -50,7 +50,7 @@ function thread(over: Partial<ReviewThread> & { hunk?: string; commit?: string |
     comments: [
       {
         id: 'C', databaseId: 1, body: 'hi', author: null, createdAt: '', lastEditedAt: null, url: '', diffHunk: hunk,
-        originalCommit: commit, commit: null, canEdit: false, canDelete: false, pending: false, reactions: [],
+        originalCommit: commit, commit: null, canEdit: false, canDelete: false, pending: false, reviewId: null, reactions: [],
       },
     ],
     ...rest,

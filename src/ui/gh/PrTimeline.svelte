@@ -1,20 +1,25 @@
 <script lang="ts">
   // A pull request's conversation, in the order things happened (oldest or newest first, as picked):
-  // comments (the viewer's own editable), reviews with their state and words, pushes (each commit
-  // with its checks, opening its diff), and everything else as one-line events. `composer` (the
-  // merge box and comment box) goes at the newest end.
+  // comments (the viewer's own editable), reviews with the threads started in them, threads started
+  // alone, pushes (each commit with its checks, opening its diff), and everything else as one-line
+  // events. `composer` (the merge box and comment box) goes at the newest end.
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
-  import { ArrowsClockwiseRegular, ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, EyeRegular, FlagRegular, GitBranchRegular, GitCommitRegular, GitMergeBold, GitPullRequestClosedBold, GitPullRequestDraftRegular, GitPullRequestRegular, PencilSimpleRegular, TagRegular, TextTRegular, TrashRegular, UserMinusRegular, UserPlusRegular, XCircleFill, type GlyphComponent } from 'purr/glyphs';
+  import { ArrowsClockwiseRegular, ChatCircleFill, ChatCircleRegular, ChatsCircleRegular, CheckCircleFill, CircleFill, CircleRegular, CrosshairRegular, EyeRegular, FlagRegular, GitBranchRegular, GitCommitRegular, GitMergeBold, GitPullRequestClosedBold, GitPullRequestDraftRegular, GitPullRequestRegular, HourglassRegular, PencilSimpleRegular, TagRegular, TextTRegular, TrashRegular, UserMinusRegular, UserPlusRegular, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { Snippet } from 'svelte';
   import type { CheckState, PrComment, PrEventType, PrOverview, ReviewState } from '../../shared/gh-prview.ts';
+  import type { ReviewThread } from '../../shared/gh-review.ts';
   import Markdown from '../Markdown.svelte';
   import { app, conversationOrder } from '../lib/app.svelte.ts';
   import { checks } from '../lib/gh-checks.svelte.ts';
-  import { conversation } from '../lib/gh-conversation.ts';
+  import { conversation, unresolvedOf } from '../lib/gh-conversation.ts';
   import { prDiffs } from '../lib/gh-prdiff.svelte.ts';
   import { eventText, ghAvatar, pushedText } from '../lib/gh-prview.ts';
+  import { reviews } from '../lib/gh-review.svelte.ts';
+  import { linesLabel } from '../lib/gh-threads.ts';
   import { gh } from '../lib/github.svelte.ts';
   import { tip } from '../lib/tip.ts';
+  import SuggestionBatch from './SuggestionBatch.svelte';
+  import Thread from './Thread.svelte';
 
   interface Props {
     pr: PrOverview;
@@ -25,11 +30,18 @@
   }
   let { pr, act, working, composer }: Props = $props();
 
+  $effect(() => {
+    void gh.tick;
+    reviews.load(pr.number);
+  });
   $effect(() => prDiffs.loadCommits(pr));
 
+  const data = $derived(reviews.byNumber[pr.number] ?? null);
   const commits = $derived(prDiffs.allCommits(pr));
   const newest = $derived(conversationOrder.value === 'newest');
-  const entries = $derived(conversation({ timeline: pr.timeline, commits }, newest));
+  const entries = $derived(conversation({ timeline: pr.timeline, threads: data?.threads ?? [], commits, pending: data?.pending?.id ?? null }, newest));
+  const unresolved = $derived(unresolvedOf(entries));
+  const resolved = $derived((data?.threads.length ?? 0) - unresolved.length);
   /** The branch's own pull request: its commits that are in the list open there, where they can be edited. */
   const ours = $derived(gh.pr?.number === pr.number);
 
@@ -101,6 +113,33 @@
     }
   }
 
+  // "N unresolved" goes to each in turn, in the order shown, opening it.
+  let list = $state<HTMLElement | null>(null);
+  let jumped = -1;
+  let flash = $state<string | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function goTo(t: ReviewThread) {
+    const el = list?.querySelector<HTMLElement>(`[data-thread="${CSS.escape(t.id)}"]`);
+    if (!el) return;
+    if (!reviews.isOpen(t)) reviews.toggle(t);
+    el.scrollIntoView({ block: 'center' });
+    el.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+    flash = t.id;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (flash = null), 1200);
+  }
+
+  function nextUnresolved() {
+    if (!unresolved.length) return;
+    jumped = (jumped + 1) % unresolved.length;
+    goTo(unresolved[jumped]);
+  }
+
+  async function discard() {
+    await reviews.discard(pr.number);
+  }
+
   const when = (at: string) => formatRelative(at);
 </script>
 
@@ -117,6 +156,20 @@
   <button class="btn btn--link compare" use:tooltip={note} onclick={() => prDiffs.show(pr, { kind: 'compare', from, to, label })}>Compare</button>
 {/snippet}
 
+{#snippet thread(t: ReviewThread)}
+  {@const w = reviews.where(pr.number, t)}
+  <div class="row" class:flash={flash === t.id} data-thread={t.id}>
+    <div class="thread"><Thread number={pr.number} thread={t} pending={!!data?.pending} path hunk={!!t.comments[0]?.diffHunk} /></div>
+    <IconButton
+      label="Show in diff"
+      tip={typeof w === 'string' ? w : w.length > 1 ? "Show it in the pull request's changes" : 'Show it in the commit it was made on'}
+      size="sm"
+      disabled={typeof w === 'string'}
+      onclick={() => reviews.show(pr.number, t)}><CrosshairRegular /></IconButton
+    >
+  </div>
+{/snippet}
+
 <section class="conversation" aria-label="Conversation">
   <div class="head">
     <h3>Conversation</h3>
@@ -124,6 +177,14 @@
       {plural(pr.commitCount, 'commit')}
       {#if pr.commitCount > commits.length}({commits.length === pr.commits.length ? `the last ${commits.length}; loading the rest…` : `GitHub lists ${commits.length}`}){/if}
     </span>
+    {#if unresolved.length}
+      <Button size="sm" variant="ghost" onclick={nextUnresolved} {@attach tip('Go to the next unresolved thread')}>
+        <ChatsCircleRegular /> {plural(unresolved.length, 'unresolved thread')}
+      </Button>
+    {:else if resolved}
+      <span class="muted count">{resolved === 1 ? 'Its thread is resolved' : `All ${resolved} threads resolved`}</span>
+    {/if}
+    <SuggestionBatch number={pr.number} />
     <span class="spacer"></span>
     <Segmented
       size="sm"
@@ -138,7 +199,7 @@
 
   {#if newest}{@render composer()}{/if}
 
-  <ol class="timeline">
+  <ol class="timeline" bind:this={list}>
     {#each entries as e (e.key)}
       {#if e.kind === 'item' && e.item.kind === 'comment'}
         {@const item = e.item}
@@ -193,21 +254,57 @@
           </div>
         </li>
       {:else if e.kind === 'review'}
-        {@const r = REVIEW[e.review.state]}
-        <li class="card review" style:--tone={r.color}>
+        {@const r = e.review ? REVIEW[e.review.state] : { icon: HourglassRegular, color: 'var(--warn)', text: '' }}
+        {@const rest = e.review && !e.threads.length && !e.replies.length ? e.review.comments : 0}
+        <li class="card review" class:pending={!e.review} style:--tone={r.color}>
           <header class="card-head">
             <span class="glyph" style:color={r.color} aria-hidden="true"><r.icon /></span>
-            {@render who(e.review.actor, 18)}
-            <span class="muted">{r.text}</span>
-            {@render time(e.at)}
-            {#if e.review.comments}
+            {#if e.review}
+              {@render who(e.review.actor, 18)}
+              <span class="muted">{r.text}</span>
+              {@render time(e.at)}
+              {#if rest}
+                <span class="spacer"></span>
+                <span class="muted">{plural(rest, 'comment')} on the diff</span>
+              {/if}
+            {:else}
+              <b>Your pending review</b>
+              <span class="muted">{plural(data?.pending?.comments ?? e.threads.length, 'comment')}: only you see them until you submit.</span>
               <span class="spacer"></span>
-              <span class="muted">{plural(e.review.comments, 'comment')} on the diff</span>
+              <ConfirmButton variant="ghost" size="sm" confirmLabel="Discard all?" onconfirm={discard}>Discard review</ConfirmButton>
             {/if}
           </header>
-          {#if e.review.body.trim()}
+          {#if e.review?.body.trim()}
             <div class="card-body"><Markdown text={e.review.body} /></div>
           {/if}
+          {#if e.threads.length || e.replies.length}
+            <div class="threads" aria-label="Its comments on the diff">
+              {#each e.threads as t (t.id)}{@render thread(t)}{/each}
+              {#if e.replies.length}
+                <p class="replies muted">
+                  Replied in
+                  {#each e.replies as t, k (t.id)}
+                    <button class="btn btn--link" onclick={() => goTo(t)} use:tooltip={'Go to the thread'}>
+                      <span><span class="mono">{t.path}</span>{t.subject === 'FILE' ? '' : ` ${linesLabel(t)}`}</span></button
+                    >{k < e.replies.length - 1 ? ', ' : ''}
+                  {/each}
+                </p>
+              {/if}
+            </div>
+          {/if}
+        </li>
+      {:else if e.kind === 'thread'}
+        {@const first = e.thread.comments[0]}
+        <li class="event">
+          <span class="glyph" aria-hidden="true"><ChatCircleRegular /></span>
+          <div class="what">
+            <div class="line">
+              {@render who(first.author, 16)}
+              <span class="muted">commented on <span class="mono">{e.thread.path}</span></span>
+              {@render time(e.at)}
+            </div>
+            <div class="alone">{@render thread(e.thread)}</div>
+          </div>
         </li>
       {:else if e.kind === 'commits'}
         <li class="event">
@@ -334,6 +431,49 @@
 
   .card-body :global(.md > :last-child) {
     margin-bottom: 0;
+  }
+
+  .card-body + .threads {
+    border-top: 1px solid var(--border);
+  }
+
+  .threads {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-4);
+    padding: var(--sp-3) var(--sp-4) var(--sp-4);
+    background: var(--bg);
+  }
+
+  .row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--gap-2);
+    border-radius: var(--radius);
+  }
+
+  .row.flash .thread {
+    outline: 2px solid var(--theme2);
+    outline-offset: 1px;
+    border-radius: var(--radius);
+  }
+
+  .thread {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .alone {
+    margin-top: var(--gap-3);
+  }
+
+  .replies {
+    margin: 0;
+    font-size: var(--fs-sm);
+  }
+
+  .replies .btn--link {
+    font-size: var(--fs-sm);
   }
 
   .edit {

@@ -19,7 +19,6 @@
   import PrReview from './PrReview.svelte';
   import PrSide from './PrSide.svelte';
   import PrTimeline from './PrTimeline.svelte';
-  import ReviewThreads from './ReviewThreads.svelte';
 
   interface Props {
     number: number;
@@ -295,8 +294,6 @@
         </section>
 
         <PrChanges {pr} />
-
-        <ReviewThreads number={pr.number} />
 
         <PrTimeline {pr} {act} {working} {composer} />
       </div>

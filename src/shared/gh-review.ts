@@ -25,6 +25,8 @@ export interface ReviewComment {
   canDelete: boolean;
   /** Part of the viewer's review that isn't submitted yet. */
   pending: boolean;
+  /** The review it was made in (GraphQL node id), as the overview's timeline has it. */
+  reviewId: string | null;
   reactions: { content: Reaction; count: number; mine: boolean }[];
 }
 

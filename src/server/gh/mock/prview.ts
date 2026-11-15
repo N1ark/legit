@@ -115,6 +115,7 @@ db.prview = {
   13: {
     createdAt: ago(76), labels: ['parser'], assignees: ['octocat'], requested: [], checks: 'PENDING',
     additions: 58, deletions: 9, changedFiles: 3, autoMerge: null, pushed: [76, 52],
+    // The threads of each review are mock/review.ts's, by these ids.
     timeline: [
       event('LabeledEvent', 'octocat', 75.9, { label: { name: 'parser', color: LABELS.parser } }),
       review('hubot', 70, 'COMMENTED', 'A first look: the line numbers are a big help already.', 1, 'PRR_13_first'),

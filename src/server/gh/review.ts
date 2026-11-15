@@ -51,6 +51,7 @@ export function toComment(n: any): ReviewComment {
     canEdit: !!n.viewerCanUpdate,
     canDelete: !!n.viewerCanDelete,
     pending: n.pullRequestReview?.state === 'PENDING',
+    reviewId: n.pullRequestReview?.id ?? null,
     reactions: (n.reactionGroups ?? [])
       .filter((g: any) => g.reactors.totalCount > 0)
       .map((g: any) => ({ content: g.content, count: g.reactors.totalCount, mine: !!g.viewerHasReacted })),
