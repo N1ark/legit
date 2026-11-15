@@ -251,8 +251,16 @@ async function prLines(repo: Repo, q: URLSearchParams): Promise<PrLines | null> 
   return g.memo(`pr-lines ${base} ${commit} ${oldest} ${path}`, async () => {
     const from = await g.text(['merge-base', base, commit], { allowFail: true });
     if (!SHA.test(from)) return null;
-    const diff = (a: string, b: string, context: number) =>
-      g.text(['diff', `-U${context}`, '--no-color', '--no-ext-diff', '--no-renames', a, b, '--', path], { allowFail: true });
+    // A file renamed since `a` is read against its old name, as GitHub's diff of it is.
+    const before = async (a: string, b: string) => {
+      const out = await g.text(['diff', '-M', '--name-status', '--diff-filter=R', '--no-ext-diff', a, b], { allowFail: true });
+      return out.split('\n').map((l) => l.split('\t')).find((f) => f[2] === path)?.[1] ?? null;
+    };
+    const diff = async (a: string, b: string, context: number) => {
+      const was = await before(a, b);
+      const args = was ? ['-M', '--', was, path] : ['--no-renames', '--', path];
+      return g.text(['diff', `-U${context}`, '--no-color', '--no-ext-diff', a, b, ...args], { allowFail: true });
+    };
     const hunks = diffHunks(await diff(from, commit, 3)).map(([o, oc, n, nc]) => ({ left: [o, o + oc - 1], right: [n, n + nc - 1] }) as PrLines['hunks'][number]);
     const old = SHA.test(oldest) ? await g.text(['rev-parse', '--verify', '-q', `${oldest}^`], { allowFail: true }) : from;
     if (!SHA.test(old)) return null;

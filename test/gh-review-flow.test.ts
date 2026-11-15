@@ -148,3 +148,25 @@ test("a long pull request's threads, commits and timeline come whole, page after
     delete db.timelinePage;
   }
 });
+
+test('a renamed file takes comments on its removed lines, read against its old name', async () => {
+  const d = join(tmp, 'renamed');
+  const g = (...args: string[]) => execFileSync('git', args, { cwd: d, encoding: 'utf8' }).trim();
+  execFileSync('git', ['init', '-q', '-b', 'main', d]);
+  g('config', 'user.name', 't');
+  g('config', 'user.email', 't@t');
+  const lines = Array.from({ length: 20 }, (_, k) => `line ${k + 1}`);
+  writeFileSync(join(d, 'old.ts'), lines.join('\n') + '\n');
+  g('add', '-A');
+  g('commit', '-qm', 'base');
+  const base = g('rev-parse', 'HEAD');
+  g('mv', 'old.ts', 'new.ts');
+  writeFileSync(join(d, 'new.ts'), lines.map((l, k) => (k === 9 ? 'line ten' : l)).join('\n') + '\n');
+  g('add', '-A');
+  g('commit', '-qm', 'rename');
+  const head = g('rev-parse', 'HEAD');
+  const r = await Repo.open(d);
+  const got = (await githubRoute(r, 'GET', 'reviewLines', new URLSearchParams({ base, commit: head, oldest: head, path: 'new.ts' }))) as PrLines;
+  assert.deepEqual(got.hunks, [{ left: [7, 13], right: [7, 13] }]);
+  assert.deepEqual(got.moved, []);
+});
