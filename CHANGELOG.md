@@ -11,6 +11,10 @@
 - A pull request's overview shows its milestone, how far along it is and when it's due; set or clear it from the side panel.
 - The overview's side panel lists the issues a pull request will close, open or closed; click one to open it on GitHub. “Closes #N” in the description links one.
 - Diffs can be shown side by side (**Side by side** above the diff, or <kbd>S</kbd>): old lines on the left, new ones on the right, each removed line beside the line it became with its changed words marked. Picking lines, commenting, review threads, ⌘F, wrapping and showing more lines between changes all work there; editing a line goes back to one above the other while you edit, and a narrow window always shows it so.
+- Read any pull request without checking it out: opening its overview fetches it into hidden refs (no branch, file or remote branch changes, and nothing new in the branch list or Backups), and **Files changed** shows its diff from where it branched off its base, as GitHub's tab does, with its review threads. Every commit in the overview opens, whether or not it's in your history, and all of them are listed, not just the last 100. Offline, it says why and shows what it fetched before.
+- **Changes since your review** in the overview shows what changed since the commit you last reviewed. After a rebase or force-push it compares the two versions in the files the pull request changes, and says so.
+- Each push in a pull request's timeline has **Compare**: the commits it added together, or what a force-push changed (rebases handled as above). An old commit GitHub no longer has says so.
+- Selecting a branch's commits for its whole diff no longer shows what merging main into it midway brought in.
 
 ## 0.24.0 — 2026-11-14
 

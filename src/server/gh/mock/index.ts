@@ -11,3 +11,4 @@ import './prfiles.ts';
 import './annotations.ts';
 import './repos.ts';
 import './inbox.ts';
+import './prdiff.ts';

@@ -163,6 +163,45 @@ git('push', '-q', 'origin', 'HEAD:refs/pull/15/head');
 git('switch', '-q', '-c', 'try/yaml', 'main');
 commit('Read specs from YAML too', { 'src/yaml.ts': "export const isYaml = (path: string) => path.endsWith('.widget.yaml');\n" });
 git('push', '-q', 'origin', 'HEAD:refs/pull/10/head');
+// GitHub's refs/pull/<n>/head, for reading pull requests without their branch (the mock keeps them up to date).
+for (const [n, branch] of [[12, 'feature/parser'], [13, 'feature/parser-errors'], [14, 'feature/pretty-errors']]) {
+  git('push', '-q', 'origin', `${branch}:refs/pull/${n}/head`);
+}
+// #18 is from monalisa's fork, so only its pull/18/head is here. Octocat reviewed its first
+// version, made before #9; then monalisa force-pushed it rebased on main, with the review addressed.
+const watch = (debounce: boolean) => [
+  "import { watch } from 'node:fs';",
+  "import { build } from './build.ts';",
+  '',
+  'export function watchSpecs(dir: string) {',
+  ...(debounce ? ['  let timer: ReturnType<typeof setTimeout> | undefined;'] : []),
+  '  watch(dir, (_, file) => {',
+  "    if (!file?.endsWith('.widget')) return;",
+  ...(debounce
+    ? ['    clearTimeout(timer);', '    timer = setTimeout(() => {', '      console.log(`${file} changed`);', '      build(`${dir}/${file}`);', '    }, 50);']
+    : ['    build(`${dir}/${file}`);']),
+  '  });',
+  '}',
+  '',
+].join('\n');
+const cli = (more: string) => `import { build } from './build.ts';\nimport { watchSpecs } from './watch.ts';\n\nexport function main(args: string[]) {\n  if (args[0] === '--watch') return watchSpecs(args[1]);${more}\n  console.log(build(args[0]));\n}\n`;
+const usage = '# widgets\n\nWidgets, specified in `.widget` files.\n\n## Usage\n\n```sh\nwidgets build specs/\nwidgets build --watch specs/\n```\n';
+git('switch', '-q', '-c', 'demo/watch', 'main~1');
+commit('Add a file watcher for specs', { 'src/watch.ts': watch(false) });
+commit('Add --watch to the CLI', { 'src/cli.ts': cli('') });
+const reviewed = git('rev-parse', 'HEAD');
+commit('Mention --watch in the README', { 'README.md': usage });
+const before = git('rev-parse', 'HEAD');
+git('switch', '-q', '-c', 'demo/watch-2', 'main');
+commit('Add a file watcher for specs', { 'src/watch.ts': watch(true) });
+commit('Add --watch to the CLI', { 'src/cli.ts': cli("\n  if (!args[0]) throw new Error('Which spec?');") });
+commit('Mention --watch in the README', { 'README.md': `${usage}\nSee \`docs/\` for the format.\n` });
+git('push', '-q', 'origin', 'HEAD:refs/pull/18/head', `${reviewed}:refs/demo/18/reviewed`, `${before}:refs/demo/18/before`);
+git('switch', '-q', 'main');
+git('branch', '-q', '-D', 'demo/watch', 'demo/watch-2');
+// GitHub serves commits by SHA, even ones no branch has any more.
+execFileSync('git', ['-C', bare, 'config', 'uploadpack.allowAnySHA1InWant', 'true']);
+
 git('switch', '-q', 'feature/parser-errors');
 git('branch', '-q', '-D', 'docs/format', 'fix-crlf', 'try/yaml');
 console.log(`demo repo: ${dir}\nLEGIT_GITHUB_MOCK=1 node bin/legit.ts --dev --no-open --port 4321 ${dir}`);

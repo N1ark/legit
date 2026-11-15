@@ -5,6 +5,7 @@ import { toast } from 'purr';
 import { app, request } from './app.svelte.ts';
 import type { GithubStatus, PullRequest } from '../../shared/github.ts';
 import type { PrOverview } from '../../shared/gh-prview.ts';
+import type { PrDiffShow } from '../../shared/gh-prdiff.ts';
 
 /**
  * GitHub reads sent at once; the others wait their turn. The page gets six connections to the
@@ -75,8 +76,8 @@ export function keptPrview(number: number): { at: number; pr: PrOverview } | nul
   return k && Date.now() - k.at < KEPT ? k : null;
 }
 
-/** What the main area shows instead of a commit, when not null. */
-export type GhView = { kind: 'pr'; number: number };
+/** What the main area shows instead of a commit, when not null: a pull request's overview, or one of its diffs (lib/gh-prdiff.svelte.ts). */
+export type GhView = { kind: 'pr'; number: number } | { kind: 'prdiff'; number: number; pr: PullRequest; show: PrDiffShow };
 
 /** How often a refresh that found the same pull request still has the views reload theirs. */
 const TICK_EVERY = 30_000;

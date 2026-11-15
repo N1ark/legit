@@ -157,6 +157,28 @@ test('the combined diff of merges below the editable history: each brings in its
   assert.deepEqual(files(await repo.diff(`q${m2}.${m1}`)), ['a', 'b']);
 });
 
+test("the whole branch's diff leaves out what merging the default branch in midway brought", async () => {
+  const remote = mkdtempSync(join(tmpdir(), 'legit-remote-'));
+  dirs.push(remote);
+  git('init', '-q', '--bare', '-b', 'main', remote);
+  git('remote', 'add', 'origin', remote);
+  commit('base', { f: '1\n' });
+  git('push', '-q', '-u', 'origin', 'main');
+  git('switch', '-q', '-c', 'feature');
+  const b1 = commit('one', { a: 'a\n' });
+  git('switch', '-q', 'main');
+  commit('on main', { m: 'm\n' });
+  git('push', '-q', 'origin', 'main');
+  git('switch', '-q', 'feature');
+  git('merge', '-q', '--no-edit', 'origin/main');
+  const merge = git('rev-parse', 'HEAD');
+  const b2 = commit('two', { b: 'b\n' });
+  const repo = await Repo.open(dir);
+  const paths = (d: { files: { path: string }[] }) => d.files.map((f) => f.path).sort();
+  assert.deepEqual(paths(await repo.diff(`q${b2}-${b1}`)), ['a', 'b']);
+  assert.deepEqual(paths(await repo.diff(`q${b2}-${merge}`)), ['b']);
+});
+
 test('the diff of a squash that would conflict says so', async () => {
   commit('base', { f: '1\n' });
   const a = commit('a', { f: 'a\n' });

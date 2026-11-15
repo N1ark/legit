@@ -6,6 +6,7 @@
   import type { PrComment, PrEventType, PrOverview, ReviewState } from '../../shared/gh-prview.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
+  import { prDiffs } from '../lib/gh-prdiff.svelte.ts';
   import { eventText, ghAvatar, pushedText } from '../lib/gh-prview.ts';
   import { tip } from '../lib/tip.ts';
 
@@ -80,8 +81,12 @@
   {#if app.bySha.has(s)}
     <button class="mono sha here" use:tooltip={'Show this commit'} onclick={() => app.select(s)}>{short}</button>
   {:else}
-    <span class="mono sha">{short}</span>
+    <button class="mono sha" use:tooltip={"Show this commit's changes"} onclick={() => prDiffs.show(pr, { kind: 'commit', sha: s })}>{short}</button>
   {/if}
+{/snippet}
+
+{#snippet compare(from: string, to: string, label: string, note: string)}
+  <button class="btn btn--link compare" use:tooltip={note} onclick={() => prDiffs.show(pr, { kind: 'compare', from, to, label })}>Compare</button>
 {/snippet}
 
 <ol class="timeline" aria-label="Conversation">
@@ -150,6 +155,7 @@
             <b>{item.actor?.login ?? 'someone'}</b>
             <span class="muted">{pushedText(item.commits.length)}</span>
             {@render time(item.at)}
+            {@render compare(`${item.commits[0].sha}^`, item.commits[item.commits.length - 1].sha, `${item.actor?.login ?? 'Someone'} ${pushedText(item.commits.length)}`, "These commits' changes together")}
           </div>
           <ul class="pushed">
             {#each item.commits as c (c.sha)}
@@ -168,6 +174,9 @@
           <span class="muted">{eventText(item)}</span>
           {#if item.label}<Tag label={item.label.name} color="#{item.label.color}" />{/if}
           {@render time(item.at)}
+          {#if item.pushed}
+            {@render compare(item.pushed.from, item.pushed.to, `Force-push ${item.before} → ${item.subject}`, 'What the force-push changed')}
+          {/if}
         </div>
       </li>
     {/if}
@@ -324,6 +333,10 @@
 
   .sha.here {
     color: var(--theme2);
+  }
+
+  .compare {
+    font-size: var(--fs-sm);
   }
 
   @media (hover: hover) {

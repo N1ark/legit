@@ -4,16 +4,16 @@
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
   // Opened again within a minute, it shows the overview it had at once, while it loads again.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
-  import { ArrowSquareOutRegular, CheckCircleFill, CircleFill, CircleRegular, GitPullRequestClosedRegular, XCircleFill, XRegular, type GlyphComponent } from 'purr/glyphs';
+  import { ArrowSquareOutRegular, GitPullRequestClosedRegular, XRegular } from 'purr/glyphs';
   import { onMount, untrack } from 'svelte';
-  import type { CheckState, PrOptions, PrOverview } from '../../shared/gh-prview.ts';
+  import type { PrOptions, PrOverview } from '../../shared/gh-prview.ts';
   import { isLive } from '../../shared/github.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
-  import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
   import { gh, ghPost, ghRequest, keepPrview, keptPrview, loadPrview } from '../lib/github.svelte.ts';
   import PrCheckout from './PrCheckout.svelte';
+  import PrChanges from './PrChanges.svelte';
   import PrMergeBox from './PrMergeBox.svelte';
   import PrStatus from './PrStatus.svelte';
   import PrReview from './PrReview.svelte';
@@ -192,16 +192,6 @@
     e.preventDefault();
     gh.close();
   }
-
-  const CHECK: Record<NonNullable<CheckState>, { icon: GlyphComponent; color: string; label: string }> = {
-    success: { icon: CheckCircleFill, color: 'var(--success)', label: 'Checks passed' },
-    failure: { icon: XCircleFill, color: 'var(--danger)', label: 'Checks failed' },
-    error: { icon: XCircleFill, color: 'var(--danger)', label: 'Checks errored' },
-    pending: { icon: CircleFill, color: 'var(--warn)', label: 'Checks running' },
-    expected: { icon: CircleFill, color: 'var(--warn)', label: 'Checks expected' },
-  };
-
-  const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
 </script>
 
 <svelte:window {onkeydown} />
@@ -304,40 +294,7 @@
           {/if}
         </section>
 
-        <section class="commits" aria-label="Commits">
-          <h3 class="muted">
-            {plural(pr.commitCount, 'commit')}
-            {#if pr.commitCount > pr.commits.length}<span>(the last {pr.commits.length})</span>{/if}
-          </h3>
-          <ol>
-            {#each pr.commits as c (c.sha)}
-              {@const here = app.bySha.has(c.sha)}
-              {@const k = c.checks ? CHECK[c.checks] : null}
-              <li>
-                {#if k}
-                  <button
-                    class="check"
-                    style:color={k.color}
-                    use:tooltip={`${k.label}: show them`}
-                    aria-label={k.label}
-                    aria-expanded={checks.open?.sha === c.sha}
-                    onclick={(e) => checks.show(c.sha, e.currentTarget, c.sha === pr?.headSha ? pr.number : undefined)}
-                  >
-                    <k.icon />
-                  </button>
-                {:else}
-                  <span class="check" style:color="var(--faint)" use:tooltip={'No checks'} role="img" aria-label="No checks"><CircleRegular /></span>
-                {/if}
-                {#if here}
-                  <button class="headline linked" use:tooltip={'Show this commit'} onclick={() => app.select(c.sha)}>{c.headline}</button>
-                {:else}
-                  <span class="headline" use:tooltip={"Not in this branch's history here"}>{c.headline}</span>
-                {/if}
-                <span class="mono sha" class:here>{c.short}</span>
-              </li>
-            {/each}
-          </ol>
-        </section>
+        <PrChanges {pr} />
 
         <ReviewThreads number={pr.number} />
 
@@ -551,72 +508,6 @@
 
   .actions.end {
     justify-content: flex-end;
-  }
-
-  .commits h3 {
-    margin: 0 0 var(--gap-3);
-    font-size: var(--fs-sm);
-    font-weight: 500;
-  }
-
-  .commits ol {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-  }
-
-  .commits li {
-    display: flex;
-    align-items: center;
-    gap: var(--gap-4);
-    padding: var(--sp-2) var(--sp-4);
-    min-height: var(--row-h);
-  }
-
-  .commits li + li {
-    border-top: 1px solid var(--border);
-  }
-
-  .check {
-    display: inline-flex;
-    font-size: var(--icon-md);
-  }
-
-  button.check {
-    border-radius: var(--radius-pill);
-    cursor: pointer;
-  }
-
-  .headline {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-  }
-
-  .linked {
-    color: var(--color2);
-  }
-
-  @media (hover: hover) {
-    .linked:hover {
-      color: var(--theme2);
-      text-decoration: underline;
-    }
-  }
-
-  .sha {
-    color: var(--faint);
-    font-size: var(--fs-xs);
-  }
-
-  .sha.here {
-    color: var(--theme2);
   }
 
   .empty {

@@ -20,7 +20,7 @@ const EVENTS = `
   ... on IssueComment { id databaseId author { ${ACTOR} } body createdAt lastEditedAt viewerCanUpdate viewerCanDelete }
   ... on PullRequestReview { id author { ${ACTOR} } state body createdAt submittedAt comments { totalCount } }
   ... on PullRequestCommit { id commit { oid abbreviatedOid messageHeadline committedDate author { name user { ${ACTOR} } } } }
-  ... on HeadRefForcePushedEvent { id actor { ${ACTOR} } createdAt beforeCommit { abbreviatedOid } afterCommit { abbreviatedOid } }
+  ... on HeadRefForcePushedEvent { id actor { ${ACTOR} } createdAt beforeCommit { oid abbreviatedOid } afterCommit { oid abbreviatedOid } }
   ... on MergedEvent { id actor { ${ACTOR} } createdAt commit { abbreviatedOid } mergeRefName }
   ... on ClosedEvent { id actor { ${ACTOR} } createdAt }
   ... on ReopenedEvent { id actor { ${ACTOR} } createdAt }
@@ -58,7 +58,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
       closingIssuesReferences(first: 20) { nodes { __typename number title url state stateReason repository { nameWithOwner } } }
       reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { ${ACTOR} } ... on Team { combinedSlug avatarUrl } } } }
       latestOpinionatedReviews(first: 50) { nodes { author { ${ACTOR} } state } }
-      latestReviews(first: 50) { nodes { author { ${ACTOR} } state } }
+      latestReviews(first: 50) { nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
       suggestedReviewers { reviewer { ${ACTOR} } }
       reviews(states: PENDING, first: 5) { nodes { id author { login } comments { totalCount } } }
       autoMergeRequest { mergeMethod enabledBy { login } }
@@ -125,7 +125,10 @@ export function timeline(nodes: any[]): PrItem[] {
         break;
       }
       case 'HeadRefForcePushedEvent':
-        out.push({ ...base, kind: 'event', type: 'force-pushed', before: n.beforeCommit?.abbreviatedOid, subject: n.afterCommit?.abbreviatedOid });
+        out.push({
+          ...base, kind: 'event', type: 'force-pushed', before: n.beforeCommit?.abbreviatedOid, subject: n.afterCommit?.abbreviatedOid,
+          ...(n.beforeCommit?.oid && n.afterCommit?.oid ? { pushed: { from: n.beforeCommit.oid, to: n.afterCommit.oid } } : {}),
+        });
         break;
       case 'MergedEvent':
         out.push({ ...base, kind: 'event', type: 'merged', subject: n.commit?.abbreviatedOid, before: n.mergeRefName });
@@ -186,19 +189,30 @@ export function squashDefaults(repo: any, pr: { title: string; body: string; num
   return { title, message };
 }
 
+/** A commit node of a pull request's `commits`. */
+export function prCommit(c: any): PrCommit {
+  return {
+    sha: c.oid,
+    short: c.abbreviatedOid,
+    headline: c.messageHeadline,
+    author: c.author?.user?.login ?? c.author?.name ?? null,
+    checks: check(c.statusCheckRollup?.state),
+  };
+}
+
+/** The commit the viewer's latest submitted review was on, and when. */
+function myReview(pr: any, viewer: string): PrOverview['myReview'] {
+  const r = (pr.latestReviews?.nodes ?? []).find((n: any) => n.author?.login === viewer && n.state !== 'PENDING' && n.commit?.oid);
+  return r ? { sha: r.commit.oid, at: r.submittedAt ?? null } : null;
+}
+
 /** The PrViewOverview query's answer as a PrOverview. */
 export function toOverview(d: any): PrOverview {
   const repo = d.repository;
   const pr = repo?.pullRequest;
   if (!pr) throw new GithubError('GitHub has no such pull request.', 404);
   const viewer: string = d.viewer.login;
-  const commits: PrCommit[] = (pr.commits?.nodes ?? []).map(({ commit: c }: any) => ({
-    sha: c.oid,
-    short: c.abbreviatedOid,
-    headline: c.messageHeadline,
-    author: c.author?.user?.login ?? c.author?.name ?? null,
-    checks: check(c.statusCheckRollup?.state),
-  }));
+  const commits: PrCommit[] = (pr.commits?.nodes ?? []).map(({ commit: c }: any) => prCommit(c));
   const allowed = { merge: repo.mergeCommitAllowed, squash: repo.squashMergeAllowed, rebase: repo.rebaseMergeAllowed };
   const methods = (['merge', 'squash', 'rebase'] as const).filter((m) => allowed[m]);
   const preferred = METHODS[repo.viewerDefaultMergeMethod] ?? 'merge';
@@ -243,6 +257,7 @@ export function toOverview(d: any): PrOverview {
     defaultMethod: methods.includes(preferred) ? preferred : (methods[0] ?? 'merge'),
     deleteBranchOnMerge: !!repo.deleteBranchOnMerge,
     pending: pending ? { id: pending.id, comments: pending.comments?.totalCount ?? 0 } : null,
+    myReview: myReview(pr, viewer),
     timeline: timeline(pr.timelineItems?.nodes ?? []),
     squash: squashDefaults(repo, { title: pr.title, body: pr.body ?? '', number: pr.number }, commits),
   };

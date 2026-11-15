@@ -1,4 +1,4 @@
-// Review threads of the current branch's pull request, for the diffs and the threads panel: loaded
+// Review threads of the current branch's pull request (or the one whose diff is shown), for the diffs and the threads panel: loaded
 // with one query per refresh (gh.tick), changed through server/gh/review.ts, which answers each
 // change with the review as it is then. `DiffReview` is what one diff view shows of it.
 
@@ -48,9 +48,10 @@ class Reviews {
   private loading = new Map<number, Promise<void>>();
   private seen = new Map<number, number>();
 
-  /** The current branch's pull request, when it's open and GitHub's reachable. */
+  /** The pull request whose diff is shown (lib/gh-prdiff.svelte.ts), else the current branch's; when it's open and GitHub's reachable. */
   get pr() {
-    const pr = gh.pr;
+    const v = gh.view;
+    const pr = v?.kind === 'prdiff' ? v.pr : gh.pr;
     return gh.ready && pr && isLive(pr.state) ? pr : null;
   }
 

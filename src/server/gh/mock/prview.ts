@@ -6,6 +6,7 @@ import { GithubError } from '../client.ts';
 import { db, onGraphql, onRest } from './registry.ts';
 import { restPull } from './stack.ts';
 import { prNode } from './pulls.ts';
+import { remoteGit } from './remote.ts';
 
 const avatar = (login: string) => `https://github.com/${login}.png`;
 const actor = (login: string) => ({ login, avatarUrl: avatar(login) });
@@ -146,17 +147,13 @@ const extra = (n: number): Extra => {
   return e;
 };
 
-/** The pull request's commits, from the local repo: `base..head`, as origin has them when it does. */
+/** The pull request's commits, from the local repo: `base..head`, as origin has them when it does (a fork's, as the remote has them). */
 function commits(p: any, e: Extra) {
   const ref = (b: string) => (db.tips[`origin/${b}`] ? `origin/${b}` : db.tips[b] ? b : null);
-  const [base, head] = [ref(p.baseRefName), ref(p.headRefName)];
-  let rows: string[][] = [];
-  if (db.gitDir && base && head) {
-    try {
-      const out = execFileSync('git', ['-C', db.gitDir, 'log', '--reverse', '--format=%H%x1f%h%x1f%s%x1f%an', `${base}..${head}`], { encoding: 'utf8' });
-      rows = out.split('\n').filter(Boolean).map((l) => l.split('\x1f'));
-    } catch {}
-  }
+  const [base, head] = p.fork ? [null, null] : [ref(p.baseRefName), ref(p.headRefName)];
+  const format = '--format=%H%x1f%h%x1f%s%x1f%an';
+  const out = db.gitDir && base && head ? local('log', '--reverse', format, `${base}..${head}`) : remoteGit('log', '--reverse', format, `refs/heads/${p.baseRefName}..refs/pull/${p.number}/head`);
+  let rows = out.split('\n').filter(Boolean).map((l) => l.split('\x1f'));
   if (!rows.length) rows = [['3f2a9c1'.padEnd(40, '0'), '3f2a9c1', p.title, p.author.login]];
   return rows.map(([oid, short, headline, name], i) => ({
     oid, abbreviatedOid: short.slice(0, 7), messageHeadline: headline, committedDate: e.createdAt,
@@ -165,6 +162,17 @@ function commits(p: any, e: Extra) {
   }));
 }
 
+const local = (...args: string[]) => {
+  try {
+    return execFileSync('git', ['-C', db.gitDir, ...args], { encoding: 'utf8' });
+  } catch {
+    return '';
+  }
+};
+
+/** Pull request `p`'s commits as the overview lists them. */
+export const prCommits = (p: any) => commits(p, extra(p.number));
+
 const reviewsOf = (e: Extra) => e.timeline.filter((t) => t.__typename === 'PullRequestReview');
 
 /** Each reviewer's latest review, and the latest that approved or asked for changes. */
@@ -172,7 +180,7 @@ function latest(e: Extra, opinionated: boolean) {
   const by = new Map<string, any>();
   for (const r of reviewsOf(e)) {
     if (opinionated && r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
-    by.set(r.author.login, { author: r.author, state: r.state });
+    by.set(r.author.login, { author: r.author, state: r.state, submittedAt: r.submittedAt, commit: r.commit ?? null });
   }
   return [...by.values()];
 }

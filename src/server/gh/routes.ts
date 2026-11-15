@@ -12,6 +12,7 @@ import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prfilesGet, prfilesPost } from './prfiles.ts';
 import { prviewGet, prviewPost } from './prview.ts';
+import { prdiffGet, prdiffPost } from './prdiff.ts';
 import { reviewGet, reviewPost } from './review.ts';
 import { inboxGet } from './inbox.ts';
 import { checkoutPost } from './checkout.ts';
@@ -64,6 +65,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...prfilesGet,
   ...annotationsGet,
   ...inboxGet,
+  ...prdiffGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,
@@ -74,6 +76,7 @@ export const postRoutes: Record<string, PostRoute> = {
   ...reviewPost,
   ...prfilesPost,
   ...checkoutPost,
+  ...prdiffPost,
 };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
