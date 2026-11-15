@@ -30,11 +30,13 @@ const EVENTS = `
   ... on UnlabeledEvent { id actor { ${ACTOR} } createdAt label { name color } }
   ... on BaseRefChangedEvent { id actor { ${ACTOR} } createdAt previousRefName currentRefName }
   ... on RenamedTitleEvent { id actor { ${ACTOR} } createdAt previousTitle currentTitle }
-  ... on HeadRefDeletedEvent { id actor { ${ACTOR} } createdAt headRefName }`;
+  ... on HeadRefDeletedEvent { id actor { ${ACTOR} } createdAt headRefName }
+  ... on AssignedEvent { id actor { ${ACTOR} } createdAt assignee { ... on User { login } ... on Bot { login } } }
+  ... on UnassignedEvent { id actor { ${ACTOR} } createdAt assignee { ... on User { login } ... on Bot { login } } }`;
 
 const ITEM_TYPES = `[ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT,
   REOPENED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, LABELED_EVENT,
-  UNLABELED_EVENT, BASE_REF_CHANGED_EVENT, RENAMED_TITLE_EVENT, HEAD_REF_DELETED_EVENT]`;
+  UNLABELED_EVENT, BASE_REF_CHANGED_EVENT, RENAMED_TITLE_EVENT, HEAD_REF_DELETED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]`;
 
 export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
@@ -149,6 +151,10 @@ export function timeline(nodes: any[]): PrItem[] {
         break;
       case 'HeadRefDeletedEvent':
         out.push({ ...base, kind: 'event', type: 'head-deleted', subject: n.headRefName });
+        break;
+      case 'AssignedEvent':
+      case 'UnassignedEvent':
+        out.push({ ...base, kind: 'event', type: n.__typename === 'AssignedEvent' ? 'assigned' : 'unassigned', subject: n.assignee?.login ?? 'someone' });
         break;
     }
   }
@@ -326,6 +332,12 @@ export const prviewPost: Record<string, PostRoute> = {
     const remove = list(b.remove);
     if (add.length) await rest('POST', `${r.path}/pulls/${r.number}/requested_reviewers`, split(add));
     if (remove.length) await rest('DELETE', `${r.path}/pulls/${r.number}/requested_reviewers`, split(remove));
+  }),
+  prviewAssignees: change(async (r, b) => {
+    const add = list(b.add);
+    const remove = list(b.remove);
+    if (add.length) await rest('POST', `${r.path}/issues/${r.number}/assignees`, { assignees: add });
+    if (remove.length) await rest('DELETE', `${r.path}/issues/${r.number}/assignees`, { assignees: remove });
   }),
   prviewLabels: change(async (r, b) => {
     const add = list(b.add);

@@ -1,10 +1,10 @@
 <script lang="ts">
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
-  // labels and size. Reviewers and labels change from a menu of the repository's choices.
+  // labels and size. Reviewers, assignees and labels change from a menu of the repository's choices.
   import { Avatar, IconButton, Tag, tooltip } from 'purr';
   import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrLabel, PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
-  import { isLive } from '../../shared/github.ts';
+  import { type GhUser, isLive } from '../../shared/github.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
   import PickMany, { type Choice } from './PickMany.svelte';
 
@@ -32,6 +32,9 @@
   /** Labels just applied, shown until the pull request comes back with them. */
   let applying = $state.raw<PrLabel[] | null>(null);
   const labels = $derived(applying ?? pr.labels);
+  /** Likewise for assignees. */
+  let assigning = $state.raw<GhUser[] | null>(null);
+  const assignees = $derived(assigning ?? pr.assignees);
   let picker = $state<PickMany>();
 
   /** Asked to add `next`'s and remove what's gone from `now`; nothing when they're the same. */
@@ -63,6 +66,31 @@
         const change = diff(requested, keys);
         if (change.add.length || change.remove.length) act('prviewReviewers', change);
       },
+    };
+  }
+
+  async function setAssignees(now: string[], keys: string[], users: GhUser[]) {
+    const change = diff(now, keys);
+    if (!change.add.length && !change.remove.length) return;
+    assigning = keys.map((k) => users.find((u) => u.login === k) ?? { login: k, avatar: '' });
+    await act('prviewAssignees', change);
+    assigning = null;
+  }
+
+  async function pickAssignees(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
+    if (picking) return picker?.close();
+    const anchor = e.currentTarget;
+    const users = (await options())?.users;
+    if (!users) return;
+    const now = pr.assignees.map((a) => a.login);
+    // The current ones first, as GitHub has them, even when they're no longer assignable.
+    const all = [...pr.assignees, ...users.filter((u) => !now.includes(u.login))];
+    picking = {
+      anchor,
+      title: 'Assign up to 10 people to this pull request',
+      choices: all.map((u) => ({ key: u.login, label: u.login, avatar: ghAvatar(u.avatar) })),
+      chosen: now,
+      apply: (keys) => setAssignees(now, keys.slice(0, 10), all),
     };
   }
 
@@ -120,15 +148,22 @@
   </section>
 
   <section>
-    <header><h3>Assignees</h3></header>
-    {#if pr.assignees.length}
+    <header>
+      <h3>Assignees</h3>
+      {#if pr.canUpdate}
+        <IconButton label="Change assignees" size="sm" disabled={working} onclick={pickAssignees}><GearRegular /></IconButton>
+      {/if}
+    </header>
+    {#if assignees.length}
       <ul>
-        {#each pr.assignees as a (a.login)}
+        {#each assignees as a (a.login)}
           <li><Avatar name={a.login} src={ghAvatar(a.avatar)} size={18} round /><span class="name">{a.login}</span></li>
         {/each}
       </ul>
     {:else}
-      <p class="muted">No one</p>
+      <p class="muted">
+        No one{#if pr.canUpdate}—<button class="btn btn--link" disabled={working} onclick={() => setAssignees([], [pr.viewer], [])}>assign yourself</button>{/if}
+      </p>
     {/if}
   </section>
 

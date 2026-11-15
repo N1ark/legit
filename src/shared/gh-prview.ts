@@ -68,12 +68,12 @@ export interface PrPushed extends Item {
 
 export type PrEventType =
   | 'merged' | 'closed' | 'reopened' | 'ready' | 'draft' | 'force-pushed' | 'review-requested' | 'review-request-removed'
-  | 'labeled' | 'unlabeled' | 'base-changed' | 'renamed' | 'head-deleted';
+  | 'labeled' | 'unlabeled' | 'base-changed' | 'renamed' | 'head-deleted' | 'assigned' | 'unassigned';
 
 export interface PrEvent extends Item {
   kind: 'event';
   type: PrEventType;
-  /** A reviewer, a label's name, a new base or title, a commit's short SHA, depending on `type`. */
+  /** A reviewer or assignee, a label's name, a new base or title, a commit's short SHA, depending on `type`. */
   subject?: string;
   /** What it was before: a force push's old tip, the old base or title. */
   before?: string;

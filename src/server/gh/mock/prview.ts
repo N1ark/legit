@@ -357,6 +357,26 @@ onRest('DELETE /repos/:owner/:repo/pulls/:number/requested_reviewers', (params, 
   return { number: Number(params.number) };
 });
 
+onRest('POST /repos/:owner/:repo/issues/:number/assignees', (params, _, body) => {
+  const e = extra(Number(params.number));
+  for (const login of body.assignees as string[]) {
+    if (e.assignees.includes(login) || !USERS.includes(login)) continue;
+    e.assignees.push(login);
+    e.timeline.push(event('AssignedEvent', db.viewer, 0, { assignee: { login } }));
+  }
+  return { number: Number(params.number), assignees: e.assignees.map(actor) };
+});
+
+onRest('DELETE /repos/:owner/:repo/issues/:number/assignees', (params, _, body) => {
+  const e = extra(Number(params.number));
+  for (const login of body.assignees as string[]) {
+    if (!e.assignees.includes(login)) continue;
+    e.assignees = e.assignees.filter((a) => a !== login);
+    e.timeline.push(event('UnassignedEvent', db.viewer, 0, { assignee: { login } }));
+  }
+  return { number: Number(params.number), assignees: e.assignees.map(actor) };
+});
+
 onRest('POST /repos/:owner/:repo/issues/:number/labels', (params, _, body) => {
   const e = extra(Number(params.number));
   for (const name of body.labels as string[]) {

@@ -167,3 +167,14 @@ test('the fake GitHub: a review submits the pending one, and a merge refuses a h
   assert.equal(last?.kind === 'event' ? last.type : null, 'merged');
   assert.equal(db.pulls.find((p: any) => p.number === 12).state, 'MERGED');
 });
+
+test('the fake GitHub: assignees come and go, each with an event', async () => {
+  const v = { owner: 'acme', name: 'widgets', number: 14 };
+  assert.deepEqual(toOverview(await mockGraphql('query PrViewOverview', v)).assignees, []);
+  await mockRest('POST', '/repos/acme/widgets/issues/14/assignees', { assignees: ['octocat', 'hubot'] });
+  await mockRest('DELETE', '/repos/acme/widgets/issues/14/assignees', { assignees: ['hubot'] });
+  const o = toOverview(await mockGraphql('query PrViewOverview', v));
+  assert.deepEqual(o.assignees.map((a) => a.login), ['octocat']);
+  const events = o.timeline.flatMap((t) => (t.kind === 'event' && t.type.endsWith('assigned') ? [eventText(t)] : []));
+  assert.deepEqual(events, ['self-assigned this', 'assigned hubot', 'unassigned hubot']);
+});
