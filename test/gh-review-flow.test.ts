@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import type { PrReview } from '../src/shared/gh-review.ts';
+import type { PrLines, PrReview } from '../src/shared/gh-review.ts';
 
 // The demo repo (scripts/gh-demo.ts) against the fake GitHub, as `LEGIT_GITHUB_MOCK=1` runs it.
 process.env.LEGIT_GITHUB_MOCK = '1';
@@ -45,4 +45,20 @@ test('a comment on a whole file, alone or in the pending review; refused for a f
   db.threads = db.threads.filter((x: { comments: { body: string }[] }) => !['On the parser', 'Pending one'].includes(x.comments[0]?.body));
   delete db.pending[13];
   assert.equal((await get('reviewThreads', { number: '13', fresh: '1' })).pending, null);
+});
+
+test("what GitHub takes comments on in a file at a commit: the pull request's diff's hunks, and the diff's old side against its base", async () => {
+  const [head, first, base] = [git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD~1'), git('rev-parse', 'origin/feature/parser')];
+  const lines = (commit: string, oldest: string, path: string) => get<PrLines | null>('reviewLines', { base, commit, oldest, path });
+  // parser.ts gains an import at the top and changes lines 15 and 23: two hunks with three lines around.
+  assert.deepEqual(await lines(head, head, 'src/parser.ts'), { hunks: [{ left: [1, 3], right: [1, 4] }, { left: [12, 23], right: [13, 26] }], moved: [] });
+  assert.deepEqual((await lines(head, head, 'README.md'))?.hunks, []);
+  // From the pull request's first commit, whose parent is the base, nothing moves; from further back, what changed since does.
+  assert.deepEqual((await lines(first, first, 'src/errors.ts'))?.moved, []);
+  assert.deepEqual((await lines(head, git('rev-parse', 'HEAD~2'), 'src/parser.ts'))?.moved, [[1, 25, 0, 0]]);
+  // A removed line goes by the base's number.
+  const r = await post('reviewComment', { number: 13, commitId: head, path: 'src/parser.ts', line: 15, side: 'LEFT', body: 'Removed' });
+  const t = r.threads.find((x) => x.comments[0].body === 'Removed');
+  assert.deepEqual([t?.side, t?.line], ['LEFT', 15]);
+  db.threads = db.threads.filter((x: { id: string }) => x.id !== t?.id);
 });

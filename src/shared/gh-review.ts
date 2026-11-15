@@ -86,3 +86,11 @@ export interface ApplySuggestion {
   /** What replaces them. */
   replacement: string[];
 }
+
+/** A file's lines GitHub takes comments on at a commit, worked out from the local repo (server/gh/review.ts's `reviewLines`). */
+export interface PrLines {
+  /** The hunks of the pull request's diff of the file at the commit (three lines of context): [first, last] lines on each side, last < first when none. None when it doesn't change the file. */
+  hunks: { left: [number, number]; right: [number, number] }[];
+  /** The diff shown's old side against the base, `git diff -U0` hunks [baseStart, baseCount, oldStart, oldCount]: how its removed lines map to the base's. */
+  moved: [number, number, number, number][];
+}

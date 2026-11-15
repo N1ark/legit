@@ -3,7 +3,7 @@
 // when there is something (the commit it was made on is the one shown, or the diff shown ends at
 // the pull request's head) and otherwise by the text of the line it's on, near where it was.
 
-import type { DiffSide, ReviewThread } from '../../shared/gh-review.ts';
+import type { DiffSide, PrLines, ReviewThread } from '../../shared/gh-review.ts';
 
 /** What placing needs of a file's rows (lib/rows.ts's FileRows). */
 export interface RowsLike {
@@ -146,17 +146,20 @@ export function placeThread(t: ReviewThread, rows: RowsLike, ctx: DiffContext): 
     const p = exact(t.side, t.line, t.startSide, t.startLine);
     if (p) return p;
   }
-  if (ctx.sha && first?.originalCommit === ctx.sha && t.originalLine !== null) {
+  const made = !!ctx.sha && first?.originalCommit === ctx.sha;
+  // Removed lines are numbered as the base has them, which only this diff's old side is when it's the base.
+  const left = t.side === 'LEFT' || t.startSide === 'LEFT';
+  if (made && t.originalLine !== null && (ctx.base || !left)) {
     // On the commit it was made on, unless that line is only context here and was a change there.
     const p = exact(t.side, t.originalLine, t.startSide, t.originalStartLine, last?.kind);
     if (p) return p;
   }
   if (!last || (ctx.head && t.outdated)) return null;
   // On an unchanged line whose number is known here, it's only folded away: it shows once that line does.
-  if (last.kind === ' ' && ((ctx.head && t.line !== null) || (ctx.sha && first?.originalCommit === ctx.sha))) return null;
+  if (last.kind === ' ' && ((ctx.head && t.line !== null) || made)) return null;
   const row = matchText(rows, lines, (ctx.head ? t.line : null) ?? t.originalLine);
   if (row < 0) return null;
-  return { thread: t, row, start: rangeStart(rows, row, span(t.originalStartLine, t.originalLine)), moved: true };
+  return { thread: t, row, start: rangeStart(rows, row, span(t.originalStartLine, t.originalLine)), moved: !made };
 }
 
 /** A file's threads placed on its rows, and those of them that belong to this diff but have no line in it. */
@@ -177,19 +180,52 @@ export function belongs(t: ReviewThread, ctx: DiffContext): boolean {
   return ctx.head || (!!ctx.sha && t.comments[0]?.originalCommit === ctx.sha);
 }
 
-/** Where a new comment on rows a..b goes on GitHub, or why it can't. */
-export function commentTarget(
-  rows: RowsLike,
-  a: number,
-  b: number,
-  ctx: Pick<DiffContext, 'base'>,
-): { line: number; side: DiffSide; startLine?: number; startSide?: DiffSide } | { error: string } {
+/** Line `line` of a diff's old side as the pull request's base numbers it (see PrLines' `moved`); null when the base doesn't have it. */
+export function baseLine(moved: PrLines['moved'], line: number): number | null {
+  let delta = 0;
+  for (const [, baseCount, start, count] of moved) {
+    if (count > 0 && line >= start && line < start + count) return null;
+    if (count === 0 ? line > start : line >= start + count) delta += count - baseCount;
+  }
+  return line - delta;
+}
+
+/** The hunk of the pull request's diff that has `line` on `side`, or -1. */
+export function hunkOf(pr: PrLines, side: DiffSide, line: number): number {
+  return pr.hunks.findIndex((h) => {
+    const [a, b] = side === 'LEFT' ? h.left : h.right;
+    return line >= a && line <= b;
+  });
+}
+
+type Target = { line: number; side: DiffSide; startLine?: number; startSide?: DiffSide };
+
+/**
+ * Where a new comment on rows a..b goes on GitHub, or why it can't. With `pr` (what GitHub takes
+ * comments on in the file), removed lines go by the base's numbers and lines outside its diff are
+ * refused; without it, removed lines only when the diff's old side is the base.
+ */
+export function commentTarget(rows: RowsLike, a: number, b: number, ctx: Pick<DiffContext, 'base'>, pr?: PrLines | null): Target | { error: string } {
   if (a > b) [a, b] = [b, a];
   for (let r = a; r <= b; r++) if (isHead(rows.kind[r])) return { error: 'Pick lines within one block of the diff.' };
   const at = (r: number) => (rows.kind[r] === REMOVED ? { side: 'LEFT' as const, line: rows.o[r] } : { side: 'RIGHT' as const, line: rows.n[r] });
-  const end = at(b);
-  const start = at(a);
-  if (!ctx.base && (end.side === 'LEFT' || start.side === 'LEFT')) {
+  let end = at(b);
+  let start = at(a);
+  if (pr) {
+    const s = start.side === 'LEFT' ? baseLine(pr.moved, start.line) : start.line;
+    const e = end.side === 'LEFT' ? baseLine(pr.moved, end.line) : end.line;
+    if (s === null || e === null) {
+      return { error: "That removed line isn't in the pull request's base (an earlier commit of it added the line), so GitHub can't place a comment on it: comment where that line was added, or on the whole file." };
+    }
+    if (!pr.hunks.length) return { error: "The pull request doesn't change this file as of this commit, so GitHub takes no comments on it." };
+    const h = hunkOf(pr, end.side, e);
+    const hs = hunkOf(pr, start.side, s);
+    if (h < 0 || hs < 0) {
+      return { error: "GitHub takes comments only on the pull request's changed lines and the three around them; comment on the whole file instead." };
+    }
+    if (h !== hs) return { error: "Pick lines within one block of the pull request's diff: GitHub takes a comment on one." };
+    [start, end] = [{ ...start, line: s }, { ...end, line: e }];
+  } else if (!ctx.base && (end.side === 'LEFT' || start.side === 'LEFT')) {
     return { error: "GitHub reads removed lines against the pull request's base, which isn't this commit's parent: comment on added or unchanged lines." };
   }
   return a === b ? end : { ...end, startLine: start.line, startSide: start.side };

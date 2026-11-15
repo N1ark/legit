@@ -10,7 +10,7 @@ import { GithubError, MOCK, cached, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
-import type { ApplySuggestion, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+import type { ApplySuggestion, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 import type { Repo } from '../repo.ts';
 
 const COMMENT_FIELDS = `id databaseId body createdAt lastEditedAt url diffHunk viewerCanUpdate viewerCanDelete
@@ -206,10 +206,41 @@ async function reply(repo: Repo, b: { number: number; threadId: string; commentD
   return reload(repo, number);
 }
 
+/** A unified diff's hunk headers as [oldStart, oldCount, newStart, newCount]. */
+export function diffHunks(diff: string): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) out.push([+m[1], m[2] === undefined ? 1 : +m[2], +m[3], m[4] === undefined ? 1 : +m[4]]);
+  return out;
+}
+
+const SHA = /^[0-9a-f]{40,64}$/;
+
+/**
+ * What GitHub takes comments on in `path` at `commit`: the hunks of the pull request's diff there
+ * (from where it leaves `base`), and how the old side of the diff shown (`oldest`'s parent) maps
+ * onto that; null when the repo doesn't have what it takes to tell.
+ */
+async function prLines(repo: Repo, q: URLSearchParams): Promise<PrLines | null> {
+  const [base, commit, oldest, path] = ['base', 'commit', 'oldest', 'path'].map((k) => q.get(k) ?? '');
+  if (!SHA.test(base) || !SHA.test(commit) || !path) throw new GithubError('Bad request.', 400);
+  const g = repo.git;
+  return g.memo(`pr-lines ${base} ${commit} ${oldest} ${path}`, async () => {
+    const from = await g.text(['merge-base', base, commit], { allowFail: true });
+    if (!SHA.test(from)) return null;
+    const diff = (a: string, b: string, context: number) =>
+      g.text(['diff', `-U${context}`, '--no-color', '--no-ext-diff', '--no-renames', a, b, '--', path], { allowFail: true });
+    const hunks = diffHunks(await diff(from, commit, 3)).map(([o, oc, n, nc]) => ({ left: [o, o + oc - 1], right: [n, n + nc - 1] }) as PrLines['hunks'][number]);
+    const old = SHA.test(oldest) ? await g.text(['rev-parse', '--verify', '-q', `${oldest}^`], { allowFail: true }) : from;
+    if (!SHA.test(old)) return null;
+    return { hunks, moved: old === from ? [] : diffHunks(await diff(from, old, 0)) };
+  });
+}
+
 const REACTIONS: Reaction[] = ['THUMBS_UP', 'THUMBS_DOWN', 'LAUGH', 'HOORAY', 'CONFUSED', 'HEART', 'ROCKET', 'EYES'];
 
 export const reviewGet: Record<string, GetRoute> = {
   reviewThreads: async (repo, q) => (await load(repo, num(q.get('number'), 'pull request number'), q.get('fresh') === '1')).review,
+  reviewLines: prLines,
 };
 
 export const reviewPost: Record<string, PostRoute> = {

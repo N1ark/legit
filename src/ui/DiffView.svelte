@@ -338,7 +338,7 @@
     const rows = contents[i];
     const p = sel[files[i].path]?.size ? pickedRows(i) : null;
     const [a, b] = Array.isArray(p) && r >= p[0] && r <= p[1] ? p : [r, r];
-    const why = review.why(rows, a, b);
+    const why = review.why(files[i].path, rows, a, b);
     return {
       label: a === b ? 'Comment on this line…' : `Comment on ${b - a + 1} lines…`,
       icon: ChatCircleTextRegular,
@@ -362,7 +362,7 @@
     if (i < 0) return null;
     const p = pickedRows(i);
     if (typeof p === 'string') return { why: p, run: () => {} };
-    const why = review.why(contents[i], p[0], p[1]);
+    const why = review.why(files[i].path, contents[i], p[0], p[1]);
     return { why, run: () => review.compose(files[i].path, contents[i], p[0], p[1]) };
   }
 

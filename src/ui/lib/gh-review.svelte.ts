@@ -6,7 +6,7 @@ import { toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, belongs, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
-import type { DiffSide, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+import type { DiffSide, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 import { isLive } from '../../shared/github.ts';
 
 /** A comment being written on lines of a diff (`key`: the diff's), kept while the view comes and goes. */
@@ -20,6 +20,8 @@ export interface Draft {
   side: DiffSide;
   startLine?: number;
   startSide?: DiffSide;
+  /** Where GitHub has those lines, when that's not where the diff shown has them (removed lines, numbered as the base has them). */
+  gh?: { line: number; side: DiffSide; startLine?: number; startSide?: DiffSide };
   body: string;
   /** The picked lines' new text, for "Suggest"; null when they're removed lines. */
   suggest: string[] | null;
@@ -155,7 +157,7 @@ export class DiffReview {
     if (!d) return { sha: one, head: false, base: false };
     const head = this.shas[0] === d.headSha;
     // Its old side is the base when it starts at the pull request's first commit.
-    const base = head && d.commits.length > 0 && d.commits.every((c) => this.shas.includes(c));
+    const base = (head && d.commits.length > 0 && d.commits.every((c) => this.shas.includes(c))) || (!!one && one === d.commits[0]);
     return { sha: one, head, base };
   });
 
@@ -181,8 +183,8 @@ export class DiffReview {
     return app.bySha.get(sha)?.pushed ? { why: `This commit isn't part of #${d.number} on GitHub. Push it first.` } : { why: 'Push this commit first.' };
   });
 
-  /** Removed lines can be commented on: the diff's old side is the pull request's base. */
-  private base = $derived(this.ctx.base || (!!this.data && this.ctx.sha === this.data.commits[0]));
+  /** Removed lines can be commented on as they're numbered here: the diff's old side is the pull request's base. */
+  private base = $derived(this.ctx.base);
 
   /** Threads and comments being written on whole files, shown at their tops, by path. */
   onFiles = $derived.by(() => {
@@ -216,33 +218,72 @@ export class DiffReview {
   }
 
   /** Why rows a..b of `path` can't be commented on, or null. */
-  why(rows: RowsLike, a: number, b: number): string | null {
+  // What GitHub takes comments on in each file (see PrLines), asked of the server as a file's
+  // lines are looked at; `linesIn` changes as answers come in. null: it can't tell, and GitHub will.
+  private prLines = new Map<string, Promise<PrLines | null> | PrLines | null>();
+  private linesIn = $state(0);
+
+  /** What GitHub takes comments on in file `path`, once known (see PrLines). */
+  lines(path: string): Promise<PrLines | null> {
+    if (!this.data || 'why' in this.target) return Promise.resolve(null);
+    const q = { base: this.data.baseSha, commit: this.target.commit, oldest: this.shas[this.shas.length - 1], path };
+    const key = JSON.stringify(q);
+    const hit = this.prLines.get(key);
+    if (hit !== undefined) return Promise.resolve(hit);
+    const p = ghRequest<PrLines | null>('reviewLines', q).then(
+      (v) => v,
+      () => null,
+    );
+    this.prLines.set(key, p);
+    p.then((v) => {
+      this.prLines.set(key, v);
+      this.linesIn++;
+    });
+    return p;
+  }
+
+  /** `lines(path)` if it's in, else undefined (and it's asked for). */
+  private linesNow(path: string): PrLines | null | undefined {
+    void this.linesIn;
+    if (!this.data || 'why' in this.target) return null;
+    const q = { base: this.data.baseSha, commit: this.target.commit, oldest: this.shas[this.shas.length - 1], path };
+    const hit = this.prLines.get(JSON.stringify(q));
+    if (hit === undefined) void this.lines(path);
+    return hit instanceof Promise ? undefined : hit;
+  }
+
+  /** Why rows a..b of `path` can't be commented on, or null. */
+  why(path: string, rows: RowsLike, a: number, b: number): string | null {
     if ('why' in this.target) return this.target.why;
-    const t = commentTarget(rows, a, b, { base: this.base });
+    const t = commentTarget(rows, a, b, { base: this.base }, this.linesNow(path));
     return 'error' in t ? t.error : null;
   }
 
   /** Start a comment on rows a..b of `path` (or go back to the one being written there). */
-  compose(path: string, rows: RowsLike, a: number, b: number) {
-    const why = this.why(rows, a, b);
+  async compose(path: string, rows: RowsLike, a: number, b: number) {
+    await this.lines(path);
+    const why = this.why(path, rows, a, b);
     if (why) return toast.error(why);
-    const t = commentTarget(rows, a, b, { base: this.base });
-    if ('error' in t) return;
-    const id = `draft:${this.key}:${path}:${t.side}${t.line}`;
-    const all = [];
-    for (let r = Math.min(a, b); r <= Math.max(a, b); r++) all.push(rows.kind[r]);
+    const t = commentTarget(rows, a, b, { base: this.base }, this.linesNow(path));
+    const at = commentTarget(rows, a, b, { base: true });
+    if ('error' in t || 'error' in at) return;
+    const id = `draft:${this.key}:${path}:${at.side}${at.line}`;
     const right = t.side === 'RIGHT' && (t.startSide ?? 'RIGHT') === 'RIGHT';
-    reviews.drafts[id] ??= { id, key: this.key, path, ...t, body: '', suggest: right ? newText(rows, a, b) : null };
+    const moved = t.line !== at.line || t.startLine !== at.startLine;
+    reviews.drafts[id] ??= { id, key: this.key, path, ...at, ...(moved ? { gh: t } : {}), body: '', suggest: right ? newText(rows, a, b) : null };
     reviews.focus = { id, path };
   }
 
   /** Why file `path` can't be commented on as a whole, or null. */
-  fileWhy(_path: string): string | null {
-    return 'why' in this.target ? this.target.why : null;
+  fileWhy(path: string): string | null {
+    if ('why' in this.target) return this.target.why;
+    const pr = this.linesNow(path);
+    return pr && !pr.hunks.length ? "The pull request doesn't change this file as of this commit, so GitHub takes no comments on it." : null;
   }
 
   /** Start a comment on the whole of file `path` (or go back to the one being written). */
-  composeFile(path: string) {
+  async composeFile(path: string) {
+    await this.lines(path);
     const why = this.fileWhy(path);
     if (why) return toast.error(why);
     const id = `draft:${this.key}:${path}:file`;
@@ -257,7 +298,8 @@ export class DiffReview {
       toast.error(this.target.why);
       return false;
     }
-    const { line, side, startLine, startSide, path, body, subject } = d;
+    const { line, side, startLine, startSide } = d.gh ?? d;
+    const { path, body, subject } = d;
     return reviews.comment({ number: pr.number, commitId: this.target.commit, path, subject, line, side, startLine, startSide, body, pending }, d);
   }
 }

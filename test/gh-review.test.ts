@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { toReview, withSuggestion } from '../src/server/gh/review.ts';
-import type { ReviewThread } from '../src/shared/gh-review.ts';
+import { diffHunks, toReview, withSuggestion } from '../src/server/gh/review.ts';
+import type { PrLines, ReviewThread } from '../src/shared/gh-review.ts';
 import {
+  baseLine,
   commentTarget,
   heightAbove,
   layOut,
@@ -159,6 +160,26 @@ test('where a new comment goes', () => {
   assert.ok('error' in commentTarget(DIFF, 2, 2, { base: false }));
   assert.ok('error' in commentTarget(DIFF, 0, 2, { base: true }));
   assert.deepEqual(newText(DIFF, 1, 4), ['function f() {', '  return 2;', '  // two']);
+});
+
+test("where a new comment goes, by the pull request's diff on GitHub", () => {
+  // An earlier commit of the pull request added two lines at the top: the base has line 11 as 9.
+  const pr: PrLines = { hunks: [{ left: [8, 12], right: [10, 13] }], moved: [[0, 0, 1, 2]] };
+  assert.deepEqual(commentTarget(DIFF, 2, 2, { base: false }, pr), { side: 'LEFT', line: 9 });
+  assert.deepEqual(commentTarget(DIFF, 2, 3, { base: false }, pr), { side: 'RIGHT', line: 11, startLine: 9, startSide: 'LEFT' });
+  assert.deepEqual(commentTarget(DIFF, 1, 1, { base: false }, pr), { side: 'RIGHT', line: 10 });
+  // Further from a change than GitHub's three lines of context; or in two of its hunks.
+  assert.match((commentTarget(DIFF, 1, 1, { base: true }, { hunks: [{ left: [11, 12], right: [11, 13] }], moved: [] }) as { error: string }).error, /whole file/);
+  const two: PrLines = { hunks: [{ left: [10, 10], right: [10, 10] }, { left: [11, 12], right: [11, 13] }], moved: [] };
+  assert.match((commentTarget(DIFF, 1, 3, { base: true }, two) as { error: string }).error, /one block/);
+  // A removed line an earlier commit added isn't in the base; a file the pull request doesn't change takes none.
+  assert.match((commentTarget(DIFF, 2, 2, { base: false }, { hunks: pr.hunks, moved: [[10, 0, 11, 1]] }) as { error: string }).error, /base/);
+  assert.match((commentTarget(DIFF, 3, 3, { base: false }, { hunks: [], moved: [] }) as { error: string }).error, /doesn't change this file/);
+  assert.equal(baseLine([[5, 2, 4, 0]], 4), 4);
+  assert.equal(baseLine([[5, 2, 4, 0]], 5), 7);
+  assert.equal(baseLine([[5, 1, 5, 3]], 6), null);
+  assert.equal(baseLine([[5, 1, 5, 3]], 9), 7);
+  assert.deepEqual(diffHunks('@@ -1 +1,2 @@\n-a\n+b\n+c\n@@ -10,0 +12,3 @@ f() {\n+d'), [[1, 1, 1, 2], [10, 0, 12, 3]]);
 });
 
 test('suggestions come out of a comment, in order', () => {
