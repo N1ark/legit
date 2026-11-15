@@ -4,11 +4,13 @@
   import { Avatar, Button, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, menu, tooltip } from 'purr';
   import { ArrowSquareOutRegular, CopyRegular, DotsThreeBold, PencilSimpleRegular, SmileyRegular, TrashRegular } from 'purr/glyphs';
   import Markdown from '../Markdown.svelte';
+  import ReactionPicker from './ReactionPicker.svelte';
   import Suggestion from './Suggestion.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
+  import { EMOJI, REACTION_NAMES as NAMES } from '../lib/gh-reactions.ts';
   import { splitSuggestions } from '../lib/gh-threads.ts';
-  import type { Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+  import type { ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 
   interface Props {
     number: number;
@@ -16,13 +18,6 @@
     comment: ReviewComment;
   }
   let { number, thread, comment }: Props = $props();
-
-  const EMOJI: Record<Reaction, string> = {
-    THUMBS_UP: '👍', THUMBS_DOWN: '👎', LAUGH: '😄', HOORAY: '🎉', CONFUSED: '😕', HEART: '❤️', ROCKET: '🚀', EYES: '👀',
-  };
-  const NAMES: Record<Reaction, string> = {
-    THUMBS_UP: 'Thumbs up', THUMBS_DOWN: 'Thumbs down', LAUGH: 'Laugh', HOORAY: 'Hooray', CONFUSED: 'Confused', HEART: 'Heart', ROCKET: 'Rocket', EYES: 'Eyes',
-  };
 
   const parts = $derived(splitSuggestions(comment.body));
   let editing = $state<string | null>(null);
@@ -57,16 +52,7 @@
     ]);
   }
 
-  function react(e: MouseEvent) {
-    menu.showFor(
-      e.currentTarget as HTMLElement,
-      (Object.keys(EMOJI) as Reaction[]).map((r) => ({
-        label: `${EMOJI[r]}  ${NAMES[r]}`,
-        checked: comment.reactions.some((x) => x.content === r && x.mine),
-        run: () => reviews.react(number, comment, r),
-      })),
-    );
-  }
+  let picking = $state<HTMLElement | null>(null);
 
   const who = $derived(comment.author?.login ?? 'ghost');
 </script>
@@ -79,7 +65,7 @@
     {#if comment.lastEditedAt}<span class="muted" use:tooltip={`Edited ${formatFull(comment.lastEditedAt)}`}>· edited</span>{/if}
     {#if comment.pending}<span use:tooltip={'Only you see it until your review is submitted'}><Tag color="var(--warn)" label="Pending" /></span>{/if}
     <span class="spacer"></span>
-    <IconButton label="React" size="sm" onclick={react}><SmileyRegular /></IconButton>
+    <IconButton label="React" size="sm" aria-expanded={!!picking} onclick={(e) => (picking = picking ? null : e.currentTarget)}><SmileyRegular /></IconButton>
     <IconButton label="More" size="sm" onclick={actions}><DotsThreeBold /></IconButton>
   </div>
   {#if editing !== null}
@@ -99,6 +85,14 @@
         {/if}
       {/each}
     </div>
+  {/if}
+  {#if picking}
+    <ReactionPicker
+      anchor={picking}
+      mine={comment.reactions.filter((r) => r.mine).map((r) => r.content)}
+      onpick={(r) => reviews.react(number, comment, r)}
+      onclose={() => (picking = null)}
+    />
   {/if}
   {#if comment.reactions.length}
     <div class="reactions">

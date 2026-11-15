@@ -4,6 +4,7 @@
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.
 - Each review in a pull request's conversation shows its comments on the diff right under it, instead of only how many there were: each thread with its file and lines, the lines it was made on, its replies, and reply and resolve as in the diff. Comments made alone show at their own time, and your pending review where its latest comment is. The separate list of review threads above the conversation is gone; **N unresolved threads** goes to each in turn.
+- Reacting to a review comment picks from a 4×2 grid of the eight emoji, without their names (they show on hover); the arrow keys move around it, and your own reactions show pressed.
 
 ## 0.25.0 — 2026-11-15
 
