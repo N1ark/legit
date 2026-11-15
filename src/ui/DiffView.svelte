@@ -1859,26 +1859,26 @@
     <div class="side">
       <div class="summary muted" bind:clientHeight={summaryHeight}>
         <div class="stats">
-          <div class="line">
+          <div class="stat">
             <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
             <span class="add">+{totals.a}</span>
             <span class="del">−{totals.r}</span>
             {#if generatedCount}
-              <span use:tooltip={'Generated files start collapsed'}>· {generatedCount} generated</span>
+              <span class="dot" use:tooltip={'Generated files start collapsed'}>{generatedCount} generated</span>
             {/if}
           </div>
-          <div class="line">
+          <div class="stat">
             <label class="ws" use:tooltip={'Show lines whose only change is whitespace as unchanged (~); picking one still picks both its changes'}>
               <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
               Hide whitespace
             </label>
             {#if hideWhitespace.value && totals.ws}
-              <span>· {totals.ws} whitespace-only</span>
+              <span class="dot">{totals.ws} whitespace-only</span>
             {/if}
           </div>
           {#if track}<ReviewProgress {track} {paths} />{/if}
           {#if !onresolve}
-            <div class="line">
+            <div class="stat">
               <label
                 class="ws"
                 use:tooltip={sideBySide.value && !side && !editing
@@ -2356,12 +2356,28 @@
     gap: var(--sp-2);
   }
 
-  .stats .line {
+  /* Its items wrap whole; the dot before one that starts a line is clipped off. */
+  .stat {
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2) var(--sp-4);
     align-items: center;
     white-space: nowrap;
+    overflow: hidden;
+    padding: var(--gap-1);
+    margin: calc(-1 * var(--gap-1));
+  }
+
+  .dot {
+    position: relative;
+  }
+
+  .dot::before {
+    content: '·';
+    position: absolute;
+    right: 100%;
+    width: var(--sp-4);
+    text-align: center;
   }
 
   .ws {

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The counts above a diff's file tree (*2 generated*, *3 whitespace-only*) wrap onto their own line in a narrow window instead of overlapping the switches below.
+
 ## 0.25.0 — 2026-11-15
 
 - In a pull request's whole diff (all its commits selected), each file has **Viewed**, kept on GitHub as its own box is: ticking it folds the file, unticking unfolds it, and files you've viewed start folded. <kbd>v</kbd> ticks the file at the top of the diff; right-click a file (or its row in the file tree) for **Mark as viewed**. The tree ticks viewed files and counts them (*3 of 8 files viewed*); a file changed since you viewed it says **Changed since viewed**.
