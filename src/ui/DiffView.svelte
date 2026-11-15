@@ -224,6 +224,16 @@
     for (const k of Object.keys(contents)) out[+k] = review.blocks(files[+k].path, contents[+k]);
     return out;
   });
+  /** Threads and comments on whole files, at the top of their files' lines (as images are). */
+  const fileBlocks = $derived.by(() => {
+    const out: Record<number, Block[]> = {};
+    for (const [path, b] of review?.onFiles ?? []) {
+      const i = files.findIndex((f) => f.path === path);
+      if (i >= 0) out[i] = b;
+    }
+    return out;
+  });
+  const fileBlocksHeight = (i: number) => fileBlocks[i]?.reduce((h, b) => h + blockHeight(b), 0) ?? 0;
   let blockHeights = $state<Record<string, number>>({});
   function blockHeight(b: Block): number {
     const known = blockHeights[b.key] ?? reviews.heights.get(b.key);
@@ -263,10 +273,20 @@
     const i = files.findIndex((x) => x.path === f.path);
     if (i < 0) return void (reviews.focus = null);
     const placed = placedThreads[i];
+    const onFile = fileBlocks[i]?.findIndex((x) => x.key === f.id) ?? -1;
     // A thread shows with the diff: a rendered file goes back to it (and this runs again).
     if (rendered[i]) return void untrack(() => setRendered(i, false));
     untrack(() => {
       if (!scroller) return;
+      if (onFile >= 0) {
+        reviews.focus = null;
+        const y = tops[i] + HEAD + fileBlocks[i].slice(0, onFile).reduce((h, b) => h + blockHeight(b), 0);
+        if (y < view.top + HEAD || y + Math.min(blockHeight(fileBlocks[i][onFile]), (view.bottom - view.top) / 2) > view.bottom) {
+          scroller.scrollTop += y - view.top - HEAD;
+          measure();
+        }
+        return;
+      }
       if (!placed) return reveal(i);
       reviews.focus = null;
       const b = placed.blocks.find((x) => x.key === f.id);
@@ -326,6 +346,13 @@
       note: why ?? `On #${review.pr.number}`,
       run: () => review.compose(files[i].path, rows, a, b),
     };
+  }
+
+  /** "Comment on this file…", in a file's menu. */
+  function fileCommentEntry(i: number): MaybeEntry {
+    if (!review?.pr) return false;
+    const why = review.fileWhy(files[i].path);
+    return { label: 'Comment on this file…', icon: ChatCircleTextRegular, disabled: !!why, note: why ?? `On #${review.pr.number}`, run: () => review.composeFile(files[i].path) };
   }
 
   /** Commenting on the picked lines, for the view's own buttons: why not, and how; null without a pull request. */
@@ -614,12 +641,12 @@
       );
   }
 
-  /** Height of what comes before each file's lines: its images. */
+  /** Height of each file's images, and of what comes before its lines: its threads on the whole file, then those. */
   const leads = $derived(files.map((f) => (imageType(f.path) && (f.untracked || f.oldSha !== f.newSha) ? IMG : 0)));
-  const lead = (i: number) => leads[i];
+  const lead = (i: number) => fileBlocksHeight(i) + leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) =>
-    rendered[i] ? renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : lead(i) ? 0 : NOTE);
+    rendered[i] ? renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : leads[i] ? 0 : NOTE);
   /** The first file that isn't conflicted, after some that are (they come first): the rule goes above it; else -1. */
   const merged = $derived.by(() => {
     const k = files.findIndex((f) => !f.conflicted);
@@ -1620,6 +1647,7 @@
         icon: rendered[i] ? CodeRegular : EyeRegular,
         run: () => setRendered(i, !rendered[i]),
       },
+      fileCommentEntry(i),
       'separator',
       { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
       { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(f.path, 'relative path') },
@@ -1785,7 +1813,7 @@
               <span
                 class="away"
                 data-away={i}
-                use:tooltip={"Review threads on this file, made on this commit, that aren't on a line of its diff: on the whole file, or outdated"}
+                use:tooltip={"Review threads on this file, made on this commit, that aren't on a line of its diff: outdated, or on lines it doesn't show"}
               >
                 <Tag
                   color="var(--theme2)"
@@ -1794,8 +1822,8 @@
                 />
               </span>
             {/if}
-            {#if rendered[i] && placedThreads[i]?.blocks.length}
-              {@const n = placedThreads[i].blocks.length}
+            {#if rendered[i] && (placedThreads[i]?.blocks.length || fileBlocks[i])}
+              {@const n = (placedThreads[i]?.blocks.length ?? 0) + (fileBlocks[i]?.length ?? 0)}
               <span use:tooltip={'Review threads on lines of this file show with its diff'}>
                 <Tag
                   color="var(--theme2)"
@@ -1805,6 +1833,12 @@
               </span>
             {/if}
             <span class="spacer"></span>
+            {#if review?.pr}
+              {@const why = review.fileWhy(f.path)}
+              <IconButton size="sm" label="Comment on this file" tip={why ?? `Comment on the whole file, on #${review.pr.number}`} onclick={() => review?.composeFile(f.path)}>
+                <ChatCircleTextRegular />
+              </IconButton>
+            {/if}
             {#if renderSide(f)}
               <IconButton
                 size="sm"
@@ -1848,7 +1882,12 @@
               {/if}
             </div>
           {:else if !collapsed[i]}
-            {#if lead(i)}
+            {#if fileBlocks[i]}
+              <div class="gh-top" style:height="{fileBlocksHeight(i)}px">
+                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b)}{/each}
+              </div>
+            {/if}
+            {#if leads[i]}
               {@const kind = f.path.slice(f.path.lastIndexOf('.') + 1).toUpperCase()}
               <ImageDiff
                 before={f.status === 'A' ? null : imageUrl(i, 'old')}
@@ -1858,7 +1897,7 @@
                 last={!f.rows}
               />
             {/if}
-            {#if !f.rows && !lead(i)}
+            {#if !f.rows && !leads[i]}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div class="note" class:sel={state === 'all'} onclick={() => toggleFile(f)}>
                 {onstage && f.unshown
@@ -1967,17 +2006,7 @@
                           {/if}
                         </div>
                       {/if}
-                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}
-                        <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
-                          <div {@attach measureBlock(b)}>
-                            {#if b.thread && review?.data}
-                              <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
-                            {:else if b.draft && review}
-                              <Composer {review} draft={b.draft} />
-                            {/if}
-                          </div>
-                        </div>
-                      {/each}
+                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}{@render ghBlock(b)}{/each}
                     {/each}
                   </div>
                 {/if}
@@ -1989,6 +2018,18 @@
     </div>
   </div>
 </div>
+
+{#snippet ghBlock(b: Block)}
+  <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
+    <div {@attach measureBlock(b)}>
+      {#if b.thread && review?.data}
+        <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
+      {:else if b.draft && review}
+        <Composer {review} draft={b.draft} />
+      {/if}
+    </div>
+  </div>
+{/snippet}
 
 {#if away && review?.data}
   <Popover
@@ -2576,6 +2617,10 @@
   }
 
   /* A review thread under its line, as wide as the view however far the lines are scrolled. */
+  .gh-top {
+    background: var(--code-bg);
+  }
+
   .gh-slot {
     position: sticky;
     left: 0;

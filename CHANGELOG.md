@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Comment on a whole file: the comment button in a file's header in the diff, or **Comment on this file…** in its right-click menu (in the file tree too), alone or in your review. Comments on whole files show at the top of the file's diff, instead of in a list behind its header.
+
 ## 0.24.0 — 2026-11-14
 
 - In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.

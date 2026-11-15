@@ -113,10 +113,11 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
 }
 
 /** GitHub's refusals, said in terms of what to do about them. */
-function explain(e: unknown): never {
+function explain(e: unknown, file = false): never {
   if (e instanceof GithubError && /part of the diff|could not be resolved|line must be/i.test(e.message)) {
+    const what = file ? 'files the pull request changes as of that commit' : 'lines of its diff of the pull request at that commit: the changed lines and the few around them';
     throw new GithubError(
-      `GitHub only takes comments on lines of its diff of the pull request at that commit: the changed lines and the few around them (${e.message.replace(/^GitHub: /, '')}).`,
+      `GitHub only takes comments on ${what} (${e.message.replace(/^GitHub: /, '')}).`,
       e.status,
     );
   }
@@ -140,19 +141,16 @@ const reload = async (repo: Repo, number: number) => (await load(repo, number, t
 async function comment(repo: Repo, c: NewComment): Promise<PrReview> {
   const number = num(c.number, 'pull request number');
   const body = text(c.body);
-  const range = c.startLine !== undefined && c.startLine !== null && c.startLine !== c.line;
+  const file = c.subject === 'FILE';
+  const range = !file && c.startLine !== undefined && c.startLine !== null && c.startLine !== c.line;
   if (!/^[0-9a-f]{40,64}$/.test(c.commitId ?? '')) throw new GithubError('Bad commit.', 400);
   try {
     if (!c.pending) {
       const r = await needGhRepos(repo);
-      await rest('POST', `/repos/${r.base}/pulls/${number}/comments`, {
-        body,
-        commit_id: c.commitId,
-        path: c.path,
-        line: c.line,
-        side: c.side,
-        ...(range ? { start_line: c.startLine, start_side: c.startSide ?? c.side } : {}),
-      });
+      const where = file
+        ? { subject_type: 'file' }
+        : { line: c.line, side: c.side, ...(range ? { start_line: c.startLine, start_side: c.startSide ?? c.side } : {}) };
+      await rest('POST', `/repos/${r.base}/pulls/${number}/comments`, { body, commit_id: c.commitId, path: c.path, ...where });
       return reload(repo, number);
     }
     const { review, prId } = await load(repo, number, true);
@@ -167,24 +165,25 @@ async function comment(repo: Repo, c: NewComment): Promise<PrReview> {
       reviewId = d.addPullRequestReview.pullRequestReview.id as string;
     }
     await graphql(
-      `mutation AddReviewThread($review: ID!, $path: String!, $line: Int!, $side: DiffSide!, $startLine: Int, $startSide: DiffSide, $body: String!) {
+      `mutation AddReviewThread($review: ID!, $path: String!, $line: Int, $side: DiffSide, $startLine: Int, $startSide: DiffSide, $subject: PullRequestReviewThreadSubjectType, $body: String!) {
         addPullRequestReviewThread(input: {
-          pullRequestReviewId: $review, path: $path, line: $line, side: $side, startLine: $startLine, startSide: $startSide, body: $body, subjectType: LINE
+          pullRequestReviewId: $review, path: $path, line: $line, side: $side, startLine: $startLine, startSide: $startSide, body: $body, subjectType: $subject
         }) { thread { id } }
       }`,
       {
         review: reviewId,
         path: c.path,
-        line: c.line,
-        side: c.side,
+        line: file ? null : c.line,
+        side: file ? null : c.side,
         startLine: range ? c.startLine : null,
         startSide: range ? (c.startSide ?? c.side) : null,
+        subject: file ? 'FILE' : 'LINE',
         body,
       },
     );
     return reload(repo, number);
   } catch (e) {
-    explain(e);
+    explain(e, file);
   }
 }
 

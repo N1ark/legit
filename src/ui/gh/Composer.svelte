@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A new comment on lines of a diff: markdown, "Suggest" for the new side's lines, then
+  // A new comment on lines of a diff (or on a whole file): markdown, "Suggest" for the new side's lines, then
   // posted alone or into the viewer's review (starting one). ⌘↵ does the first, Esc cancels.
   import { Button, Kbd, TextArea, matches } from 'purr';
   import { ChatCircleTextRegular, NotePencilRegular, XRegular } from 'purr/glyphs';
@@ -16,7 +16,9 @@
   let sending = $state<'now' | 'review' | null>(null);
   let textarea = $state<HTMLTextAreaElement | null>(null);
   const pending = $derived(review.data?.pending ?? null);
-  const lines = $derived(draft.startLine !== undefined && draft.startLine !== draft.line ? `lines ${draft.startLine}–${draft.line}` : `line ${draft.line}`);
+  const lines = $derived(
+    draft.subject === 'FILE' ? 'the file' : draft.startLine !== undefined && draft.startLine !== draft.line ? `lines ${draft.startLine}–${draft.line}` : `line ${draft.line}`,
+  );
   const why = $derived('why' in review.target ? review.target.why : null);
 
   async function send(inReview: boolean) {

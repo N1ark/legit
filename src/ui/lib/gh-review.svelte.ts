@@ -5,7 +5,7 @@
 import { toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
-import { type DiffContext, type Placed, type RowsLike, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
+import { type DiffContext, type Placed, type RowsLike, belongs, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
 import type { DiffSide, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 import { isLive } from '../../shared/github.ts';
 
@@ -14,6 +14,8 @@ export interface Draft {
   id: string;
   key: string;
   path: string;
+  /** On the whole file (shown at its top): no lines. */
+  subject?: 'FILE';
   line: number;
   side: DiffSide;
   startLine?: number;
@@ -23,7 +25,7 @@ export interface Draft {
   suggest: string[] | null;
 }
 
-/** Something shown under a row of a diff: a thread, or a comment being written. */
+/** Something shown under a row of a diff (row -1: at the top of the file): a thread, or a comment being written. */
 export type Block = { key: string; row: number; start: number } & ({ thread: ReviewThread; moved: boolean; draft?: undefined } | { draft: Draft; thread?: undefined });
 
 class Reviews {
@@ -182,13 +184,27 @@ export class DiffReview {
   /** Removed lines can be commented on: the diff's old side is the pull request's base. */
   private base = $derived(this.ctx.base || (!!this.data && this.ctx.sha === this.data.commits[0]));
 
-  /** File `path`'s threads and comments being written, under the rows they go with; and its threads with no line here. */
+  /** Threads and comments being written on whole files, shown at their tops, by path. */
+  onFiles = $derived.by(() => {
+    const m = new Map<string, Block[]>();
+    const add = (path: string, b: Block) => {
+      const list = m.get(path);
+      if (list) list.push(b);
+      else m.set(path, [b]);
+    };
+    for (const t of this.data?.threads ?? []) if (t.subject === 'FILE' && belongs(t, this.ctx)) add(t.path, { key: t.id, row: -1, start: -1, thread: t, moved: false });
+    for (const d of Object.values(reviews.drafts)) if (d.key === this.key && d.subject === 'FILE') add(d.path, { key: d.id, row: -1, start: -1, draft: d });
+    return m;
+  });
+
+  /** File `path`'s threads and comments being written, under the rows they go with; and its threads with no line here (but those at its top). */
   blocks(path: string, rows: RowsLike | null): { blocks: Block[]; elsewhere: ReviewThread[] } {
-    const { placed, elsewhere } = placeThreads(this.byPath.get(path) ?? [], rows, this.ctx);
+    const { placed, elsewhere: away } = placeThreads(this.byPath.get(path) ?? [], rows, this.ctx);
+    const elsewhere = away.filter((t) => t.subject !== 'FILE');
     const out: Block[] = placed.map((p: Placed) => ({ key: p.thread.id, row: p.row, start: p.start, thread: p.thread, moved: p.moved }));
     if (rows) {
       for (const d of Object.values(reviews.drafts)) {
-        if (d.key !== this.key || d.path !== path) continue;
+        if (d.key !== this.key || d.path !== path || d.subject) continue;
         const row = rowOfLine(rows, d.side, d.line);
         if (row < 0) continue;
         const s = d.startLine !== undefined ? rowOfLine(rows, d.startSide ?? d.side, d.startLine) : row;
@@ -220,6 +236,20 @@ export class DiffReview {
     reviews.focus = { id, path };
   }
 
+  /** Why file `path` can't be commented on as a whole, or null. */
+  fileWhy(_path: string): string | null {
+    return 'why' in this.target ? this.target.why : null;
+  }
+
+  /** Start a comment on the whole of file `path` (or go back to the one being written). */
+  composeFile(path: string) {
+    const why = this.fileWhy(path);
+    if (why) return toast.error(why);
+    const id = `draft:${this.key}:${path}:file`;
+    reviews.drafts[id] ??= { id, key: this.key, path, subject: 'FILE', line: 0, side: 'RIGHT', body: '', suggest: null };
+    reviews.focus = { id, path };
+  }
+
   async submit(d: Draft, pending: boolean): Promise<boolean> {
     const pr = this.pr;
     if (!pr || !d.body.trim()) return false;
@@ -227,7 +257,7 @@ export class DiffReview {
       toast.error(this.target.why);
       return false;
     }
-    const { line, side, startLine, startSide, path, body } = d;
-    return reviews.comment({ number: pr.number, commitId: this.target.commit, path, line, side, startLine, startSide, body, pending }, d);
+    const { line, side, startLine, startSide, path, body, subject } = d;
+    return reviews.comment({ number: pr.number, commitId: this.target.commit, path, subject, line, side, startLine, startSide, body, pending }, d);
   }
 }

@@ -67,6 +67,8 @@ export interface NewComment {
   number: number;
   commitId: string;
   path: string;
+  /** On the whole file: lines and sides are then left out. */
+  subject?: 'LINE' | 'FILE';
   line: number;
   side: DiffSide;
   startLine?: number;
