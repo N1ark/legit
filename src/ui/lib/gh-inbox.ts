@@ -1,7 +1,7 @@
 // Pure helpers for the pull request inbox: which list a pull request is in, and what typed in its
 // filter names one (`#12`, `12`, `owner/repo#12`, or its URL on GitHub).
 
-import type { CheckoutPlan, InboxList, InboxPr } from '../../shared/gh-inbox.ts';
+import type { CheckoutPlan, InboxList, InboxPage, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
 
 export const LISTS: { id: InboxList; label: string }[] = [
   { id: 'review', label: 'Review requested' },
@@ -9,6 +9,17 @@ export const LISTS: { id: InboxList; label: string }[] = [
   { id: 'assigned', label: 'Assigned' },
   { id: 'open', label: 'All open' },
 ];
+
+/** `inbox` with a list's next page (`list`, which ended at `cursor`) taken in: each pull request once, in every list it's in. */
+export function addPage(inbox: PrInbox, list: InboxList, page: InboxPage): PrInbox {
+  const by = new Map(inbox.items.map((p) => [p.number, p]));
+  for (const p of page.items) {
+    const had = by.get(p.number);
+    by.set(p.number, had ? { ...p, requested: had.requested ?? p.requested, mine: had.mine || p.mine, assigned: had.assigned || p.assigned } : p);
+  }
+  const items = [...by.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return { ...inbox, items, cursors: { ...inbox.cursors, [list]: page.cursor } };
+}
 
 export function inboxList(items: InboxPr[], list: InboxList): InboxPr[] {
   if (list === 'open') return items;

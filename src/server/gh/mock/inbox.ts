@@ -80,8 +80,8 @@ function inboxNode(p: any) {
   };
 }
 
-/** The pull requests a search like `repo:acme/widgets is:pr is:open author:@me` finds. */
-function search(q: string) {
+/** The pull requests a search like `repo:acme/widgets is:pr is:open author:@me` finds, `db.inboxPage` at a time (50). */
+function search(q: string, after: string | null = null) {
   const has = (word: string) => q.split(/\s+/).includes(word);
   const me = db.viewer;
   const found = db.pulls.filter((p: any) => {
@@ -93,7 +93,9 @@ function search(q: string) {
     return true;
   });
   const nodes = found.map(inboxNode).sort((a: any, b: any) => b.updatedAt.localeCompare(a.updatedAt));
-  return { issueCount: nodes.length, nodes };
+  const from = after === null ? 0 : Number(after);
+  const to = from + (db.inboxPage ?? 50);
+  return { issueCount: nodes.length, pageInfo: { hasNextPage: to < nodes.length, endCursor: String(to) }, nodes: nodes.slice(from, to) };
 }
 
 onGraphql('PrInbox', (v) => ({
@@ -102,6 +104,8 @@ onGraphql('PrInbox', (v) => ({
 }));
 
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
+
+onGraphql('PrInboxMore', (v) => ({ viewer: { login: db.viewer }, search: search(v.q, v.after) }));
 
 onGraphql('PrLookup', (v) => ({ viewer: { login: db.viewer }, repository: { pullRequest: pull(v.number) ? inboxNode(pull(v.number)) : null } }));
 

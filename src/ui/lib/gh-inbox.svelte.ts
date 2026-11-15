@@ -3,7 +3,8 @@
 
 import { persisted, toast } from 'purr';
 import { gh, ghRequest } from './github.svelte.ts';
-import type { InboxList, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
+import type { InboxList, InboxPage, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
+import { addPage } from './gh-inbox.ts';
 
 const LIST_IDS: InboxList[] = ['review', 'mine', 'assigned', 'open'];
 
@@ -44,6 +45,28 @@ class Inbox {
       this.error = null;
     } catch (e) {
       if (gen === this.gen) this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  private filling: InboxList | null = null;
+
+  /** Load the rest of `list` while it's shown, 50 at a time (GitHub's search goes to 1000), so all of it can be filtered. */
+  async fill(list: InboxList) {
+    if (this.filling === list) return;
+    this.filling = list;
+    try {
+      for (let page = 0; page < 20 && this.open && this.list.value === list; page++) {
+        const gen = this.gen;
+        const after = this.data?.cursors[list];
+        if (!after) break;
+        const got = await ghRequest<InboxPage>('prInboxMore', { list, after });
+        if (gen !== this.gen || !this.data || this.data.cursors[list] !== after) break;
+        this.data = addPage(this.data, list, got);
+      }
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      if (this.filling === list) this.filling = null;
     }
   }
 

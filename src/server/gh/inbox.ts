@@ -6,7 +6,7 @@ import { GithubError, cached, graphql } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { PR_FIELDS, toPullRequest } from './pulls.ts';
 import type { CheckState } from '../../shared/gh-prview.ts';
-import type { InboxList, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
+import type { InboxList, InboxPage, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
 import type { GetRoute } from './routes.ts';
 import type { Repo } from '../repo.ts';
 
@@ -22,7 +22,7 @@ const LISTS: Record<InboxList, string> = {
   open: '',
 };
 
-const search = (list: InboxList) => `${list}: search(query: $${list}, type: ISSUE, first: 50) { issueCount nodes { ... on PullRequest { ${FIELDS} } } }`;
+const search = (list: InboxList) => `${list}: search(query: $${list}, type: ISSUE, first: 50) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${FIELDS} } } }`;
 
 export const INBOX_QUERY = `query PrInbox($review: String!, $mine: String!, $assigned: String!, $open: String!) {
   viewer { login }
@@ -56,8 +56,10 @@ export function toInbox(d: any): PrInbox {
   const viewer: string = d.viewer.login;
   const nodes = new Map<number, { node: any; lists: Partial<Record<InboxList, boolean>> }>();
   const counts = {} as Record<InboxList, number>;
+  const cursors = {} as Record<InboxList, string | null>;
   for (const list of Object.keys(LISTS) as InboxList[]) {
     counts[list] = d[list]?.issueCount ?? 0;
+    cursors[list] = d[list]?.pageInfo?.hasNextPage ? (d[list].pageInfo.endCursor ?? null) : null;
     for (const n of d[list]?.nodes ?? []) {
       if (!n?.number) continue;
       const had = nodes.get(n.number) ?? { node: n, lists: {} };
@@ -67,7 +69,26 @@ export function toInbox(d: any): PrInbox {
   }
   const items = [...nodes.values()].map(({ node, lists }) => toInboxPr(node, viewer, lists));
   items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  return { viewer, items, counts };
+  return { viewer, items, counts, cursors };
+}
+
+const MORE_QUERY = `query PrInboxMore($q: String!, $after: String!) {
+  viewer { login }
+  search(query: $q, type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${FIELDS} } } }
+}`;
+
+const query = (base: string, list: InboxList) => `repo:${base} is:pr is:open ${LISTS[list]} sort:updated-desc`.replace(/\s+/g, ' ');
+
+/** The next 50 of a list, after `after` (the cursor the last page ended at). */
+export async function prInboxMore(repo: Repo, list: unknown, after: unknown): Promise<InboxPage> {
+  if (typeof list !== 'string' || !(list in LISTS) || typeof after !== 'string' || !after) throw new GithubError('Which page?', 400);
+  const r = await needGhRepos(repo);
+  const d = await graphql(MORE_QUERY, { q: query(r.base, list as InboxList), after });
+  const viewer: string = d.viewer.login;
+  return {
+    items: (d.search?.nodes ?? []).filter((n: any) => n?.number).map((n: any) => toInboxPr(n, viewer, { [list]: true })),
+    cursor: d.search?.pageInfo?.hasNextPage ? (d.search.pageInfo.endCursor ?? null) : null,
+  };
 }
 
 const TTL = 20_000;
@@ -77,7 +98,7 @@ export async function prInbox(repo: Repo, fresh = false): Promise<PrInbox> {
   const r = await needGhRepos(repo);
   if (fresh) inboxes.delete(r.base);
   return cached(inboxes, r.base, TTL, async () => {
-    const q = (list: InboxList) => `repo:${r.base} is:pr is:open ${LISTS[list]} sort:updated-desc`.replace(/\s+/g, ' ');
+    const q = (list: InboxList) => query(r.base, list);
     return toInbox(await graphql(INBOX_QUERY, { review: q('review'), mine: q('mine'), assigned: q('assigned'), open: q('open') }));
   });
 }
@@ -105,4 +126,5 @@ export async function prLookup(repo: Repo, number: unknown): Promise<InboxPr | n
 export const inboxGet: Record<string, GetRoute> = {
   prInbox: (repo, q) => prInbox(repo, q.get('fresh') === '1'),
   prLookup: (repo, q) => prLookup(repo, q.get('number')),
+  prInboxMore: (repo, q) => prInboxMore(repo, q.get('list'), q.get('after')),
 };

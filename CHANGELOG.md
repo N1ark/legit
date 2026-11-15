@@ -20,6 +20,7 @@
 - Each worktree of a repository fetches the pull requests it reads for itself, so closing one in a worktree no longer deletes it from under another that's reading it.
 - Removed lines of a file a pull request renames take comments, read against the file's old name as GitHub's diff does.
 - A stacked pull request's whole diff (all its commits selected) leaves out what merging the branch below into it brought, as it already did for main.
+- The pull request lists (<kbd>⇧P</kbd>) come whole, past their first 50: the rest load while a list is shown, so filtering finds any of them.
 
 ## 0.25.0 — 2026-11-15
 

@@ -28,6 +28,14 @@ export interface PrInbox {
   items: InboxPr[];
   /** How many each list has on GitHub: more than `items` holds of it past the first 50. */
   counts: Record<InboxList, number>;
+  /** Where each list's next 50 start, while it has more. */
+  cursors: Record<InboxList, string | null>;
+}
+
+/** A list's next page. */
+export interface InboxPage {
+  items: InboxPr[];
+  cursor: string | null;
 }
 
 /** How a local branch stands to a pull request's head. */

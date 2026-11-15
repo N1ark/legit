@@ -194,3 +194,29 @@ test('the remote of a GitHub repository', async () => {
   assert.deepEqual(await ghRepos(repo, 'mona/feature'), { base: 'Acme/widgets', owner: 'Acme', name: 'widgets', headOwner: 'mona', head: 'feature' });
   assert.equal((await ghRepos(repo, 'main'))?.head, undefined);
 });
+
+test('a list past its first page comes whole, page by page, each pull request once', async () => {
+  const { db } = await import('../src/server/gh/mock/registry.ts');
+  const { addPage } = await import('../src/ui/lib/gh-inbox.ts');
+  const { toInboxPr } = await import('../src/server/gh/inbox.ts');
+  const q = (s: string) => `repo:acme/widgets is:pr is:open ${s} sort:updated-desc`;
+  const vars = { review: q('review-requested:@me'), mine: q('author:@me'), assigned: q('assignee:@me'), open: q('') };
+  const whole = toInbox(await mockGraphql('query PrInbox { x }', vars));
+  db.inboxPage = 2;
+  try {
+    let inbox: PrInbox = toInbox(await mockGraphql('query PrInbox { x }', vars));
+    assert.ok(inbox.cursors.open);
+    assert.equal(whole.cursors.open, null);
+    for (let after = inbox.cursors.open; after; after = inbox.cursors.open) {
+      const d = (await mockGraphql('query PrInboxMore { x }', { q: vars.open, after })) as any;
+      const page = { items: d.search.nodes.map((n: any) => toInboxPr(n, d.viewer.login, { open: true })), cursor: d.search.pageInfo.hasNextPage ? d.search.pageInfo.endCursor : null };
+      inbox = addPage(inbox, 'open', page);
+    }
+    assert.deepEqual(inbox.items.map((p) => p.number).sort(), whole.items.map((p) => p.number).sort());
+    // A page of "All open" doesn't take a pull request out of the lists it was already in.
+    const asked = whole.items.find((p) => p.requested)!;
+    assert.equal(inbox.items.find((p) => p.number === asked.number)?.requested, asked.requested);
+  } finally {
+    delete db.inboxPage;
+  }
+});

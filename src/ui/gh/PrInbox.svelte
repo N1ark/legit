@@ -43,6 +43,12 @@
   const rows = $derived(inboxList(items, inbox.list.value).map(row));
   const ref = $derived(parsePrRef(query, repo));
 
+  // The list shown comes whole, past its first 50, for the filter to find any of it.
+  $effect(() => {
+    const l = inbox.list.value;
+    if (inbox.data?.cursors[l]) untrack(() => inbox.fill(l));
+  });
+
   // One asked for by number that isn't listed is looked up.
   $effect(() => {
     const r = ref;
