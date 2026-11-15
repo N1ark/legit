@@ -288,6 +288,13 @@ onGraphql('PrViewTimeline', (v) => {
 
 const count = (pending: any) => (Array.isArray(pending.comments) ? pending.comments.length : Number(pending.comments) || 0);
 
+/** Everyone who can be assigned, as GitHub's search of them finds by login or name. */
+const ASSIGNABLE = ['octocat', 'hubot', 'monalisa', 'defunkt', 'mojombo', 'pjhyett', 'wycats', 'tenderlove', 'ezmobius', 'ivey'];
+
+onGraphql('PrViewUsers', (v) => ({
+  repository: { assignableUsers: { nodes: ASSIGNABLE.filter((u) => u.includes(String(v.query).toLowerCase())).map(actor) } },
+}));
+
 onGraphql('PrViewOptions', () => ({
   repository: {
     assignableUsers: { nodes: USERS.map(actor) },
@@ -423,7 +430,7 @@ onRest('DELETE /repos/:owner/:repo/pulls/:number/requested_reviewers', (params, 
 onRest('POST /repos/:owner/:repo/issues/:number/assignees', (params, _, body) => {
   const e = extra(Number(params.number));
   for (const login of body.assignees as string[]) {
-    if (e.assignees.includes(login) || !USERS.includes(login)) continue;
+    if (e.assignees.includes(login) || !ASSIGNABLE.includes(login)) continue;
     e.assignees.push(login);
     e.timeline.push(event('AssignedEvent', db.viewer, 0, { assignee: { login } }));
   }

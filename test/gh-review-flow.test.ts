@@ -170,3 +170,9 @@ test('a renamed file takes comments on its removed lines, read against its old n
   assert.deepEqual(got.hunks, [{ left: [7, 13], right: [7, 13] }]);
   assert.deepEqual(got.moved, []);
 });
+
+test('people past the first 100 who can be assigned are found by what is typed', async () => {
+  const found = await get<{ login: string }[]>('prviewUsers', { number: '13', q: 'tender' });
+  assert.deepEqual(found.map((u) => u.login), ['tenderlove']);
+  assert.deepEqual(await get('prviewUsers', { number: '13', q: ' ' }), []);
+});

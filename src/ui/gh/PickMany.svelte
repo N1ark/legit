@@ -29,10 +29,12 @@
     /** What's ticked as it opens; listed first, as GitHub does. */
     chosen: string[];
     placeholder?: string;
+    /** More choices matching what's typed, beyond `choices` (people past the first 100, say): asked as the filter settles. */
+    search?: (query: string) => Promise<Choice[]>;
     /** Closed (Escape, a click outside, or ⌘↩/Enter on an empty filter): what's ticked now, in the choices' order. */
     onclose: (chosen: string[]) => void;
   }
-  let { anchor, title, choices, chosen, placeholder = 'Filter…', onclose }: Props = $props();
+  let { anchor, title, choices, chosen, placeholder = 'Filter…', search, onclose }: Props = $props();
 
   // svelte-ignore state_referenced_locally
   let ticked = $state(new Set(chosen));
@@ -43,7 +45,22 @@
   // The ticked ones first, as they were when it opened: rows don't jump as they're ticked.
   // svelte-ignore state_referenced_locally
   const ordered = [...choices.filter((c) => ticked.has(c.key)), ...choices.filter((c) => !ticked.has(c.key))];
-  const rows = $derived(rank(ordered, filter, { keys: [(c) => c.label, (c) => c.description] }));
+  /** Choices `search` found, after the given ones. */
+  let found = $state.raw<Choice[]>([]);
+  const all = $derived(found.length ? [...ordered, ...found.filter((f) => !ordered.some((c) => c.key === f.key))] : ordered);
+  const rows = $derived(rank(all, filter, { keys: [(c) => c.label, (c) => c.description] }));
+
+  $effect(() => {
+    const q = filter.trim();
+    if (!search || !q) return;
+    const timer = setTimeout(() => {
+      search(q).then(
+        (more) => (found = [...found, ...more.filter((m) => !found.some((f) => f.key === m.key))]),
+        () => {},
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  });
   const at = $derived(Math.min(cursor, Math.max(rows.length - 1, 0)));
 
   function toggle(key: string) {
@@ -57,7 +74,7 @@
   export function close() {
     if (closed) return;
     closed = true;
-    onclose(choices.filter((c) => ticked.has(c.key)).map((c) => c.key));
+    onclose(all.filter((c) => ticked.has(c.key)).map((c) => c.key));
   }
 
   function onkeydown(e: KeyboardEvent) {

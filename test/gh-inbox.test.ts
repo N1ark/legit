@@ -207,7 +207,7 @@ test('a list past its first page comes whole, page by page, each pull request on
     let inbox: PrInbox = toInbox(await mockGraphql('query PrInbox { x }', vars));
     assert.ok(inbox.cursors.open);
     assert.equal(whole.cursors.open, null);
-    for (let after = inbox.cursors.open; after; after = inbox.cursors.open) {
+    for (let after: string | null = inbox.cursors.open; after; after = inbox.cursors.open) {
       const d = (await mockGraphql('query PrInboxMore { x }', { q: vars.open, after })) as any;
       const page = { items: d.search.nodes.map((n: any) => toInboxPr(n, d.viewer.login, { open: true })), cursor: d.search.pageInfo.hasNextPage ? d.search.pageInfo.endCursor : null };
       inbox = addPage(inbox, 'open', page);

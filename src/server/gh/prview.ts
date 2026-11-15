@@ -321,6 +321,19 @@ async function options(repo: Repo, number: unknown): Promise<PrOptions> {
   };
 }
 
+/** People who can be assigned whose login or name matches `query`: the options list only the first 100. */
+async function users(repo: Repo, number: unknown, query: unknown): Promise<GhUser[]> {
+  const r = await where(repo, number);
+  if (typeof query !== 'string' || !query.trim()) return [];
+  const d = await graphql(
+    `query PrViewUsers($owner: String!, $name: String!, $query: String!) {
+      repository(owner: $owner, name: $name) { assignableUsers(query: $query, first: 20) { nodes { ${ACTOR} } } }
+    }`,
+    { owner: r.owner, name: r.name, query: query.trim() },
+  );
+  return (d.repository?.assignableUsers.nodes ?? []).map(user).filter(Boolean);
+}
+
 const text = (v: unknown, what: string) => {
   if (typeof v !== 'string' || !v.trim()) throw new GithubError(`Write ${what} first.`, 400);
   return v;
@@ -360,6 +373,7 @@ const method = (m: unknown): MergeMethod => {
 export const prviewGet: Record<string, GetRoute> = {
   prview: (repo, q) => prOverview(repo, q.get('number')),
   prviewOptions: (repo, q) => options(repo, q.get('number')),
+  prviewUsers: (repo, q) => users(repo, q.get('number'), q.get('q')),
 };
 
 export const prviewPost: Record<string, PostRoute> = {

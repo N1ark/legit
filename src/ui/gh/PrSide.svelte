@@ -8,6 +8,7 @@
   import { type GhUser, isLive } from '../../shared/github.ts';
   import { app } from '../lib/app.svelte.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
+  import { ghRequest } from '../lib/github.svelte.ts';
   import PickMany, { type Choice } from './PickMany.svelte';
   import RefIcon from './RefIcon.svelte';
   import { refStateWords } from '../lib/gh-links.ts';
@@ -36,7 +37,13 @@
   };
 
   /** The picker open, if any (see PickMany): its choices apply in one go when it closes. */
-  let picking = $state<{ anchor: HTMLElement; title: string; choices: Choice[]; chosen: string[]; apply: (keys: string[]) => void } | null>(null);
+  let picking = $state<{ anchor: HTMLElement; title: string; choices: Choice[]; chosen: string[]; apply: (keys: string[]) => void; search?: (q: string) => Promise<Choice[]> } | null>(null);
+
+  /** People who can be assigned (or asked for a review) whose login or name matches `q`, past the first 100 listed. */
+  const people = (q: string, but: string[] = []) =>
+    ghRequest<GhUser[]>('prviewUsers', { number: pr.number, q }).then((users) =>
+      users.filter((u) => !but.includes(u.login)).map((u): Choice => ({ key: u.login, label: u.login, avatar: ghAvatar(u.avatar) })),
+    );
   /** Labels just applied, shown until the pull request comes back with them. */
   let applying = $state.raw<PrLabel[] | null>(null);
   const labels = $derived(applying ?? pr.labels);
@@ -74,6 +81,7 @@
         const change = diff(requested, keys);
         if (change.add.length || change.remove.length) act('prviewReviewers', change);
       },
+      search: (q) => people(q, pr.author ? [pr.author.login] : []),
     };
   }
 
@@ -91,6 +99,7 @@
     const users = (await options())?.users;
     if (!users) return;
     const now = pr.assignees.map((a) => a.login);
+    const found: GhUser[] = [];
     // The current ones first, as GitHub has them, even when they're no longer assignable.
     const all = [...pr.assignees, ...users.filter((u) => !now.includes(u.login))];
     picking = {
@@ -98,7 +107,12 @@
       title: 'Assign up to 10 people to this pull request',
       choices: all.map((u) => ({ key: u.login, label: u.login, avatar: ghAvatar(u.avatar) })),
       chosen: now,
-      apply: (keys) => setAssignees(now, keys.slice(0, 10), all),
+      apply: (keys) => setAssignees(now, keys.slice(0, 10), [...all, ...found]),
+      search: async (q) => {
+        const more = await people(q);
+        found.push(...more.map((c) => ({ login: c.key, avatar: c.avatar ?? '' })));
+        return more;
+      },
     };
   }
 
@@ -143,7 +157,7 @@
 
 {#if picking}
   {@const p = picking}
-  <PickMany bind:this={picker} anchor={p.anchor} title={p.title} choices={p.choices} chosen={p.chosen} onclose={(keys) => (p.apply(keys), (picking = null))} />
+  <PickMany bind:this={picker} anchor={p.anchor} title={p.title} choices={p.choices} chosen={p.chosen} search={p.search} onclose={(keys) => (p.apply(keys), (picking = null))} />
 {/if}
 
 <aside class="side">
