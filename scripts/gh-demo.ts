@@ -34,6 +34,7 @@ git('config', `url.${bare}.insteadOf`, 'git@github.com:acme/widgets.git');
 
 commit('Initial commit', {
   'README.md': '# widgets\n\nWidgets, specified in `.widget` files.\n\n## Usage\n\n```sh\nwidgets build specs/\n```\n',
+  '.github/CODEOWNERS': '# Who reviews what\n*             @acme/maintainers\n/src/         @monalisa\nsrc/parser.ts @octocat @hubot\nsrc/errors.ts @octocat\n*.md          @acme/docs\n',
   'src/index.ts': "export { build } from './build.ts';\n",
   'src/build.ts': "import { readFileSync } from 'node:fs';\n\nexport function build(path: string): string {\n  const text = readFileSync(path, 'utf8');\n  return text.trim();\n}\n",
 });

@@ -4,7 +4,7 @@
   // right-clicking a file or a folder opens its menu. Conflicted files have a tree of their own, above the rest.
   // Once a row has the focus (clicked), ↑/↓ go to the file above or below instead of the next commit.
   import { Twisty, fixedRange, tooltip } from 'purr';
-  import { CheckBold } from 'purr/glyphs';
+  import { CheckBold, UserFill } from 'purr/glyphs';
   import { tick, untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
   import { type TreeRow, fileTree, treeRows } from './lib/tree.ts';
@@ -17,6 +17,7 @@
     onmenu,
     ondirmenu,
     mark,
+    only,
     natural = $bindable(0),
   }: {
     files: FileSummary[];
@@ -29,8 +30,10 @@
     onmenu?: (e: MouseEvent, i: number) => void;
     /** A folder's context menu, with its full path. */
     ondirmenu?: (e: MouseEvent, dir: string) => void;
-    /** A pull request's marks on file i: viewed. */
-    mark?: (i: number) => { viewed: boolean } | null;
+    /** A pull request's marks on file i: viewed, the viewer's own. */
+    mark?: (i: number) => { viewed: boolean; mine: boolean } | null;
+    /** Only the files it keeps are listed. */
+    only?: ((i: number) => boolean) | null;
     /** How tall it would be with every row shown (out): a short tree needs no more room. */
     natural?: number;
   } = $props();
@@ -39,8 +42,8 @@
   type Row = (TreeRow & { group: string }) | { kind: 'label'; text: string; group: string; first: boolean };
   const paths = $derived(files.map((f) => f.path));
   const conflicted = $derived(files.some((f) => f.conflicted));
-  const tree = $derived(fileTree(paths, conflicted ? (i) => !files[i].conflicted : undefined));
-  const top = $derived(conflicted ? fileTree(paths, (i) => !!files[i].conflicted) : []);
+  const tree = $derived(fileTree(paths, conflicted || only ? (i) => !files[i].conflicted && (!only || only(i)) : undefined));
+  const top = $derived(conflicted ? fileTree(paths, (i) => !!files[i].conflicted && (!only || only(i))) : []);
   // Folders by group and path: the same folder can be in both trees.
   let collapsed = $state<Record<string, boolean>>({});
   const rows = $derived.by((): Row[] => {
@@ -105,7 +108,8 @@
   const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
   const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed', R: 'renamed', C: 'copied' };
 
-  const marksTip = (m: NonNullable<ReturnType<NonNullable<typeof mark>>>) => (m.viewed ? '\nViewed' : '');
+  const marksTip = (m: NonNullable<ReturnType<NonNullable<typeof mark>>>) =>
+    `${m.viewed ? '\nViewed' : ''}${m.mine ? '\nYou own it' : ''}`;
 
   /** Where a renamed file came from: its old name, or its old path when it moved folders. */
   function source(f: FileSummary): string {
@@ -170,6 +174,7 @@
         <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'} class:seen={m?.viewed}
           >{r.name}{#if f.oldPath}<span class="from">← {source(f)}</span>{/if}</span
         >
+        {#if m?.mine}<span class="mk mine"><UserFill /></span>{/if}
         {#if m?.viewed}<span class="mk seen"><CheckBold /></span>{/if}
         <span class="status mono" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
           >{f.untracked ? 'U' : STATUS[f.status]}</span
@@ -278,6 +283,10 @@
     flex-shrink: 0;
     font-size: var(--fs-xs);
     color: var(--muted);
+  }
+
+  .mk.mine {
+    color: var(--theme2);
   }
 
   .mk.seen {

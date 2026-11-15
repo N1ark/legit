@@ -12,6 +12,7 @@ const { Repo } = await import('../src/server/repo.ts');
 await import('../src/server/gh/mock/index.ts');
 const { db, mockCalls } = await import('../src/server/gh/mock/registry.ts');
 const { githubRoute } = await import('../src/server/gh/routes.ts');
+const { codeownersOf } = await import('../src/server/gh/prfiles.ts');
 
 const dir = mkdtempSync(join(tmpdir(), 'legit-gh-files-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -25,6 +26,12 @@ test("viewed counts the pull request's files shown; a dismissed mark isn't viewe
   assert.deepEqual(viewedCount([], viewed), { viewed: 0, total: 0 });
 });
 
+test('CODEOWNERS is the first of the three places the base has one', () => {
+  assert.equal(codeownersOf(null), null);
+  assert.deepEqual(codeownersOf({ o0: null, o1: { object: { text: 'x @a' } }, o2: { object: { text: 'y @b' } } }), { path: 'CODEOWNERS', text: 'x @a' });
+  assert.deepEqual(codeownersOf({ o0: { object: { text: '' } } }), { path: '.github/CODEOWNERS', text: '' });
+});
+
 /** The GitHub calls `fn` makes. */
 async function calls(fn: () => Promise<unknown>): Promise<string[]> {
   const from = mockCalls.length;
@@ -32,7 +39,7 @@ async function calls(fn: () => Promise<unknown>): Promise<string[]> {
   return mockCalls.slice(from);
 }
 
-test("a pull request's files: viewed marks (dismissed by a later change) in one query, more pages for more files", async () => {
+test("a pull request's files: viewed marks (dismissed by a later change) and CODEOWNERS in one query, more pages for more files", async () => {
   const repo = await Repo.open(demo);
   // Which repo it's on, looked up once.
   await githubRoute(repo, 'GET', 'prFiles', new URLSearchParams({ number: '13' }));
@@ -41,12 +48,15 @@ test("a pull request's files: viewed marks (dismissed by a later change) in one 
   assert.deepEqual(files.viewed, { 'src/errors.ts': 'VIEWED', 'src/parser.ts': 'DISMISSED' });
   assert.equal(files.viewer, 'octocat');
   assert.equal(files.headSha, git('rev-parse', 'origin/feature/parser-errors'));
+  assert.equal(files.codeowners.path, '.github/CODEOWNERS');
+  assert.match(files.codeowners.text, /src\/parser\.ts @octocat @hubot/);
 
   db.filesPage = 1;
   try {
     const pages = await calls(async () => (files = await githubRoute(repo, 'GET', 'prFiles', new URLSearchParams({ number: '12', fresh: '1' }))));
     assert.deepEqual(pages, ['GraphQL PrFiles', 'GraphQL PrFiles', 'GraphQL PrFiles']);
     assert.deepEqual(Object.keys(files.viewed).sort(), ['src/build.ts', 'src/parser.ts', 'src/tokenizer.ts']);
+    assert.ok(files.codeowners);
   } finally {
     db.filesPage = 100;
   }

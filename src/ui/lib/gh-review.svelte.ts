@@ -146,7 +146,7 @@ export class DiffReview {
   }
 
   pr = $derived(reviews.pr);
-  /** Viewed marks of the files it shows. */
+  /** Viewed marks and owners of the files it shows. */
   track: DiffTrack = new DiffTrack(this);
   data = $derived(this.pr ? (reviews.byNumber[this.pr.number] ?? null) : null);
 

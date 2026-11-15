@@ -1,6 +1,6 @@
 // A pull request's files as a review keeps track of them: which the viewer marked viewed (GitHub's
-// per-file mark), in one GraphQL query per refresh (more pages of files for a pull request with
-// more than 100); marking a file viewed or not.
+// per-file mark), and the base branch's CODEOWNERS, in one GraphQL query per refresh (more pages
+// of files for a pull request with more than 100); marking a file viewed or not.
 
 import { GithubError, MOCK, cached, graphql } from './client.ts';
 import { needGhRepos } from './context.ts';
@@ -9,11 +9,17 @@ import type { GetRoute, PostRoute } from './routes.ts';
 import type { PrFiles, ViewedState } from '../../shared/gh-files.ts';
 import type { Repo } from '../repo.ts';
 
+/** Where GitHub looks for CODEOWNERS, in order; the first found is the one used. */
+export const CODEOWNERS_PATHS = ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS'];
+
+const owners = CODEOWNERS_PATHS.map((p, i) => `o${i}: file(path: ${JSON.stringify(p)}) { object { ... on Blob { text } } }`).join('\n');
+
 const FILES_QUERY = `query PrFiles($owner: String!, $name: String!, $number: Int!, $after: String, $first: Boolean!) {
   viewer @include(if: $first) { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id headRefOid
+      baseRef @include(if: $first) { target { ... on Commit { ${owners} } } }
       files(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { path viewerViewedState } }
     }
   }
@@ -23,6 +29,15 @@ const FILES_QUERY = `query PrFiles($owner: String!, $name: String!, $number: Int
 const PAGES = 30;
 
 const VIEWED: ViewedState[] = ['VIEWED', 'UNVIEWED', 'DISMISSED'];
+
+/** The first CODEOWNERS of the base's three places that has one. */
+export function codeownersOf(commit: any): PrFiles['codeowners'] {
+  for (let i = 0; i < CODEOWNERS_PATHS.length; i++) {
+    const text = commit?.[`o${i}`]?.object?.text;
+    if (typeof text === 'string') return { path: CODEOWNERS_PATHS[i], text };
+  }
+  return null;
+}
 
 interface Loaded {
   files: PrFiles;
@@ -38,7 +53,7 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
   const key = `${r.base}#${number}`;
   if (fresh) loads.delete(key);
   return cached(loads, key, 10_000, async () => {
-    const out: PrFiles = { number, headSha: '', viewer: '', viewed: {} };
+    const out: PrFiles = { number, headSha: '', viewer: '', viewed: {}, codeowners: null };
     let prId = '';
     let after: string | null = null;
     for (let page = 0; page < PAGES; page++) {
@@ -49,6 +64,7 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
         prId = pr.id;
         out.headSha = pr.headRefOid;
         out.viewer = d.viewer?.login ?? '';
+        out.codeowners = codeownersOf(pr.baseRef?.target);
       }
       for (const f of pr.files?.nodes ?? []) out.viewed[f.path] = VIEWED.includes(f.viewerViewedState) ? f.viewerViewedState : 'UNVIEWED';
       if (!pr.files?.pageInfo?.hasNextPage) break;

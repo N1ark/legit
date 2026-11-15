@@ -1,16 +1,19 @@
-// Keeping track during a review, for the diffs: each pull request's files marked viewed (one
-// request per refresh, by number). Marking a file viewed shows at once, and goes back if GitHub
-// refuses.
+// Keeping track during a review, for the diffs: each pull request's files marked viewed and its
+// CODEOWNERS (one request per refresh, by number). Marking a file viewed shows at once, and goes
+// back if GitHub refuses.
 // `DiffTrack` is what one diff view shows of it.
 
 import { toast } from 'purr';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import type { DiffReview } from './gh-review.svelte.ts';
+import { type OwnerRule, type Owners, ownedBy, ownersOf, parseCodeowners } from './codeowners.ts';
 import type { PrFiles, ViewedState } from '../../shared/gh-files.ts';
 
 class Tracking {
   /** By pull request number. */
   files = $state.raw<Record<number, PrFiles>>({});
+  /** The file tree shows only the files the viewer owns. */
+  ownedOnly = $state(false);
 
   private seen = new Map<string, string>();
   /** Marks sent to GitHub and not answered yet, by `number:path`: a refresh meanwhile doesn't undo them. */
@@ -71,6 +74,17 @@ class Tracking {
   key() {
     this.keys[this.keys.length - 1]?.();
   }
+
+  private parsed = new Map<string, OwnerRule[]>();
+
+  rules(text: string): OwnerRule[] {
+    let r = this.parsed.get(text);
+    if (!r) {
+      if (this.parsed.size > 8) this.parsed.clear();
+      this.parsed.set(text, (r = parseCodeowners(text)));
+    }
+    return r;
+  }
 }
 
 export const tracking = new Tracking();
@@ -78,7 +92,7 @@ export const tracking = new Tracking();
 /**
  * What one diff shows of it. Viewed marks show on the pull request's whole diff (all its commits
  * up to its head): GitHub's mark is on a file's change in the pull request, which one commit only
- * shows part of.
+ * shows part of. Owners show on any diff of the pull request's branch.
  */
 export class DiffTrack {
   review: DiffReview;
@@ -90,6 +104,12 @@ export class DiffTrack {
   pr = $derived.by(() => this.review.pr);
   data = $derived(this.pr ? (tracking.files[this.pr.number] ?? null) : null);
   viewable = $derived.by(() => !!this.data && this.review.ctx.head && this.review.ctx.base);
+
+  private rules = $derived(this.data?.codeowners ? tracking.rules(this.data.codeowners.text) : []);
+  private owned = $derived.by(() => {
+    void this.rules;
+    return new Map<string, Owners | null>();
+  });
 
   /** Keep this pull request's files loaded (call in an effect). */
   load() {
@@ -104,5 +124,25 @@ export class DiffTrack {
 
   setViewed(path: string, on: boolean) {
     return this.pr ? tracking.setViewed(this.pr.number, path, on) : Promise.resolve(false);
+  }
+
+  owners(path: string): Owners | null {
+    const m = this.owned;
+    if (!m.has(path)) m.set(path, ownersOf(this.rules, path));
+    return m.get(path)!;
+  }
+
+  /** The viewer is one of the file's owners by name. */
+  mine(path: string): boolean {
+    return ownedBy(this.owners(path)?.owners ?? [], this.data?.viewer ?? '');
+  }
+
+  /** How many of the files the viewer owns. */
+  ownsAny(paths: string[]): number {
+    return this.rules.length ? paths.filter((p) => this.mine(p)).length : 0;
+  }
+
+  get codeowners() {
+    return this.data?.codeowners?.path ?? null;
   }
 }

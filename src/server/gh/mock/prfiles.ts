@@ -1,10 +1,11 @@
-// Fake per-file "Viewed" marks for the demo's pull requests. A pull request's files
+// Fake per-file "Viewed" marks and CODEOWNERS for the demo's pull requests. A pull request's files
 // are `git diff base...head` of origin's branches; a mark keeps the file's blob it was made on, and
 // reads DISMISSED once the head's differs. #13 starts with src/errors.ts viewed and src/parser.ts
 // viewed before its last push.
 
 import { GithubError } from '../client.ts';
 import type { Git } from '../../git.ts';
+import { CODEOWNERS_PATHS } from '../prfiles.ts';
 import { db, onGraphql } from './registry.ts';
 
 /** By pull request, each viewed file's blob when it was marked ('head': whatever the head has, the first time it's asked). */
@@ -26,6 +27,15 @@ async function prPaths(p: any): Promise<string[]> {
   if (!g || !base || !head) return [];
   const out = await g.text(['diff', '--name-only', '-M', `${base}...${head}`], { allowFail: true });
   return out ? out.split('\n') : [];
+}
+
+async function codeowners(base: string | undefined) {
+  const out: Record<string, unknown> = {};
+  for (const [i, path] of CODEOWNERS_PATHS.entries()) {
+    const ok = base && (await git()?.run(['cat-file', '-e', `${base}:${path}`], { allowFail: true }))?.code === 0;
+    out[`o${i}`] = ok ? { object: { text: await git()!.text(['show', `${base}:${path}`]) } } : null;
+  }
+  return out;
 }
 
 onGraphql('PrFiles', async (v) => {
@@ -51,6 +61,7 @@ onGraphql('PrFiles', async (v) => {
       pullRequest: {
         id: `PR_${p.number}`,
         headRefOid: head,
+        ...(v.first ? { baseRef: { target: await codeowners(tip(p.baseRefName)) } } : {}),
         files: { pageInfo: { hasNextPage: next < paths.length, endCursor: String(next) }, nodes },
       },
     },

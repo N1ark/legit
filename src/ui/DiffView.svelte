@@ -291,7 +291,7 @@
     });
   });
 
-  // GitHub's Viewed marks, on a diff of the pull request (lib/gh-files.svelte.ts).
+  // GitHub's Viewed marks and owners, on a diff of the pull request (lib/gh-files.svelte.ts).
   const track = $derived(review?.track ?? null);
   const paths = $derived(files.map((f) => f.path));
   /** Fold a file marked viewed, unfold one unmarked. */
@@ -324,7 +324,7 @@
   }
   function treeMark(i: number) {
     const p = files[i].path;
-    return track && { viewed: track.viewed(p) === 'VIEWED' };
+    return track && { viewed: track.viewed(p) === 'VIEWED', mine: track.mine(p) };
   }
   // The shortcut toggles Viewed on the file at the top of the view (the first, above them).
   $effect(() => {
@@ -1771,6 +1771,7 @@
             onmenu={openMenu}
             ondirmenu={openDirMenu}
             mark={track ? treeMark : undefined}
+            only={track && tracking.ownedOnly && track.ownsAny(paths) ? (i) => !!track?.mine(files[i].path) : null}
             bind:natural={treeNatural}
           />
         </nav>
