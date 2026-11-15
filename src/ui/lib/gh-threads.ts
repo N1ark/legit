@@ -261,6 +261,13 @@ export function threadOrder(a: ReviewThread, b: ReviewThread): number {
   return +a.resolved - +b.resolved || a.path.localeCompare(b.path) || (a.line ?? a.originalLine ?? 0) - (b.line ?? b.originalLine ?? 0);
 }
 
+/** How many of a file's threads are unresolved and resolved, and the one to go to first (as `threadOrder` has them); null for none. */
+export function threadCounts(threads: ReviewThread[]): { open: number; resolved: number; first: ReviewThread } | null {
+  if (!threads.length) return null;
+  const open = threads.filter((t) => !t.resolved).length;
+  return { open, resolved: threads.length - open, first: threads.toSorted(threadOrder)[0] };
+}
+
 /** "line 12" or "lines 12–15", where a thread is (or was). */
 export function linesLabel(t: ReviewThread): string {
   if (t.subject === 'FILE') return 'the file';

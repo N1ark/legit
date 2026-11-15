@@ -60,6 +60,19 @@ class Reviews {
   /** Heights threads were last measured at, so a diff opened again lays out without moving. */
   heights = new Map<string, number>();
 
+  /** The diff views that comment on their picked lines, for the shortcut (the last one shown takes it); true when it had lines picked. */
+  private commenters: (() => boolean)[] = [];
+
+  onComment(fn: () => boolean): () => void {
+    this.commenters.push(fn);
+    return () => (this.commenters = this.commenters.filter((k) => k !== fn));
+  }
+
+  /** The shortcut: comment on the lines picked in the diff. */
+  commentKey(): boolean {
+    return this.commenters[this.commenters.length - 1]?.() ?? false;
+  }
+
   private loading = new Map<number, Promise<void>>();
   private seen = new Map<number, number>();
 
@@ -270,6 +283,11 @@ export class DiffReview {
     }
     return m;
   });
+
+  /** File `path`'s threads this diff shows wherever it can (`belongs`), and those of them `placed` on its rows. */
+  threadsOn(path: string, placed?: Block[]): ReviewThread[] {
+    return (this.byPath.get(path) ?? []).filter((t) => belongs(t, this.ctx) || placed?.some((b) => b.thread === t));
+  }
 
   /** The commit GitHub gets comments on (the head for the whole pull request), or why there isn't one. */
   target = $derived.by((): { commit: string } | { why: string } => {

@@ -37,6 +37,7 @@
   import { WORK, app, sideBySide } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { tracking } from './lib/gh-files.svelte.ts';
+  import { reviews } from './lib/gh-review.svelte.ts';
   import { inbox } from './lib/gh-inbox.svelte.ts';
   import { prDiffs } from './lib/gh-prdiff.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
@@ -146,7 +147,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'prs' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'viewed' | 'sideBySide';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'prs' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'viewed' | 'sideBySide' | 'comment';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -172,6 +173,7 @@
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
     { keys: 'p', action: 'pr', label: "Show the branch's pull request" },
+    { keys: 'c', action: 'comment', label: "Comment on the picked lines, in a pull request's diff" },
     { keys: 'v', action: 'viewed', label: "Mark the file at the top of the pull request's diff viewed, or not" },
     { keys: '⇧P', action: 'prs', label: "The repository's pull requests" },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
@@ -206,6 +208,7 @@
     else if (action === 'help') help = true;
     else if (action === 'pr') gh.togglePr();
     else if (action === 'viewed') tracking.key();
+    else if (action === 'comment') reviews.commentKey();
     else if (action === 'prs') inbox.toggle();
     else if (action === 'settings') settings = 'syntax';
     else if (action === 'find') finder.start();

@@ -24,12 +24,16 @@
   // into view; highlighting runs in a worker and fills in afterwards.
   import {
     type MaybeEntry,
+    Button,
     IconButton,
+    Kbd,
     Popover,
     ResizeEdge,
     Tag,
     Twisty,
     fixedRange,
+    hasOverlay,
+    isTyping,
     matches,
     menu,
     offsets,
@@ -40,7 +44,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -59,10 +63,11 @@
   import Thread from './gh/Thread.svelte';
   import { tracking } from './lib/gh-files.svelte.ts';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
-  import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
+  import { type BlockLayout, heightAbove, layOut, threadCounts } from './lib/gh-threads.ts';
   import { type DiffPosition, app, hideWhitespace, highlightKey, sideBySide } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
+  import { tip } from './lib/tip.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -89,6 +94,7 @@
     rowOfPlace,
     rowPlace,
     rowsIn,
+    runAround,
     shownRanges,
   } from './lib/rows.ts';
   import { type Anchor, type Knot, anchorAt, readKnots, rowAnchor, rowOfAnchor, yOf } from './lib/place.ts';
@@ -300,6 +306,10 @@
       if (!scroller) return;
       if (onFile >= 0) {
         reviews.focus = null;
+        if (collapsed[i]) {
+          collapsed[i] = false;
+          flushSync();
+        }
         const y = tops[i] + HEAD + fileBlocks[i].slice(0, onFile).reduce((h, b) => h + blockHeight(b), 0);
         if (y < view.top + HEAD || y + Math.min(blockHeight(fileBlocks[i][onFile]), (view.bottom - view.top) / 2) > view.bottom) {
           scroller.scrollTop += y - view.top - HEAD;
@@ -342,11 +352,12 @@
     foldViewed(i, on);
     if (!(await track?.setViewed(path, on)) && alive && files[i]?.path === path) foldViewed(i, !on);
   }
-  // Files marked viewed start folded, as on GitHub, once the marks are in (unless the view this one replaces said otherwise).
+  // In the pull request's whole diff, files marked viewed start folded, as on GitHub, once the marks are in (unless the view
+  // this one replaces said otherwise). One commit shows only part of a file's change, so there they stay open.
   let foldedViewed = false;
   $effect(() => {
     const t = track;
-    if (!t?.viewable || foldedViewed) return;
+    if (!t?.viewable || !t.whole || foldedViewed) return;
     foldedViewed = true;
     untrack(() =>
       files.forEach((f, i) => {
@@ -360,9 +371,19 @@
     const on = v !== 'VIEWED';
     return { label: on ? 'Mark as viewed' : 'Mark as not viewed', icon: on ? CheckSquareRegular : SquareRegular, note: `On #${track.pr?.number}`, run: () => setViewed(i, on) };
   }
+  /** File i's review threads in this diff: how many are unresolved and resolved, and the first. */
+  const threadsOf = (i: number) => (review ? threadCounts(review.threadsOn(files[i].path, placedThreads[i]?.blocks)) : null);
   function treeMark(i: number) {
     const p = files[i].path;
-    return track && { viewed: track.viewed(p) === 'VIEWED', mine: track.mine(p), notes: track.counts(p) };
+    const threads = threadsOf(i);
+    return { viewed: track?.viewed(p) === 'VIEWED', mine: !!track?.mine(p), notes: track?.counts(p) ?? null, threads: threads && { open: threads.open, resolved: threads.resolved } };
+  }
+  /** Bring file i's first thread (its first unresolved one) into view. */
+  function showThreads(i: number) {
+    const t = threadsOf(i)?.first;
+    if (!t) return;
+    if (t.resolved) reviews.opened[t.id] = true;
+    reviews.focus = { id: t.id, path: t.path };
   }
   // The shortcut toggles Viewed on the file at the top of the view (the first, above them).
   $effect(() => {
@@ -373,7 +394,8 @@
       if (i >= files.length) return;
       const v = t.viewed(files[i].path);
       if (v) setViewed(i, v !== 'VIEWED');
-      else if (t.pr && t.data) toast("Files are marked viewed on the pull request's whole diff: select all of its commits.");
+      else if (t.pr && t.data && review?.data)
+        toast(t.viewable ? `${files[i].path} isn't part of #${t.pr.number}.` : `Files are marked viewed in diffs of #${t.pr.number}'s commits, as GitHub has them.`);
     });
   });
 
@@ -405,7 +427,7 @@
   function commentEntry(i: number, r: number): MaybeEntry {
     if (!review?.pr) return false;
     const rows = contents[i];
-    const p = sel[files[i].path]?.size ? pickedRows(i) : null;
+    const p = commenting ? (span?.i === i ? [span.a, span.b] : null) : sel[files[i].path]?.size ? pickedRows(i) : null;
     const [a, b] = Array.isArray(p) && r >= p[0] && r <= p[1] ? p : [r, r];
     const why = review.why(files[i].path, rows, a, b);
     return {
@@ -427,6 +449,19 @@
   /** Commenting on the picked lines, for the view's own buttons: why not, and how; null without a pull request. */
   export function pickedComment(): { why: string | null; run: () => void } | null {
     if (!review?.pr) return null;
+    if (commenting) {
+      const p = span;
+      const rows = p && contents[p.i];
+      if (!p || !rows) return null;
+      const path = files[p.i].path;
+      return {
+        why: review.why(path, rows, p.a, p.b),
+        run: () => {
+          span = null;
+          review.compose(path, rows, p.a, p.b);
+        },
+      };
+    }
     const i = files.findIndex((f) => sel[f.path]?.size);
     if (i < 0) return null;
     const p = pickedRows(i);
@@ -452,8 +487,10 @@
   // pairs each file's rows, drawn in two columns that scroll sideways apart. The geometry below is then in those
   // rows (v), not the FileRows' (r), which everything else keeps working in: vrow() goes from one to the other.
   const SIDE_GUTTER = 62;
-  const SIDE_MIN = 760;
-  const wantSide = $derived(sideBySide.value && !onresolve && !editing && (paneWidth || knownPaneWidth) >= SIDE_MIN);
+  /** About 22 columns of code a side: narrower, it stays one above the other, and the switch says so. */
+  const SIDE_MIN = 520;
+  const tooNarrow = $derived(sideBySide.value && !onresolve && (paneWidth || knownPaneWidth) < SIDE_MIN);
+  const wantSide = $derived(sideBySide.value && !onresolve && !editing && !tooNarrow);
   let side = $state(untrack(() => wantSide));
   const sideCache = new WeakMap<FileRows, SideBySide>();
   /** File i's rows side by side, when they show so. */
@@ -1052,6 +1089,10 @@
       if (r >= 0 && end >= r) [editing.r, editing.end] = [r, end];
       else editing = null;
     }
+    if (span?.i === i) {
+      const [a, b, from] = [moved[span.a], moved[span.b], moved[span.from]];
+      span = a >= 0 && b >= 0 && from >= 0 ? { i, a, b, from } : null;
+    }
     hoverBlock = null;
     contents = { ...contents, [i]: rows };
     queueHighlight(i, rows);
@@ -1166,7 +1207,8 @@
       const r = Number(el.closest<HTMLElement>('[data-r]')?.dataset.r ?? -1);
       if (!rows || r < 0) return null;
       if (el.classList.contains('mark')) return rows.kind[r] === SPACED ? 'Only whitespace changed' : null;
-      return rows.ci[r] >= 0 && !readonly ? (onstage ? 'Stage or unstage this block' : 'Pick this block') : null;
+      if (rows.ci[r] < 0) return null;
+      return commenting ? 'Pick this block, to comment on it' : readonly ? null : onstage ? 'Stage or unstage this block' : 'Pick this block';
     });
   }
 
@@ -1369,6 +1411,63 @@
   let drag: { path: string; on: boolean; last: number; block: boolean; touched: Set<number> } | null = null;
   let hoverBlock = $state<{ i: number; a: number; b: number } | null>(null);
 
+  // A read-only diff of a pull request's commits picks lines to comment on instead: any rows of one file, a..b
+  // (from the one picked first), by a click, a drag or ⇧-click, a block on its strip, or a hunk on its header.
+  const commenting = $derived(readonly && !!review?.pr && !onresolve);
+  let span = $state<{ i: number; a: number; b: number; from: number } | null>(null);
+  let spanning = false;
+  const inSpan = (i: number, r: number) => !!span && span.i === i && r >= span.a && r <= span.b;
+  const pickSpan = (i: number, from: number, to: number) => (span = { i, from, a: Math.min(from, to), b: Math.max(from, to) });
+  /** Pick rows a..b of file i, or unpick them when they're what's picked. */
+  function toggleSpan(i: number, a: number, b: number) {
+    if (span?.i === i && span.a === a && span.b === b) span = null;
+    else span = { i, a, b, from: a };
+  }
+
+  function pickDown(e: MouseEvent, i: number, r: number, rows: FileRows | undefined) {
+    if (r < 0 || !rows || e.button !== 0) return;
+    if (rows.kind[r] === HUNK) {
+      let end = r + 1;
+      while (end < rows.kind.length && !isHead(rows.kind[end])) end++;
+      if (end > r + 1) toggleSpan(i, r + 1, end - 1);
+      return;
+    }
+    if (isHead(rows.kind[r])) return;
+    if (e.shiftKey && span?.i === i) {
+      e.preventDefault();
+      return void pickSpan(i, span.from, r);
+    }
+    if (rows.ci[r] >= 0 && onStrip(e)) {
+      e.preventDefault();
+      const [a, b] = blockAt(rows, r);
+      return toggleSpan(i, a, b);
+    }
+    // A drag over the code selects its text, to copy; a plain click picks its line.
+    if (!(e.target as HTMLElement).closest('.gutter')) return void (pending = { i, r, x: e.clientX, y: e.clientY });
+    e.preventDefault();
+    toggleSpan(i, r, r);
+    if (span) spanning = true;
+  }
+
+  /** Esc lets go of the picked lines (before anything else takes it, as going back to the overview). */
+  function pickKey(e: KeyboardEvent) {
+    if (!span || e.key !== 'Escape' || e.defaultPrevented || isTyping(e.target as Element) || hasOverlay()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    span = null;
+  }
+
+  // The shortcut comments on the picked lines, in whichever mode picks them.
+  onMount(() =>
+    reviews.onComment(() => {
+      const c = pickedComment();
+      if (!c) return false;
+      if (c.why) toast.error(c.why);
+      else c.run();
+      return true;
+    }),
+  );
+
   /** Rows [a, b] of the run of consecutive changed lines around row r. */
   function blockAt(rows: FileRows, r: number): [number, number] {
     let a = r;
@@ -1425,6 +1524,7 @@
     const r = rowOf(e);
     const rows = contents[i];
     if (rows?.kind[r] === TAIL && e.button === 0) return void expand(i, rows.gap[r], 'top');
+    if (commenting) return pickDown(e, i, r, rows);
     if (readonly || r < 0 || !rows || e.button !== 0) return;
     if (rows.kind[r] === HUNK) return toggleHunk(i, r);
     const ci = rows.ci[r];
@@ -1463,9 +1563,11 @@
 
   function up(e: MouseEvent) {
     endDrag();
+    spanning = false;
     const p = pending;
     pending = null;
     if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) return;
+    if (commenting) return toggleSpan(p.i, p.r, p.r);
     const rows = contents[p.i];
     const ci = rows?.ci[p.r] ?? -1;
     if (ci < 0) return;
@@ -1488,8 +1590,9 @@
     const rows = contents[i];
     if (!rows || r < 0) return;
     const ci = rows.ci[r];
+    if (spanning && span?.i === i && !isHead(rows.kind[r])) pickSpan(i, span.from, r);
     // Preview the block the strip would toggle.
-    const strip = !readonly && ci >= 0 && onStrip(e);
+    const strip = (!readonly || commenting) && ci >= 0 && onStrip(e);
     if (strip) {
       const [a, b] = blockAt(rows, r);
       if (hoverBlock?.i !== i || hoverBlock.a !== a) hoverBlock = { i, a, b };
@@ -1759,10 +1862,13 @@
     if (f.status === 'D') return [];
     const s = sel[f.path];
     const lines = [lineFor(rows, r) ?? 0];
-    if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
+    if (span && inSpan(i, r)) for (let k = span.a; k <= span.b; k++) lines.push(lineFor(rows, k) ?? 0);
+    else if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
       for (let k = 0; k < rows.ci.length; k++) if (s.has(rows.ci[k]) || s.has(rows.c2[k])) lines.push(lineFor(rows, k) ?? 0);
     }
-    return lineEntries(summary.sha, f.path, lines);
+    // A pull request's diff that isn't one commit's (its Files changed) links to its head, which GitHub has.
+    const head = !app.bySha.has(summary.sha) && review?.ctx.head ? review.data?.headSha : null;
+    return head ? lineEntries(head, f.path, lines, true) : lineEntries(summary.sha, f.path, lines);
   }
 
   function openMenu(e: MouseEvent, i: number) {
@@ -1850,7 +1956,7 @@
   const KIND = ['', 'tc', 'ta', 'td', '', 'tw'];
 </script>
 
-<svelte:window onmouseup={up} />
+<svelte:window onmouseup={up} onkeydowncapture={pickKey} />
 
 <div class="diff" style:--inset="{inset}px">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
@@ -1859,35 +1965,38 @@
     <div class="side">
       <div class="summary muted" bind:clientHeight={summaryHeight}>
         <div class="stats">
-          <div class="line">
+          <div class="stat">
             <span>{files.length} {files.length === 1 ? 'file' : 'files'}</span>
             <span class="add">+{totals.a}</span>
             <span class="del">−{totals.r}</span>
             {#if generatedCount}
-              <span use:tooltip={'Generated files start collapsed'}>· {generatedCount} generated</span>
+              <span class="dot" use:tooltip={'Generated files start collapsed'}>{generatedCount} generated</span>
             {/if}
           </div>
-          <div class="line">
+          <div class="stat">
             <label class="ws" use:tooltip={'Show lines whose only change is whitespace as unchanged (~); picking one still picks both its changes'}>
               <Switch label="Hide whitespace changes" bind:checked={hideWhitespace.value} />
               Hide whitespace
             </label>
             {#if hideWhitespace.value && totals.ws}
-              <span>· {totals.ws} whitespace-only</span>
+              <span class="dot">{totals.ws} whitespace-only</span>
             {/if}
           </div>
           {#if track}<ReviewProgress {track} {paths} />{/if}
           {#if !onresolve}
-            <div class="line">
+            <div class="stat">
               <label
                 class="ws"
-                use:tooltip={sideBySide.value && !side && !editing
-                  ? 'The diff is too narrow to show side by side, so it shows one above the other (S)'
-                  : 'Old lines on the left, new ones on the right (S)'}
+                use:tooltip={tooNarrow
+                  ? 'The diff is too narrow to show side by side, so it shows one above the other: widen the window or narrow the file tree (S)'
+                  : sideBySide.value && editing
+                    ? 'One above the other while a line is edited (S)'
+                    : 'Old lines on the left, new ones on the right (S)'}
               >
                 <Switch label="Side by side" bind:checked={sideBySide.value} />
                 Side by side
               </label>
+              {#if tooNarrow}<span class="dot narrow">too narrow here</span>{/if}
             </div>
           {/if}
         </div>
@@ -1901,7 +2010,8 @@
             onopen={openFile}
             onmenu={openMenu}
             ondirmenu={openDirMenu}
-            mark={track ? treeMark : undefined}
+            mark={review ? treeMark : undefined}
+            onthreads={showThreads}
             only={track && tracking.ownedOnly && track.ownsAny(paths) ? (i) => !!track?.mine(files[i].path) : null}
             bind:natural={treeNatural}
           />
@@ -1958,26 +2068,27 @@
               ondblclick={() => openFile(i)}
               >{#if f.oldPath}<span class="old">{f.oldPath}</span> <span class="muted">→</span>{' '}{/if}{f.path}</span
             >
-            {#if f.conflicted}<span use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
+            {#if f.conflicted}<span class="tg" use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if onstage && (f.unshown || mixed.has(f.path))}
               <span
+                class="tg"
                 use:tooltip={f.unshown ??
                   "Changed again after staging, so what's staged is neither version. Pick a line to stage the new version of its block, or unpick it."}
                 ><Tag color="var(--warn)" label="staged differently" /></span
               >
             {/if}
             {#if f.generated}
-              <span use:tooltip={'Collapsed by default; the README says how to change which files'}><Tag label="generated" /></span>
+              <span class="tg" use:tooltip={'Collapsed by default; the README says how to change which files'}><Tag label="generated" /></span>
             {/if}
             {#if hideWhitespace.value && onlyWhitespace(f)}
-              <span use:tooltip={'Every change here is whitespace only'}><Tag label="whitespace only" /></span>
+              <span class="tg" use:tooltip={'Every change here is whitespace only'}><Tag label="whitespace only" /></span>
             {/if}
             {#if placedThreads[i]?.elsewhere.length}
               {@const n = placedThreads[i].elsewhere.length}
               <span
-                class="away"
+                class="away tg"
                 data-away={i}
                 use:tooltip={"Review threads on this file, made on this commit, that aren't on a line of its diff: outdated, or on lines it doesn't show"}
               >
@@ -1990,7 +2101,7 @@
             {/if}
             {#if rendered[i] && (placedThreads[i]?.blocks.some((b) => !b.note) || fileBlocks[i])}
               {@const n = (placedThreads[i]?.blocks.filter((b) => !b.note).length ?? 0) + (fileBlocks[i]?.length ?? 0)}
-              <span use:tooltip={'Review threads on lines of this file show with its diff'}>
+              <span class="tg" use:tooltip={'Review threads on lines of this file show with its diff'}>
                 <Tag
                   color="var(--theme2)"
                   label="{n} {n === 1 ? 'thread' : 'threads'} in the diff"
@@ -2051,7 +2162,7 @@
           {:else if !collapsed[i]}
             {#if fileBlocks[i]}
               <div class="gh-top" style:height="{fileBlocksHeight(i)}px">
-                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b)}{/each}
+                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b, -1)}{/each}
               </div>
             {/if}
             {#if leads[i]}
@@ -2083,7 +2194,8 @@
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="lines mono"
-                    class:readonly
+                    class:readonly={readonly && !commenting}
+                    class:pickrows={commenting}
                     class:wrap={cols > 0}
                     style:--cols={cols}
                     style:top="{rowY(i, shown[0] ?? 0)}px"
@@ -2109,7 +2221,7 @@
                         {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
                         <div
                           class="line {KIND[kind]} {ROLE[roleOf(rows, r)]}"
-                          class:sel={pick === 2}
+                          class:sel={pick === 2 || inSpan(i, r)}
                           class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
                           class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
                           class:editing={edit}
@@ -2148,7 +2260,7 @@
                           {/if}
                         </div>
                       {/if}
-                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}{@render ghBlock(b)}{/each}
+                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}{@render ghBlock(b, runAround(rows.kind, r, r + 1))}{/each}
                     {/each}
                   </div>
                 {/if}
@@ -2158,6 +2270,21 @@
         </div>
       {/each}
     </div>
+    {#if span && contents[span.i]}
+      {@const c = pickedComment()}
+      {@const n = span.b - span.a + 1}
+      <div class="pick-at">
+        <div class="pickbar" role="toolbar" aria-label="Picked lines">
+          <ChatCircleTextRegular />
+          <span class="count">{n} {n === 1 ? 'line' : 'lines'} of <span class="mono">{files[span.i].path.slice(files[span.i].path.lastIndexOf('/') + 1)}</span></span>
+          {#if c?.why}<span class="why">{c.why}</span>{/if}
+          <Button variant="primary" size="sm" disabled={!c || !!c.why} onclick={() => c?.run()} {@attach tip(`Comment on these lines on #${review?.pr?.number}`)}>
+            Comment <Kbd hint="c" />
+          </Button>
+          <IconButton label="Clear selection" shortcut="Esc" size="sm" onclick={() => (span = null)}><XRegular /></IconButton>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -2223,7 +2350,8 @@
     >
       <div
         class="lines mono"
-        class:readonly
+        class:readonly={readonly && !commenting}
+        class:pickrows={commenting}
         class:wrap={sideCols > 0}
         style:--cols={sideCols}
         style:top="{rowY(i, shown[0] ?? 0)}px"
@@ -2245,7 +2373,7 @@
             {@const pick = ci >= 0 ? pickedOf(f.path, rows, r) : 0}
             <div
               class="line {KIND[kind]}"
-              class:sel={pick === 2}
+              class:sel={pick === 2 || inSpan(i, r)}
               class:mixed={pick === 1 || (ci >= 0 && mixedAt(f.path, rows, r))}
               class:blkhover={hoverBlock?.i === i && r >= hoverBlock.a && r <= hoverBlock.b}
               class:gh-range={blockLayout[i]?.on.has(r)}
@@ -2258,7 +2386,8 @@
             </div>
           {/if}
           {#if blocks?.byRow.has(v)}
-            <div style:height="{blocksAbove(i, v + 1) - blocksAbove(i, v)}px"></div>
+            {@const run = runAround(rows.kind, r, v + 1 < half.length ? half[v + 1] : -1)}
+            <div class:in-add={run === ADDED} class:in-del={run === REMOVED} style:height="{blocksAbove(i, v + 1) - blocksAbove(i, v)}px"></div>
           {/if}
         {/each}
       </div>
@@ -2274,8 +2403,8 @@
   {/each}
 {/snippet}
 
-{#snippet ghBlock(b: Block)}
-  <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
+{#snippet ghBlock(b: Block, run: number)}
+  <div class="gh-slot" class:in-add={run === ADDED} class:in-del={run === REMOVED} style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
     <div {@attach measureBlock(b)}>{@render blockBody(b)}</div>
   </div>
 {/snippet}
@@ -2356,12 +2485,32 @@
     gap: var(--sp-2);
   }
 
-  .stats .line {
+  /* Its items wrap whole; the dot before one that starts a line is clipped off. */
+  .stat {
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2) var(--sp-4);
     align-items: center;
     white-space: nowrap;
+    overflow: hidden;
+    padding: var(--gap-1);
+    margin: calc(-1 * var(--gap-1));
+  }
+
+  .dot {
+    position: relative;
+  }
+
+  .narrow {
+    color: var(--warn);
+  }
+
+  .dot::before {
+    content: '·';
+    position: absolute;
+    right: 100%;
+    width: var(--sp-4);
+    text-align: center;
   }
 
   .ws {
@@ -2438,6 +2587,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Squeezed, the path gives way first (to a dozen characters), then the tags; the controls and counts never do. */
+  .fhead > :global(*) {
+    flex-shrink: 0;
+  }
+
+  .fhead > .path {
+    flex-shrink: 1000;
+    min-width: 12ch;
+  }
+
+  .fhead > :is(.tg, :global(.marks)) {
+    flex-shrink: 1;
+    min-width: 0;
   }
 
   .path .old {
@@ -2760,6 +2924,20 @@
     background: var(--theme-soft);
   }
 
+  .line.sel:not(.ta, .td, .tw) {
+    background: var(--theme-soft);
+  }
+
+  .lines.pickrows .gutter {
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .lines.pickrows .line:not(.sel, .filler):hover .gutter {
+      background: var(--theme-soft);
+    }
+  }
+
   .line.sel .gutter {
     background: var(--theme);
     color: var(--on-accent);
@@ -2879,9 +3057,18 @@
     overflow: hidden;
   }
 
-  /* The lines a review thread is about: a bar just inside the code, joined across them. */
-  .line.gh-range .code {
-    background: linear-gradient(to right, transparent 2px, var(--theme2) 2px 5px, transparent 5px) no-repeat;
+  /* Inside a run of added (or removed) lines, what sits under one keeps their tint, so the run reads as one block. */
+  .in-add {
+    background: var(--add-bg);
+  }
+
+  .in-del {
+    background: var(--del-bg);
+  }
+
+  /* The lines a review thread is about: the gutter's edge thickens into a bar, joined across them (and staying as the code scrolls). */
+  .line.gh-range .gutter {
+    box-shadow: inset -3px 0 0 var(--theme2);
   }
 
   /* Side by side: two columns, each scrolling sideways on its own, threads over both. */
@@ -2919,6 +3106,10 @@
 
   .half.right .gutter {
     box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
+  }
+
+  .half.right .line.gh-range .gutter {
+    box-shadow: inset 1px 0 0 var(--border), inset -3px 0 0 var(--theme2);
   }
 
   .half .hunk:empty {
@@ -2967,8 +3158,56 @@
     color: var(--warn);
   }
 
-  .away {
+  .tg {
     display: inline-flex;
+    min-width: 0;
+  }
+
+  /* Lines picked to comment on, in a read-only diff: what to do with them, below the diff, kept in view over a longer one. */
+  .pick-at {
+    grid-column: -2 / -1;
+    position: sticky;
+    bottom: var(--sp-4);
+    z-index: calc(var(--z-sticky) + 1);
+    display: flex;
+    justify-content: center;
+    margin-top: var(--sp-4);
+    pointer-events: none;
+  }
+
+  .pickbar {
+    pointer-events: auto;
+    max-width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    padding: var(--gap-4) var(--gap-4) var(--gap-4) var(--sp-5);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--theme-mid);
+    color: var(--theme2);
+    font-size: var(--fs-sm);
+    animation: rise var(--dur) var(--ease);
+  }
+
+  .pickbar .count {
+    color: var(--color2);
+    white-space: nowrap;
+  }
+
+  .pickbar .why {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    min-width: 0;
+  }
+
+  @keyframes rise {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
   }
 
   .away-list {

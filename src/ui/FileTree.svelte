@@ -4,7 +4,7 @@
   // right-clicking a file or a folder opens its menu. Conflicted files have a tree of their own, above the rest.
   // Once a row has the focus (clicked), ↑/↓ go to the file above or below instead of the next commit.
   import { Twisty, fixedRange, tooltip } from 'purr';
-  import { CheckBold, UserFill } from 'purr/glyphs';
+  import { ChatCircleCheckRegular, ChatCircleFill, CheckBold, UserFill } from 'purr/glyphs';
   import NoteIcon from './gh/NoteIcon.svelte';
   import { type NoteCounts, describeNotes } from './lib/gh-files.ts';
   import { tick, untrack } from 'svelte';
@@ -19,6 +19,7 @@
     onmenu,
     ondirmenu,
     mark,
+    onthreads,
     only,
     natural = $bindable(0),
   }: {
@@ -32,8 +33,10 @@
     onmenu?: (e: MouseEvent, i: number) => void;
     /** A folder's context menu, with its full path. */
     ondirmenu?: (e: MouseEvent, dir: string) => void;
-    /** A pull request's marks on file i: viewed, the viewer's own, CI's annotations on it. */
-    mark?: (i: number) => { viewed: boolean; mine: boolean; notes: NoteCounts | null } | null;
+    /** A pull request's marks on file i: viewed, the viewer's own, CI's annotations on it, its review threads. */
+    mark?: (i: number) => { viewed: boolean; mine: boolean; notes: NoteCounts | null; threads: { open: number; resolved: number } | null } | null;
+    /** Go to file i's first review thread (a click on its count). */
+    onthreads?: (i: number) => void;
     /** Only the files it keeps are listed. */
     only?: ((i: number) => boolean) | null;
     /** How tall it would be with every row shown (out): a short tree needs no more room. */
@@ -111,7 +114,9 @@
   const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed', R: 'renamed', C: 'copied' };
 
   const marksTip = (m: NonNullable<ReturnType<NonNullable<typeof mark>>>) =>
-    `${m.viewed ? '\nViewed' : ''}${m.mine ? '\nYou own it' : ''}${m.notes ? `\nCI: ${describeNotes(m.notes)}` : ''}`;
+    `${m.viewed ? '\nViewed' : ''}${m.mine ? '\nYou own it' : ''}${m.threads ? `\n${threadsLabel(m.threads)}` : ''}${m.notes ? `\nCI: ${describeNotes(m.notes)}` : ''}`;
+  const threadsLabel = ({ open, resolved }: { open: number; resolved: number }) =>
+    [open && `${open} unresolved ${open === 1 ? 'thread' : 'threads'}`, resolved && `${resolved} resolved`].filter(Boolean).join(', ');
 
   /** Where a renamed file came from: its old name, or its old path when it moved folders. */
   function source(f: FileSummary): string {
@@ -176,6 +181,20 @@
         <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'} class:seen={m?.viewed}
           >{r.name}{#if f.oldPath}<span class="from">← {source(f)}</span>{/if}</span
         >
+        {#if m?.threads}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <span
+            class="mk threads"
+            class:open={m.threads.open > 0}
+            onclick={onthreads &&
+              ((e) => {
+                e.stopPropagation();
+                onthreads(r.index);
+              })}
+            ondblclick={(e) => e.stopPropagation()}
+            >{#if m.threads.open}<ChatCircleFill />{m.threads.open}{:else}<ChatCircleCheckRegular />{m.threads.resolved}{/if}</span
+          >
+        {/if}
         {#if m?.notes}<span class="mk notes"><NoteIcon level={m.notes.level} />{m.notes.count}</span>{/if}
         {#if m?.mine}<span class="mk mine"><UserFill /></span>{/if}
         {#if m?.viewed}<span class="mk seen"><CheckBold /></span>{/if}
@@ -286,6 +305,12 @@
     flex-shrink: 0;
     font-size: var(--fs-xs);
     color: var(--muted);
+  }
+
+  /* Unresolved threads stand out; resolved ones only, quietly. */
+  .mk.threads.open {
+    color: var(--theme2);
+    font-weight: 600;
   }
 
   .mk.mine {

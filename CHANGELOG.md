@@ -5,6 +5,14 @@
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.
 - Each review in a pull request's conversation shows its comments on the diff right under it, instead of only how many there were: each thread with its file and lines, the lines it was made on, its replies, and reply and resolve as in the diff. Comments made alone show at their own time, and your pending review where its latest comment is. The separate list of review threads above the conversation is gone; **N unresolved threads** goes to each in turn.
 - Reacting to a review comment picks from a 4×2 grid of the eight emoji, without their names (they show on hover); the arrow keys move around it, and your own reactions show pressed.
+- Right-clicking lines in a pull request's **Files changed** offers **Copy GitHub link** and **New issue from these lines…** too, to those lines at its head.
+- Pick lines to comment on in a pull request's **Files changed** and its other read-only diffs: click a line, drag or <kbd>⇧</kbd>-click for a range (unchanged lines too), or click a hunk's header or a block's strip for all of it; **Comment** in the bar that shows (or <kbd>c</kbd>, in any diff) starts a comment on them, and <kbd>Esc</kbd> lets go.
+- **Viewed** is a clear button in each file's header, in any diff of a pull request's commits (one commit too, not only its whole diff), and never squeezed out: a long path gives way first. <kbd>v</kbd> and **Mark as viewed** in the file tree's menu work there too; files viewed start folded only in the whole diff.
+- The file tree beside a pull request's diff shows which files have review threads: how many are unresolved (in colour), or a quiet tick for resolved ones only. Click the count to go to the first; a comment on the whole file of a folded file now unfolds it.
+- The purple bar beside the lines a thread is on lines up with the edge of the line numbers, and stays there as the code scrolls sideways.
+- A review thread, comment or CI annotation in the middle of added lines sits on their green (removed lines: their red), so the change still reads as one block; side by side, each side keeps its own.
+- **Side by side** works in a laptop-sized window, beside the commit list and the file tree (it needed the diff alone to be 760 px wide, so it silently stayed one above the other); where the diff really is too narrow, the switch says *too narrow here*.
+- The counts above a diff's file tree (*2 generated*, *3 whitespace-only*) wrap onto their own line in a narrow window instead of overlapping the switches below.
 
 ## 0.25.0 — 2026-11-15
 

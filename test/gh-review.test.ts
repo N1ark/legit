@@ -16,6 +16,7 @@ import {
   placeThreads,
   splitSuggestions,
   suggestionBlock,
+  threadCounts,
   threadOrder,
 } from '../src/ui/lib/gh-threads.ts';
 import { buildRows } from '../src/ui/lib/rows.ts';
@@ -280,4 +281,13 @@ test('the pending review: its comments by file and line, and how many on how man
   assert.deepEqual(p.items.map((x) => x.comment.body), ['first', 'second', 'reply']);
   assert.equal(p.summary, '3 comments on 2 files');
   assert.equal(pendingOf([b]).summary, '1 comment on 1 file');
+});
+
+test("threadCounts counts a file's unresolved and resolved threads, and goes to the first unresolved one", () => {
+  assert.equal(threadCounts([]), null);
+  const done = thread({ id: 'done', resolved: true, line: 2 });
+  const late = thread({ id: 'late', line: 30 });
+  const early = thread({ id: 'early', line: 12 });
+  assert.deepEqual(threadCounts([done, late, early]), { open: 2, resolved: 1, first: early });
+  assert.deepEqual(threadCounts([done]), { open: 0, resolved: 1, first: done });
 });

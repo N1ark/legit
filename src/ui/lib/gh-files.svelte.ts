@@ -104,10 +104,10 @@ class Tracking {
 export const tracking = new Tracking();
 
 /**
- * What one diff shows of it. Viewed marks show on the pull request's whole diff (all its commits
- * up to its head): GitHub's mark is on a file's change in the pull request, which one commit only
- * shows part of. Owners show on any diff of the pull request's branch, and annotations wherever
- * the new side is its head, since their lines are the head's.
+ * What one diff shows of it. Viewed marks show on any diff of the pull request's commits (GitHub's
+ * mark is per file, whichever part of its change is shown); files viewed start folded only in its
+ * whole diff, since one commit shows only part of a file's change. Owners show on any diff of the
+ * pull request's branch, and annotations wherever the new side is its head, since their lines are the head's.
  */
 export class DiffTrack {
   review: DiffReview;
@@ -118,7 +118,13 @@ export class DiffTrack {
 
   pr = $derived.by(() => this.review.pr);
   data = $derived(this.pr ? (tracking.files[this.pr.number] ?? null) : null);
-  viewable = $derived.by(() => !!this.data && this.review.ctx.head && this.review.ctx.base);
+  /** The pull request's whole diff (all its commits, up to its head). */
+  whole = $derived.by(() => this.review.ctx.head && this.review.ctx.base);
+  /** Of its commits only: its files can be marked viewed. */
+  viewable = $derived.by(() => {
+    const d = this.review.data;
+    return !!this.data && !!d && (this.whole || (this.review.shas.length > 0 && this.review.shas.every((c) => d.commits.includes(c))));
+  });
   head = $derived.by(() => (this.review.ctx.head ? (this.review.data?.headSha ?? null) : null));
 
   private rules = $derived(this.data?.codeowners ? tracking.rules(this.data.codeowners.text) : []);
@@ -144,7 +150,7 @@ export class DiffTrack {
     if (this.head) tracking.loadNotes(this.head);
   }
 
-  /** Its mark, when it shows here: the file's in the pull request and this is its whole diff. */
+  /** Its mark, when it shows here: the file's in the pull request and this is a diff of its commits. */
   viewed(path: string): ViewedState | null {
     return (this.viewable && this.data?.viewed[path]) || null;
   }
