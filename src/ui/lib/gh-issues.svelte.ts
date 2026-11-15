@@ -50,14 +50,14 @@ export async function createIssue(draft: IssueDraft): Promise<boolean> {
   }
 }
 
-/** A diff's GitHub entries for some new-side `lines` of `path` in commit `sha` (nothing unless it's a listed commit of a GitHub repo). */
-export function lineEntries(sha: string, path: string, lines: number[]): MaybeEntry[] {
+/** A diff's GitHub entries for some new-side `lines` of `path` in commit `sha` (nothing unless it's a listed commit of a GitHub repo, or `onGithub`, one GitHub has). */
+export function lineEntries(sha: string, path: string, lines: number[], onGithub = false): MaybeEntry[] {
   const c = app.bySha.get(sha);
   const repo = app.repo?.githubPush;
-  if (!c || !repo) return [];
+  if ((!c && !onGithub) || !repo) return [];
   const span = lineSpan(lines);
   const url = blobUrl(repo, sha, path, span);
-  const unpushed = c.pushed ? null : "This commit isn't pushed, so GitHub doesn't have it.";
+  const unpushed = onGithub || c?.pushed ? null : "This commit isn't pushed, so GitHub doesn't have it.";
   const one = !span || span[0] === span[1];
   return [
     {

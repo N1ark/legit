@@ -1866,7 +1866,9 @@
     else if (rows.ci[r] >= 0 && pickedOf(f.path, rows, r) > 0) {
       for (let k = 0; k < rows.ci.length; k++) if (s.has(rows.ci[k]) || s.has(rows.c2[k])) lines.push(lineFor(rows, k) ?? 0);
     }
-    return lineEntries(summary.sha, f.path, lines);
+    // A pull request's diff that isn't one commit's (its Files changed) links to its head, which GitHub has.
+    const head = !app.bySha.has(summary.sha) && review?.ctx.head ? review.data?.headSha : null;
+    return head ? lineEntries(head, f.path, lines, true) : lineEntries(summary.sha, f.path, lines);
   }
 
   function openMenu(e: MouseEvent, i: number) {

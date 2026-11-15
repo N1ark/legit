@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Right-clicking lines in a pull request's **Files changed** offers **Copy GitHub link** and **New issue from these lines…** too, to those lines at its head.
 - Pick lines to comment on in a pull request's **Files changed** and its other read-only diffs: click a line, drag or <kbd>⇧</kbd>-click for a range (unchanged lines too), or click a hunk's header or a block's strip for all of it; **Comment** in the bar that shows (or <kbd>c</kbd>, in any diff) starts a comment on them, and <kbd>Esc</kbd> lets go.
 - **Viewed** is a clear button in each file's header, in any diff of a pull request's commits (one commit too, not only its whole diff), and never squeezed out: a long path gives way first. <kbd>v</kbd> and **Mark as viewed** in the file tree's menu work there too; files viewed start folded only in the whole diff.
 - The file tree beside a pull request's diff shows which files have review threads: how many are unresolved (in colour), or a quiet tick for resolved ones only. Click the count to go to the first; a comment on the whole file of a folded file now unfolds it.
