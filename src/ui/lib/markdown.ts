@@ -31,7 +31,29 @@ const ref: TokenizerExtension = {
   },
 };
 
-const marked = new Marked({ gfm: true, breaks: false, extensions: [ref] });
+export interface EmojiToken {
+  type: 'emoji';
+  raw: string;
+  name: string;
+}
+
+/** `:tada:`, `:+1:`: GitHub's shortcodes, whichever it knows (the rest show as written). */
+const EMOJI = /^:([a-z0-9_+-]+):/;
+
+const emoji: TokenizerExtension = {
+  name: 'emoji',
+  level: 'inline',
+  start: (src) => {
+    const i = src.search(/:[a-z0-9_+-]+:/);
+    return i < 0 ? undefined : i;
+  },
+  tokenizer(src) {
+    const m = EMOJI.exec(src);
+    if (m) return { type: 'emoji', raw: m[0], name: m[1] } satisfies EmojiToken;
+  },
+};
+
+const marked = new Marked({ gfm: true, breaks: false, extensions: [ref, emoji] });
 
 /** A whole message: paragraphs, lists, code blocks... */
 export const lexBlocks = (text: string): Token[] => marked.lexer(text);
@@ -67,7 +89,7 @@ export function safeHref(href: string): string | null {
 // ---- Files -------------------------------------------------------------------------------------
 
 /** A file's markdown: no issue references (GitHub doesn't link them in files). */
-const files = new Marked({ gfm: true, breaks: false });
+const files = new Marked({ gfm: true, breaks: false, extensions: [emoji] });
 
 export type AlertKind = 'note' | 'tip' | 'important' | 'warning' | 'caution';
 

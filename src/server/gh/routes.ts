@@ -15,6 +15,7 @@ import { prviewGet, prviewPost } from './prview.ts';
 import { prdiffGet, prdiffPost, sweepPrRefs } from './prdiff.ts';
 import { reviewGet, reviewPost } from './review.ts';
 import { inboxGet } from './inbox.ts';
+import { emojisGet } from './emojis.ts';
 import { checkoutPost } from './checkout.ts';
 import { suggestionsPost } from './suggestions.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
@@ -66,6 +67,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...prfilesGet,
   ...annotationsGet,
   ...inboxGet,
+  ...emojisGet,
   ...prdiffGet,
 };
 export const postRoutes: Record<string, PostRoute> = {

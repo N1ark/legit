@@ -7,7 +7,8 @@ import { ChatCenteredTextRegular, ImageRegular, InfoRegular, LightbulbRegular, W
 import { type Component, mount } from 'svelte';
 import { fencePath } from './languages.ts';
 import type { CodeDiff } from './md-align.ts';
-import { type Alert, type DocLink, type Token, type Tokens, docLink, safeHref } from './markdown.ts';
+import { type Alert, type DocLink, type EmojiToken, type Token, type Tokens, docLink, safeHref } from './markdown.ts';
+import { emojis } from './gh-emojis.svelte.ts';
 
 export interface DomOptions {
   /** The file's path: its relative links and images are its repository's files. */
@@ -219,6 +220,15 @@ export class DomBuilder {
       case 'image':
         this.image(t as Tokens.Image, into);
         return;
+      case 'emoji': {
+        const e = emojis.get((t as unknown as EmojiToken).name);
+        if (!e) return void text(into, t.raw);
+        const span = el(e.startsWith('img:') ? 'img' : 'span', into, 'emoji');
+        if (span instanceof HTMLImageElement) [span.src, span.alt] = [e.slice(4), t.raw];
+        else span.textContent = e;
+        span.title = t.raw;
+        return;
+      }
       case 'checkbox': {
         const box = el('input', into, 'task');
         box.type = 'checkbox';

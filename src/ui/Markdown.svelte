@@ -14,7 +14,8 @@
   import { DocDiff, type Fold } from './lib/md-diff.ts';
   import { DocView } from './lib/md-view.ts';
   import type { IssueRef } from '../shared/gh-issues.ts';
-  import { type RefToken, type Token, type Tokens, lexBlocks, lexInline, refUrl, safeHref } from './lib/markdown.ts';
+  import { type EmojiToken, type RefToken, type Token, type Tokens, lexBlocks, lexInline, refUrl, safeHref } from './lib/markdown.ts';
+  import { emojis } from './lib/gh-emojis.svelte.ts';
 
   let {
     text,
@@ -156,6 +157,11 @@
       {#if href}
         {@render link(href, null, [plain(r.raw)], refs.get(r.repo ?? app.repo?.github, r.number))}
       {:else}{r.raw}{/if}
+    {:else if t.type === 'emoji'}
+      {@const e = emojis.get((t as unknown as EmojiToken).name)}
+      {#if e?.startsWith('img:')}<img class="emoji" src={e.slice(4)} alt={t.raw} title={t.raw} />{:else if e}<span
+          title={t.raw}>{e}</span
+        >{:else}{t.raw}{/if}
     {:else if t.type === 'checkbox'}
       <input type="checkbox" class="task" checked={(t as Tokens.Checkbox).checked} disabled />
     {:else}
@@ -266,6 +272,12 @@
 
   .task-item {
     list-style: none;
+  }
+
+  .emoji,
+  :global(.md-file .emoji) {
+    height: 1.25em;
+    vertical-align: -0.25em;
   }
 
   .img {

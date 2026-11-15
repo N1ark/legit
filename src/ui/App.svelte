@@ -40,6 +40,7 @@
   import { reviews } from './lib/gh-review.svelte.ts';
   import { inbox } from './lib/gh-inbox.svelte.ts';
   import { prDiffs } from './lib/gh-prdiff.svelte.ts';
+  import { emojis } from './lib/gh-emojis.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
@@ -135,6 +136,9 @@
       window.removeEventListener('pagehide', leave);
     };
   });
+
+  // GitHub's emoji shortcodes, for messages and comments, once it's reachable.
+  $effect(() => emojis.load());
 
   // A pull request's hidden refs go once it's no longer shown.
   $effect(() => prDiffs.showing(app.ghView?.number ?? null));
