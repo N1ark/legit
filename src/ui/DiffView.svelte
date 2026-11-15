@@ -52,6 +52,7 @@
   import type { CsvIndex } from './lib/csv.ts';
   import { addedLines, renderSide, renderedDiff, renderedPaths } from './lib/rendered.ts';
   import { DocDiff, type Fold } from './lib/md-diff.ts';
+  import Annotation from './gh/Annotation.svelte';
   import Composer from './gh/Composer.svelte';
   import FileMarks from './gh/FileMarks.svelte';
   import ReviewProgress from './gh/ReviewProgress.svelte';
@@ -232,6 +233,7 @@
     const known = blockHeights[b.key] ?? reviews.heights.get(b.key);
     if (known !== undefined) return known;
     if (b.draft) return 190;
+    if (b.note) return 44 + 2 * SLOT_PAD + 16 * Math.min(14, b.note.message.split('\n').length);
     const shut = 32 + 2 * SLOT_PAD;
     return reviews.isOpen(b.thread) ? shut + 64 + 90 * b.thread.comments.length : shut;
   }
@@ -291,7 +293,7 @@
     });
   });
 
-  // GitHub's Viewed marks and owners, on a diff of the pull request (lib/gh-files.svelte.ts).
+  // GitHub's Viewed marks, owners and CI annotations, on a diff of the pull request (lib/gh-files.svelte.ts).
   const track = $derived(review?.track ?? null);
   const paths = $derived(files.map((f) => f.path));
   /** Fold a file marked viewed, unfold one unmarked. */
@@ -324,7 +326,7 @@
   }
   function treeMark(i: number) {
     const p = files[i].path;
-    return track && { viewed: track.viewed(p) === 'VIEWED', mine: track.mine(p) };
+    return track && { viewed: track.viewed(p) === 'VIEWED', mine: track.mine(p), notes: track.counts(p) };
   }
   // The shortcut toggles Viewed on the file at the top of the view (the first, above them).
   $effect(() => {
@@ -1857,8 +1859,8 @@
                 />
               </span>
             {/if}
-            {#if rendered[i] && placedThreads[i]?.blocks.length}
-              {@const n = placedThreads[i].blocks.length}
+            {#if rendered[i] && placedThreads[i]?.blocks.some((b) => !b.note)}
+              {@const n = placedThreads[i].blocks.filter((b) => !b.note).length}
               <span use:tooltip={'Review threads on lines of this file show with its diff'}>
                 <Tag
                   color="var(--theme2)"
@@ -1868,7 +1870,7 @@
               </span>
             {/if}
             <span class="spacer"></span>
-            {#if track}<FileMarks {track} path={f.path} onviewed={(on) => setViewed(i, on)} />{/if}
+            {#if track}<FileMarks {track} path={f.path} {rows} onviewed={(on) => setViewed(i, on)} />{/if}
             {#if renderSide(f)}
               <IconButton
                 size="sm"
@@ -2038,6 +2040,8 @@
                               <Thread number={review.data.number} thread={b.thread} moved={b.moved} pending={!!review.data.pending} />
                             {:else if b.draft && review}
                               <Composer {review} draft={b.draft} />
+                            {:else if b.note}
+                              <Annotation note={b.note} />
                             {/if}
                           </div>
                         </div>

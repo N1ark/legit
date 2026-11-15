@@ -10,7 +10,7 @@ import { db, onGraphql, onRest } from './registry.ts';
 type Kind = 'build' | 'test' | 'lint';
 type Conclusion = 'success' | 'failure' | 'cancelled';
 
-interface Job {
+export interface Job {
   id: number;
   name: Kind;
   queuedAt: number;
@@ -20,7 +20,7 @@ interface Job {
   cancelledAt?: number;
 }
 
-interface Run {
+export interface Run {
   id: number;
   runNumber: number;
   attempt: number;
@@ -73,7 +73,7 @@ const status = (context: string, state: Status['state'], description: string, ag
 });
 
 /** Give the demo's pushed tips their fixtures the first time any is asked about; later pushes a fresh run. */
-function ensure() {
+export function ensure() {
   const tips = db.tips as Record<string, string>;
   const origin = (b: string) => tips[`origin/${b}`];
   if (!checks.seen) {
@@ -105,7 +105,7 @@ function ensure() {
   }
 }
 
-function jobStatus(j: Job, now = Date.now()): { status: string; conclusion: string | null } {
+export function jobStatus(j: Job, now = Date.now()): { status: string; conclusion: string | null } {
   if (j.cancelledAt !== undefined && j.cancelledAt <= now) return { status: 'completed', conclusion: 'cancelled' };
   if (now < j.startAt) return { status: 'queued', conclusion: null };
   if (now < j.endAt) return { status: 'in_progress', conclusion: null };

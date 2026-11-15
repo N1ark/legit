@@ -8,4 +8,5 @@ import './checks.ts';
 import './prview.ts';
 import './review.ts';
 import './prfiles.ts';
+import './annotations.ts';
 import './repos.ts';

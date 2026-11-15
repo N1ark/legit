@@ -1,6 +1,6 @@
 <script lang="ts">
   // Above a diff's file tree, in a diff of the pull request: how many of its files are viewed, and
-  // showing only the files the viewer owns. It keeps the files' marks loaded.
+  // showing only the files the viewer owns. It keeps the files' marks and annotations loaded.
   import { Switch, tooltip } from 'purr';
   import { tracking, type DiffTrack } from '../lib/gh-files.svelte.ts';
   import { viewedCount } from '../lib/gh-files.ts';

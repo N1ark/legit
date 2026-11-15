@@ -1,17 +1,22 @@
 // Keeping track during a review, for the diffs: each pull request's files marked viewed and its
-// CODEOWNERS (one request per refresh, by number). Marking a file viewed shows at once, and goes
-// back if GitHub refuses.
+// CODEOWNERS (one request per refresh, by number), and CI's annotations on its head (by SHA, again
+// as its checks finish). Marking a file viewed shows at once, and goes back if GitHub refuses.
 // `DiffTrack` is what one diff view shows of it.
 
 import { toast } from 'purr';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import type { DiffReview } from './gh-review.svelte.ts';
+import { checks } from './gh-checks.svelte.ts';
 import { type OwnerRule, type Owners, ownedBy, ownersOf, parseCodeowners } from './codeowners.ts';
-import type { PrFiles, ViewedState } from '../../shared/gh-files.ts';
+import { type NoteCounts, type PlacedNote, countNotes, placeNotes } from './gh-files.ts';
+import type { RowsLike } from './gh-threads.ts';
+import type { Annotation, CommitAnnotations, PrFiles, ViewedState } from '../../shared/gh-files.ts';
 
 class Tracking {
   /** By pull request number. */
   files = $state.raw<Record<number, PrFiles>>({});
+  /** By commit. */
+  notes = $state.raw<Record<string, CommitAnnotations>>({});
   /** The file tree shows only the files the viewer owns. */
   ownedOnly = $state(false);
 
@@ -29,6 +34,15 @@ class Tracking {
         for (const [k, s] of this.sending) if (k.startsWith(`${number}:`)) f.viewed[k.slice(`${number}:`.length)] = s;
         this.files = { ...this.files, [number]: f };
       },
+      () => {},
+    );
+  }
+
+  /** `sha`'s annotations, again once per refresh and whenever another of its checks is over. */
+  loadNotes(sha: string) {
+    if (!this.once(`n${sha}`, `${gh.tick}:${checks.details[sha]?.counts.done ?? ''}`)) return;
+    ghRequest<CommitAnnotations>('annotations', { sha }).then(
+      (n) => (this.notes = { ...this.notes, [sha]: n }),
       () => {},
     );
   }
@@ -92,7 +106,8 @@ export const tracking = new Tracking();
 /**
  * What one diff shows of it. Viewed marks show on the pull request's whole diff (all its commits
  * up to its head): GitHub's mark is on a file's change in the pull request, which one commit only
- * shows part of. Owners show on any diff of the pull request's branch.
+ * shows part of. Owners show on any diff of the pull request's branch, and annotations wherever
+ * the new side is its head, since their lines are the head's.
  */
 export class DiffTrack {
   review: DiffReview;
@@ -104,6 +119,7 @@ export class DiffTrack {
   pr = $derived.by(() => this.review.pr);
   data = $derived(this.pr ? (tracking.files[this.pr.number] ?? null) : null);
   viewable = $derived.by(() => !!this.data && this.review.ctx.head && this.review.ctx.base);
+  head = $derived.by(() => (this.review.ctx.head ? (this.review.data?.headSha ?? null) : null));
 
   private rules = $derived(this.data?.codeowners ? tracking.rules(this.data.codeowners.text) : []);
   private owned = $derived.by(() => {
@@ -111,10 +127,21 @@ export class DiffTrack {
     return new Map<string, Owners | null>();
   });
 
-  /** Keep this pull request's files loaded (call in an effect). */
+  private notesByPath = $derived.by(() => {
+    const m = new Map<string, Annotation[]>();
+    for (const a of (this.head && tracking.notes[this.head]?.annotations) || []) {
+      const list = m.get(a.path);
+      if (list) list.push(a);
+      else m.set(a.path, [a]);
+    }
+    return m;
+  });
+
+  /** Keep this pull request's files and its head's annotations loaded (call in an effect). */
   load() {
     void gh.tick;
     if (this.pr) tracking.load(this.pr.number);
+    if (this.head) tracking.loadNotes(this.head);
   }
 
   /** Its mark, when it shows here: the file's in the pull request and this is its whole diff. */
@@ -144,5 +171,17 @@ export class DiffTrack {
 
   get codeowners() {
     return this.data?.codeowners?.path ?? null;
+  }
+
+  notes(path: string): Annotation[] {
+    return this.notesByPath.get(path) ?? [];
+  }
+
+  counts(path: string): NoteCounts | null {
+    return countNotes(this.notes(path));
+  }
+
+  place(path: string, rows: RowsLike): { placed: PlacedNote[]; elsewhere: Annotation[] } {
+    return placeNotes(this.notes(path), rows);
   }
 }

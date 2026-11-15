@@ -1,6 +1,7 @@
 // /api/gh/<name>: GET routes read from GitHub, POST routes change something there. Each feature
 // module exports its own tables, merged here.
 
+import { annotationsGet } from './annotations.ts';
 import { checksGet, checksPost, warmChecks } from './checks.ts';
 import { GithubError, MOCK, githubToken, resetToken, rest, viewerLogin } from './client.ts';
 import { ghRepos } from './context.ts';
@@ -59,6 +60,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...prviewGet,
   ...reviewGet,
   ...prfilesGet,
+  ...annotationsGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,

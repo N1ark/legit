@@ -1,19 +1,26 @@
 <script lang="ts">
-  // In a file's header in a diff of the pull request: its code owners (the viewer's own marked), and
-  // the Viewed box.
+  // In a file's header in a diff of the pull request: its code owners (the viewer's own marked),
+  // CI's annotations on its lines (a click goes to the first), and the Viewed box.
   import { Tag, tooltip } from 'purr';
+  import NoteIcon from './NoteIcon.svelte';
+  import { reviews } from '../lib/gh-review.svelte.ts';
   import type { DiffTrack } from '../lib/gh-files.svelte.ts';
+  import { describeNotes } from '../lib/gh-files.ts';
+  import type { RowsLike } from '../lib/gh-threads.ts';
 
   interface Props {
     track: DiffTrack;
     path: string;
+    /** The file's rows, once in: annotations on lines they don't show are said so. */
+    rows?: RowsLike;
     /** Mark it viewed (true) or not, from its box. */
     onviewed: (on: boolean) => void;
   }
-  let { track, path, onviewed }: Props = $props();
+  let { track, path, rows, onviewed }: Props = $props();
 
   const owners = $derived(track.owners(path));
   const mine = $derived(track.mine(path));
+  const counts = $derived(track.counts(path));
   const viewed = $derived(track.viewed(path));
 
   const ownersTip = $derived.by(() => {
@@ -21,6 +28,17 @@
     const from = `${track.codeowners}, line ${owners.rule.line}: ${owners.rule.pattern}`;
     return `Code owners: ${owners.owners.join(', ')}\n(${from})${mine ? '\nYou own this file' : ''}`;
   });
+
+  function notesTip() {
+    if (!counts) return '';
+    const away = rows ? track.place(path, rows).elsewhere.length : 0;
+    return `CI annotations on this file at the pull request's head: ${describeNotes(counts)}${away ? ` (${away} on lines the diff doesn't show)` : ''}\nClick to go to the first`;
+  }
+
+  function first() {
+    const n = rows ? track.place(path, rows).placed[0] : null;
+    reviews.focus = { id: n ? `note:${n.note.key}` : '', path };
+  }
 </script>
 
 {#if owners}
@@ -28,6 +46,14 @@
   <span class="marks" use:tooltip={ownersTip}>
     <Tag color={mine ? 'var(--theme2)' : undefined} label="{mine ? 'you' : owners.owners[0]}{n > 1 ? ` +${n - 1}` : ''}" />
   </span>
+{/if}
+{#if counts}
+  <button
+    class="btn btn--ghost btn--sm notes"
+    aria-label="{describeNotes(counts)} from CI"
+    use:tooltip={notesTip}
+    onclick={first}><NoteIcon level={counts.level} />{counts.count}</button
+  >
 {/if}
 {#if viewed}
   {#if viewed === 'DISMISSED'}
@@ -43,6 +69,12 @@
   .marks {
     display: inline-flex;
     min-width: 0;
+  }
+
+  .notes {
+    gap: var(--gap-2);
+    font-size: var(--fs-xs);
+    flex-shrink: 0;
   }
 
   .viewed {

@@ -8,6 +8,7 @@ import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { DiffTrack } from './gh-files.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
 import type { DiffSide, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+import type { Annotation } from '../../shared/gh-files.ts';
 import { isLive } from '../../shared/github.ts';
 
 /** A comment being written on lines of a diff (`key`: the diff's), kept while the view comes and goes. */
@@ -24,8 +25,12 @@ export interface Draft {
   suggest: string[] | null;
 }
 
-/** Something shown under a row of a diff: a thread, or a comment being written. */
-export type Block = { key: string; row: number; start: number } & ({ thread: ReviewThread; moved: boolean; draft?: undefined } | { draft: Draft; thread?: undefined });
+/** Something shown under a row of a diff: a thread, a comment being written, or a CI annotation. */
+export type Block = { key: string; row: number; start: number } & (
+  | { thread: ReviewThread; moved: boolean; draft?: undefined; note?: undefined }
+  | { draft: Draft; thread?: undefined; note?: undefined }
+  | { note: Annotation; thread?: undefined; draft?: undefined }
+);
 
 class Reviews {
   /** Reviews by pull request number. */
@@ -146,7 +151,7 @@ export class DiffReview {
   }
 
   pr = $derived(reviews.pr);
-  /** Viewed marks and owners of the files it shows. */
+  /** Viewed marks, owners and CI annotations of the files it shows. */
   track: DiffTrack = new DiffTrack(this);
   data = $derived(this.pr ? (reviews.byNumber[this.pr.number] ?? null) : null);
 
@@ -197,6 +202,7 @@ export class DiffReview {
         const s = d.startLine !== undefined ? rowOfLine(rows, d.startSide ?? d.side, d.startLine) : row;
         out.push({ key: d.id, row, start: s >= 0 ? s : row, draft: d });
       }
+      for (const p of this.track.place(path, rows).placed) out.push({ key: `note:${p.note.key}`, row: p.row, start: p.start, note: p.note });
     }
     out.sort((a, b) => a.row - b.row);
     return { blocks: out, elsewhere };
