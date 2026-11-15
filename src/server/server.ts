@@ -30,6 +30,7 @@ import {
 } from './sync.ts';
 import { addWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import { cloneInfo, cloneRepo, cloned } from './clone.ts';
+import { checkoutPr } from './gh/checkout.ts';
 import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
@@ -231,6 +232,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     deleteRemoteBranches: (b) => deleteRemoteBranches(repo, b),
     restoreBranch: (b) => restoreBranch(repo, b),
     checkoutRemote: (b) => checkoutRemote(repo, b),
+    checkoutPr: (b) => checkoutPr(repo, b),
     setUpstream: (b) => setUpstream(repo, b),
     unsetUpstream: (b) => unsetUpstream(repo, b),
     addWorktree: (b) => addWorktree(repo, b),

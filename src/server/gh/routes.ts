@@ -13,6 +13,8 @@ import { issuesGet, issuesPost } from './issues.ts';
 import { prfilesGet, prfilesPost } from './prfiles.ts';
 import { prviewGet, prviewPost } from './prview.ts';
 import { reviewGet, reviewPost } from './review.ts';
+import { inboxGet } from './inbox.ts';
+import { checkoutPost } from './checkout.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
 import type { GithubRepoInfo } from '../../shared/types.ts';
 import type { Repo } from '../repo.ts';
@@ -61,6 +63,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...reviewGet,
   ...prfilesGet,
   ...annotationsGet,
+  ...inboxGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,
@@ -70,6 +73,7 @@ export const postRoutes: Record<string, PostRoute> = {
   ...prviewPost,
   ...reviewPost,
   ...prfilesPost,
+  ...checkoutPost,
 };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');

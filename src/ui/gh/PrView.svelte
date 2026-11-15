@@ -13,6 +13,7 @@
   import { checks } from '../lib/gh-checks.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
   import { gh, ghPost, ghRequest, keepPrview, keptPrview, loadPrview } from '../lib/github.svelte.ts';
+  import PrCheckout from './PrCheckout.svelte';
   import PrMergeBox from './PrMergeBox.svelte';
   import PrStatus from './PrStatus.svelte';
   import PrReview from './PrReview.svelte';
@@ -215,6 +216,9 @@
         <span class="mono num">#{number}</span>
       {/if}
     </div>
+    {#if pr}
+      <PrCheckout {number} />
+    {/if}
     {#if pr && isLive(pr.state)}
       <PrReview {pr} {act} {working} />
     {/if}

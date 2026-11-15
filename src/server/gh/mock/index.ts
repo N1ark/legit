@@ -10,3 +10,4 @@ import './review.ts';
 import './prfiles.ts';
 import './annotations.ts';
 import './repos.ts';
+import './inbox.ts';

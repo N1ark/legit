@@ -37,6 +37,7 @@
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { tracking } from './lib/gh-files.svelte.ts';
+  import { inbox } from './lib/gh-inbox.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
@@ -56,6 +57,7 @@
   const PrChip = lazy(() => import('./gh/PrChip.svelte'));
   const ChecksChip = lazy(() => import('./gh/ChecksChip.svelte'));
   const Notifications = lazy(() => import('./gh/Notifications.svelte'));
+  const PullRequests = lazy(() => import('./gh/PullRequests.svelte'));
   const GithubMenu = lazy(() => import('./gh/GithubMenu.svelte'));
 
   let branchPicker = $state<BranchPicker>();
@@ -136,7 +138,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'viewed';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'prs' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'viewed';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -163,6 +165,7 @@
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
     { keys: 'p', action: 'pr', label: "Show the branch's pull request" },
     { keys: 'v', action: 'viewed', label: "Mark the file at the top of the pull request's diff viewed, or not" },
+    { keys: '⇧P', action: 'prs', label: "The repository's pull requests" },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository or worktree' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
@@ -194,6 +197,7 @@
     else if (action === 'help') help = true;
     else if (action === 'pr') gh.togglePr();
     else if (action === 'viewed') tracking.key();
+    else if (action === 'prs') inbox.toggle();
     else if (action === 'settings') settings = 'syntax';
     else if (action === 'find') finder.start();
     else if (action === 'findNext' || action === 'findPrev') {
@@ -234,7 +238,7 @@
     <IconButton label="Redo" shortcut="⇧⌘Z" size="lg" disabled={!app.repo?.canRedo || app.busy} onclick={app.redo}>
       <ArrowUUpRightRegular />
     </IconButton>
-    {#if github}<Notifications.component />{/if}
+    {#if github}<PullRequests.component /><Notifications.component />{/if}
     <StashPanel />
     <Backups />
     {#if github}<GithubMenu.component />{/if}

@@ -48,7 +48,7 @@ const localExists = async (repo: Repo, name: string) => !!(await sha(repo, `refs
  * switch with them in the way, they're put aside, and brought back on the new branch (with the
  * conflicts to resolve, if they conflict with it).
  */
-async function switchTo(repo: Repo, args: string[], target: string, stash = false) {
+export async function switchTo(repo: Repo, args: string[], target: string, stash = false) {
   const where = async () => JSON.stringify(await repo.git.headState());
   const before = await where();
   const stashed = stash ? await stashPush(repo.git, await repo.currentBranch()) : null;

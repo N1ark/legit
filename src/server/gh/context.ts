@@ -12,11 +12,13 @@ export interface GhRepos {
   name: string;
   /** Owner of the repo branches are pushed to. */
   headOwner: string;
+  /** The branch's name on GitHub, when it's a pull request's checked out under another (`legit-head`, see checkout.ts). */
+  head?: string;
 }
 
 /** The config ghRepos reads (remotes' URLs, push remotes), keys as git canonicalizes them, last value winning. */
 async function ghConfig(repo: Repo): Promise<Map<string, string>> {
-  const out = await repo.git.text(['config', '--get-regexp', '^(remote\\..*\\.url|remote\\.pushdefault|branch\\..*\\.(pushremote|remote))$'], { allowFail: true });
+  const out = await repo.git.text(['config', '--get-regexp', '^(remote\\..*\\.url|remote\\.pushdefault|branch\\..*\\.(pushremote|remote|legit-head))$'], { allowFail: true });
   return new Map(
     out.split('\n').flatMap((l) => {
       const at = l.indexOf(' ');
@@ -38,6 +40,8 @@ export async function ghRepos(repo: Repo, branch?: string | null): Promise<GhRep
   const base = on('upstream') ?? (head && (await forkParent(head))) ?? head;
   if (!base || !head) return null;
   const [owner, name] = base.split('/');
+  const pinned = branch ? /^([\w.-]+):(.+)$/.exec(config.get(`branch.${branch}.legit-head`) ?? '') : null;
+  if (pinned) return { base, owner, name, headOwner: pinned[1], head: pinned[2] };
   return { base, owner, name, headOwner: head.split('/')[0] };
 }
 

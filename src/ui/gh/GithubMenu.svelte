@@ -3,7 +3,7 @@
   // and whether GitHub can be reached (a warning dot when signed out, with why and "Try again").
   // Also hosts what GitHub features open anywhere: the new-issue dialog, `#` suggestions.
   import { IconButton, menu } from 'purr';
-  import { ArrowClockwiseRegular, ArrowSquareOutRegular, GitPullRequestRegular, GithubLogoRegular, IssueOpenedRegular, UserCircleRegular, WarningRegular } from 'purr/glyphs';
+  import { ArrowClockwiseRegular, ArrowSquareOutRegular, GitPullRequestRegular, GithubLogoRegular, IssueOpenedRegular, ListBulletsRegular, UserCircleRegular, WarningRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import CreateIssue from './CreateIssue.svelte';
   import RefSuggestions from './RefSuggestions.svelte';
@@ -13,6 +13,7 @@
   import { repoUrl } from '../lib/gh-links.ts';
   import { refs } from '../lib/gh-refs.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
+  import { inbox } from '../lib/gh-inbox.svelte.ts';
 
   const repo = $derived(gh.status?.repo ?? null);
   const error = $derived(gh.status?.error ?? null);
@@ -41,6 +42,7 @@
         gh.pr
           ? { label: `Pull request #${gh.pr.number}`, icon: GitPullRequestRegular, hint: 'p', run: () => gh.showPr(gh.pr!.number) }
           : { label: 'New pull request…', icon: GitPullRequestRegular, disabled: !!why, note: why, run: () => openCreatePr() },
+        { label: 'Pull requests…', icon: ListBulletsRegular, hint: '⇧P', disabled: !!why, note: why, run: () => inbox.show() },
         'separator',
         link('Open repository on GitHub'),
         link('Issues', 'issues'),
