@@ -25,6 +25,7 @@ interface MockThread {
   side: 'LEFT' | 'RIGHT';
   line: number | null;
   startLine?: number;
+  startSide?: 'LEFT' | 'RIGHT';
   /** Index into the pull request's commits (oldest first), or a commit GitHub has that the repo doesn't. */
   commit: number | string;
   /** Where it was made, when that's not where it is now. */
@@ -103,6 +104,15 @@ db.threads = [
     comments: [say('monalisa', 24, 'Could this file say, in a line, when a `ParseError` is thrown and what `line` counts from?')],
   },
   {
+    id: 'PRRT_10', pr: 13, path: 'src/errors.ts', side: 'RIGHT', line: 2, commit: 0,
+    comments: [
+      say(
+        'hubot', 22,
+        'Room for the column, until tokens track it:\n\n```suggestion\n  constructor(message: string, readonly line: number, readonly column = 0) {\n```',
+      ),
+    ],
+  },
+  {
     id: 'PRRT_8', pr: 12, path: 'src/tokenizer.ts', side: 'RIGHT', line: 6, commit: 0,
     comments: [say('hubot', 90, '`12abc` comes out as a number and then a word. Is that what we want, or should it be an error?')],
   },
@@ -127,6 +137,17 @@ const addPending = (r: Pending, c: MockComment, path: string, line: number | nul
 };
 
 const threads = (): MockThread[] => db.threads;
+
+// The fixture's reviews in progress (mock/prview.ts) have their comments as threads.
+for (const [n, r] of Object.entries(db.pending as Record<string, Pending>)) {
+  if (!Array.isArray(r?.comments)) continue;
+  r.comments = r.comments.map((c: any) => {
+    if (c.id) return c;
+    const t: MockThread = { id: `PRRT_${next++}`, pr: +n, path: c.path, side: 'RIGHT', line: c.line, commit: c.commit ?? 0, comments: [say(db.viewer, 2, c.body, { review: r.id })] };
+    db.threads.push(t);
+    return { id: t.comments[0].id, path: c.path, line: c.line, body: c.body };
+  });
+}
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
 const git = (): Git | undefined => db.reviewGit;
 const tip = (b: string) => db.tips[`origin/${b}`] ?? db.tips[b];
@@ -185,7 +206,7 @@ async function threadNode(t: MockThread, commits: string[], head: string) {
     originalLine: t.originalLine ?? t.line,
     originalStartLine: t.originalStartLine ?? t.startLine ?? null,
     diffSide: t.side,
-    startDiffSide: t.startLine ? t.side : null,
+    startDiffSide: t.startLine ? (t.startSide ?? t.side) : null,
     subjectType: t.file ? 'FILE' : 'LINE',
     viewerCanResolve: !t.resolvedBy && t.comments.some((c) => !isPending(c)),
     viewerCanUnresolve: !!t.resolvedBy,
@@ -242,26 +263,38 @@ onGraphql('ReviewThreads', async (v) => {
   };
 });
 
-/** A new thread at `commit`'s diff, refused the way GitHub refuses a line that isn't in it. */
-async function newThread(pr: number, commit: string, c: { path: string; line: number; side: 'LEFT' | 'RIGHT'; startLine?: number | null; body: string }, review?: string) {
+/** Whether `base...commit` changes `path` at all. */
+async function changes(base: string, commit: string, path: string): Promise<boolean> {
+  const out = await git()?.text(['diff', '--name-only', '--no-ext-diff', `${base}...${commit}`, '--', path], { allowFail: true });
+  return !!out?.trim();
+}
+
+type NewThread = { path: string; line?: number | null; side?: 'LEFT' | 'RIGHT' | null; startLine?: number | null; startSide?: 'LEFT' | 'RIGHT' | null; body: string; file?: boolean };
+
+/** A new thread at `commit`'s diff, refused the way GitHub refuses a line (or file) that isn't in it. */
+async function newThread(pr: number, commit: string, c: NewThread, review?: string) {
   const p = pull(pr);
   if (!p) throw new GithubError('GitHub: Not Found', 404);
   const commits = await prCommits(pr);
   if (!commits.includes(commit)) throw new GithubError('GitHub: Validation Failed: commit_id is not part of the pull request', 422);
   const base = tip(p.baseRefName);
-  if (!(await hunkFor(base, commit, c.path, c.side, c.line)) || (c.startLine && !(await hunkFor(base, commit, c.path, c.side, c.startLine)))) {
+  const side = c.side ?? 'RIGHT';
+  if (c.file) {
+    if (!(await changes(base, commit, c.path))) throw new GithubError('GitHub: Validation Failed: path is not part of the diff', 422);
+  } else if (!c.line || !(await hunkFor(base, commit, c.path, side, c.line)) || (c.startLine && !(await hunkFor(base, commit, c.path, c.startSide ?? side, c.startLine)))) {
     throw new GithubError('GitHub: Validation Failed: pull_request_review_thread.line must be part of the diff', 422);
   }
   const t: MockThread = {
-    id: `PRRT_${next++}`, pr, path: c.path, side: c.side, line: c.line, startLine: c.startLine ?? undefined,
-    commit: commits.indexOf(commit), comments: [say(db.viewer, 0, c.body, { review })],
+    id: `PRRT_${next++}`, pr, path: c.path, side, line: c.file ? null : (c.line ?? null), startLine: c.file ? undefined : (c.startLine ?? undefined),
+    startSide: c.startLine ? (c.startSide ?? side) : undefined, commit: commits.indexOf(commit), file: c.file, comments: [say(db.viewer, 0, c.body, { review })],
   };
   threads().push(t);
   return t;
 }
 
 onRest('POST /repos/:owner/:repo/pulls/:number/comments', async (params, _q, b) => {
-  const t = await newThread(+params.number, b.commit_id, { path: b.path, line: b.line, side: b.side, startLine: b.start_line, body: b.body });
+  const file = b.subject_type === 'file';
+  const t = await newThread(+params.number, b.commit_id, { path: b.path, line: b.line, side: b.side, startLine: b.start_line, startSide: b.start_side, body: b.body, file });
   return { id: t.comments[0].databaseId, body: b.body };
 });
 
@@ -286,7 +319,7 @@ onGraphql('AddReviewThread', async (v) => {
   const found = pendingById(v.review);
   if (!found) throw new GithubError('GitHub: Could not resolve to a node with the global id.', 200);
   const n = +found[0];
-  const t = await newThread(n, found[1].commit ?? tip(pull(n).headRefName), v as any, v.review);
+  const t = await newThread(n, found[1].commit ?? tip(pull(n).headRefName), { ...(v as NewThread), file: v.subject === 'FILE' }, v.review);
   addPending(found[1], t.comments[0], t.path, t.line);
   return { addPullRequestReviewThread: { thread: { id: t.id } } };
 });
@@ -331,6 +364,15 @@ onGraphql('DeleteReviewComment', (v) => {
   const r = c.review ? pendingById(c.review)?.[1] : undefined;
   if (r) r.comments = Array.isArray(r.comments) ? r.comments.filter((x: any) => x.id !== c.id) : Math.max(0, pendingCount(r) - 1);
   return { deletePullRequestReviewComment: { clientMutationId: null } };
+});
+
+onGraphql('DiscardReview', (v) => {
+  const found = pendingById(v.id);
+  if (!found) throw new GithubError('GitHub: Could not resolve to a node with the global id.', 200);
+  delete db.pending[found[0]];
+  for (const t of threads()) t.comments = t.comments.filter((c) => c.review !== v.id);
+  db.threads = threads().filter((t) => t.comments.length);
+  return { deletePullRequestReview: { clientMutationId: null } };
 });
 
 const react = (v: Record<string, any>, on: boolean) => {

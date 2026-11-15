@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { toReview, withSuggestion } from '../src/server/gh/review.ts';
-import type { ReviewThread } from '../src/shared/gh-review.ts';
+import { diffHunks, toReview, withSuggestion } from '../src/server/gh/review.ts';
+import { noreplyEmail, withSuggestions } from '../src/server/gh/suggestions.ts';
+import type { PrLines, ReviewThread } from '../src/shared/gh-review.ts';
 import {
+  baseLine,
   commentTarget,
   heightAbove,
   layOut,
@@ -10,6 +12,7 @@ import {
   hunkLines,
   linesLabel,
   newText,
+  pendingOf,
   placeThreads,
   splitSuggestions,
   suggestionBlock,
@@ -161,6 +164,26 @@ test('where a new comment goes', () => {
   assert.deepEqual(newText(DIFF, 1, 4), ['function f() {', '  return 2;', '  // two']);
 });
 
+test("where a new comment goes, by the pull request's diff on GitHub", () => {
+  // An earlier commit of the pull request added two lines at the top: the base has line 11 as 9.
+  const pr: PrLines = { hunks: [{ left: [8, 12], right: [10, 13] }], moved: [[0, 0, 1, 2]] };
+  assert.deepEqual(commentTarget(DIFF, 2, 2, { base: false }, pr), { side: 'LEFT', line: 9 });
+  assert.deepEqual(commentTarget(DIFF, 2, 3, { base: false }, pr), { side: 'RIGHT', line: 11, startLine: 9, startSide: 'LEFT' });
+  assert.deepEqual(commentTarget(DIFF, 1, 1, { base: false }, pr), { side: 'RIGHT', line: 10 });
+  // Further from a change than GitHub's three lines of context; or in two of its hunks.
+  assert.match((commentTarget(DIFF, 1, 1, { base: true }, { hunks: [{ left: [11, 12], right: [11, 13] }], moved: [] }) as { error: string }).error, /whole file/);
+  const two: PrLines = { hunks: [{ left: [10, 10], right: [10, 10] }, { left: [11, 12], right: [11, 13] }], moved: [] };
+  assert.match((commentTarget(DIFF, 1, 3, { base: true }, two) as { error: string }).error, /one block/);
+  // A removed line an earlier commit added isn't in the base; a file the pull request doesn't change takes none.
+  assert.match((commentTarget(DIFF, 2, 2, { base: false }, { hunks: pr.hunks, moved: [[10, 0, 11, 1]] }) as { error: string }).error, /base/);
+  assert.match((commentTarget(DIFF, 3, 3, { base: false }, { hunks: [], moved: [] }) as { error: string }).error, /doesn't change this file/);
+  assert.equal(baseLine([[5, 2, 4, 0]], 4), 4);
+  assert.equal(baseLine([[5, 2, 4, 0]], 5), 7);
+  assert.equal(baseLine([[5, 1, 5, 3]], 6), null);
+  assert.equal(baseLine([[5, 1, 5, 3]], 9), 7);
+  assert.deepEqual(diffHunks('@@ -1 +1,2 @@\n-a\n+b\n+c\n@@ -10,0 +12,3 @@ f() {\n+d'), [[1, 1, 1, 2], [10, 0, 12, 3]]);
+});
+
 test('suggestions come out of a comment, in order', () => {
   const body = 'Try:\n\n```suggestion\n  return 3;\n  // three\n```\n\nor nothing:\n```suggestion\n```\nthanks';
   assert.deepEqual(splitSuggestions(body), [
@@ -192,6 +215,21 @@ test('applying a suggestion to a file', () => {
   assert.deepEqual(withSuggestion('a\r\nb\r\n', { startLine: 2, lines: ['b'], replacement: ['c'] }), { text: 'a\r\nc\r\n', at: 2 });
   assert.deepEqual(withSuggestion('a\nb', { startLine: 2, lines: ['b'], replacement: ['c'] }), { text: 'a\nc', at: 2 });
   assert.deepEqual(withSuggestion('a\nb\n', { startLine: 2, lines: ['b'], replacement: [] }), { text: 'a\n', at: 2 });
+});
+
+test('several suggestions in one file: each where it was found, overlapping ones refused', () => {
+  const r = withSuggestions('a\nb\nc\nd\ne\n', [
+    { startLine: 1, lines: ['a'], replacement: ['A', 'AA'] },
+    { startLine: 4, lines: ['d', 'e'], replacement: ['DE'] },
+    { startLine: 2, lines: ['b'], replacement: [] },
+    { startLine: 5, lines: ['e'], replacement: ['E'] },
+    { startLine: 3, lines: ['x'], replacement: ['X'] },
+  ]);
+  assert.equal(r.text, 'A\nAA\nc\nDE\n');
+  assert.deepEqual(r.applied, [0, 1, 2]);
+  assert.deepEqual(r.refused.map((x) => [x.index, /another suggestion/.test(x.why) ? 'overlap' : 'gone']), [[3, 'overlap'], [4, 'gone']]);
+  assert.equal(noreplyEmail({ login: 'hubot', avatar: 'https://avatars.githubusercontent.com/u/42?v=4' }), '42+hubot@users.noreply.github.com');
+  assert.equal(noreplyEmail({ login: 'mona', avatar: '' }), 'mona@users.noreply.github.com');
 });
 
 test("GitHub's payload becomes a review", () => {
@@ -228,4 +266,18 @@ test('blocks under rows push the rows after them down', () => {
   assert.deepEqual([0, 2, 3, 7, 8, 100].map((r) => heightAbove(a, r)), [0, 0, 15, 15, 35, 35]);
   assert.deepEqual([...a.on].sort(), [1, 2, 7]);
   assert.equal(a.byRow.get(2)?.length, 2);
+});
+
+test('the pending review: its comments by file and line, and how many on how many files', () => {
+  const mine = (body: string) => ({ ...thread().comments[0], id: body, body, pending: true });
+  const a = thread({ id: 'A', path: 'b.ts', line: 3 });
+  a.comments = [thread().comments[0], mine('reply')];
+  const b = thread({ id: 'B', path: 'a.ts', line: 9 });
+  b.comments = [mine('first')];
+  const c = thread({ id: 'C', path: 'b.ts', line: 1 });
+  c.comments = [mine('second')];
+  const p = pendingOf([a, b, thread({ id: 'D' }), c]);
+  assert.deepEqual(p.items.map((x) => x.comment.body), ['first', 'second', 'reply']);
+  assert.equal(p.summary, '3 comments on 2 files');
+  assert.equal(pendingOf([b]).summary, '1 comment on 1 file');
 });

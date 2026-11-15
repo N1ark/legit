@@ -11,6 +11,7 @@
   import PickMany, { type Choice } from './PickMany.svelte';
   import RefIcon from './RefIcon.svelte';
   import { refStateWords } from '../lib/gh-links.ts';
+  import ReviewerActions from './ReviewerActions.svelte';
 
   interface Props {
     pr: PrOverview;
@@ -160,6 +161,7 @@
           <li>
             <Avatar name={r.login} src={ghAvatar(r.avatar)} size={18} round />
             <span class="name">{r.login}</span>
+            {#if open}<ReviewerActions {pr} reviewer={r} {act} {working} />{/if}
             <span class="review" style:color={s.color} use:tooltip={REVIEW_LABEL[r.state]} role="img" aria-label={REVIEW_LABEL[r.state]}>
               <s.icon />
             </span>
@@ -327,6 +329,18 @@
   .review {
     display: inline-flex;
     font-size: var(--icon-lg);
+  }
+
+  /* A reviewer's actions show as the pointer or the focus comes to their row. */
+  @media (hover: hover) {
+    li :global(.reviewer-action:not([aria-expanded='true'])) {
+      opacity: 0;
+    }
+
+    li:hover :global(.reviewer-action),
+    li:focus-within :global(.reviewer-action) {
+      opacity: 1;
+    }
   }
 
   .labels {

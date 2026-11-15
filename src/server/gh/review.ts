@@ -1,6 +1,7 @@
 // Pull request review threads: reading them (one GraphQL query per refresh), commenting on lines
-// (now, or in the viewer's pending review), replying, resolving, editing, deleting, reacting, and
-// applying a suggestion to the working tree. Submitting a review is the PR overview's.
+// or files (now, or in the viewer's pending review, which can be discarded), replying, resolving,
+// editing, deleting, reacting, and applying a suggestion to the working tree. Submitting a review
+// is the PR overview's.
 
 import { randomBytes } from 'node:crypto';
 import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import { GithubError, MOCK, cached, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
 import { db } from './mock/registry.ts';
 import type { GetRoute, PostRoute } from './routes.ts';
-import type { ApplySuggestion, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
+import type { ApplySuggestion, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 import type { Repo } from '../repo.ts';
 
 const COMMENT_FIELDS = `id databaseId body createdAt lastEditedAt url diffHunk viewerCanUpdate viewerCanDelete
@@ -113,10 +114,11 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
 }
 
 /** GitHub's refusals, said in terms of what to do about them. */
-function explain(e: unknown): never {
+function explain(e: unknown, file = false): never {
   if (e instanceof GithubError && /part of the diff|could not be resolved|line must be/i.test(e.message)) {
+    const what = file ? 'files the pull request changes as of that commit' : 'lines of its diff of the pull request at that commit: the changed lines and the few around them';
     throw new GithubError(
-      `GitHub only takes comments on lines of its diff of the pull request at that commit: the changed lines and the few around them (${e.message.replace(/^GitHub: /, '')}).`,
+      `GitHub only takes comments on ${what} (${e.message.replace(/^GitHub: /, '')}).`,
       e.status,
     );
   }
@@ -140,19 +142,16 @@ const reload = async (repo: Repo, number: number) => (await load(repo, number, t
 async function comment(repo: Repo, c: NewComment): Promise<PrReview> {
   const number = num(c.number, 'pull request number');
   const body = text(c.body);
-  const range = c.startLine !== undefined && c.startLine !== null && c.startLine !== c.line;
+  const file = c.subject === 'FILE';
+  const range = !file && c.startLine !== undefined && c.startLine !== null && c.startLine !== c.line;
   if (!/^[0-9a-f]{40,64}$/.test(c.commitId ?? '')) throw new GithubError('Bad commit.', 400);
   try {
     if (!c.pending) {
       const r = await needGhRepos(repo);
-      await rest('POST', `/repos/${r.base}/pulls/${number}/comments`, {
-        body,
-        commit_id: c.commitId,
-        path: c.path,
-        line: c.line,
-        side: c.side,
-        ...(range ? { start_line: c.startLine, start_side: c.startSide ?? c.side } : {}),
-      });
+      const where = file
+        ? { subject_type: 'file' }
+        : { line: c.line, side: c.side, ...(range ? { start_line: c.startLine, start_side: c.startSide ?? c.side } : {}) };
+      await rest('POST', `/repos/${r.base}/pulls/${number}/comments`, { body, commit_id: c.commitId, path: c.path, ...where });
       return reload(repo, number);
     }
     const { review, prId } = await load(repo, number, true);
@@ -167,24 +166,25 @@ async function comment(repo: Repo, c: NewComment): Promise<PrReview> {
       reviewId = d.addPullRequestReview.pullRequestReview.id as string;
     }
     await graphql(
-      `mutation AddReviewThread($review: ID!, $path: String!, $line: Int!, $side: DiffSide!, $startLine: Int, $startSide: DiffSide, $body: String!) {
+      `mutation AddReviewThread($review: ID!, $path: String!, $line: Int, $side: DiffSide, $startLine: Int, $startSide: DiffSide, $subject: PullRequestReviewThreadSubjectType, $body: String!) {
         addPullRequestReviewThread(input: {
-          pullRequestReviewId: $review, path: $path, line: $line, side: $side, startLine: $startLine, startSide: $startSide, body: $body, subjectType: LINE
+          pullRequestReviewId: $review, path: $path, line: $line, side: $side, startLine: $startLine, startSide: $startSide, body: $body, subjectType: $subject
         }) { thread { id } }
       }`,
       {
         review: reviewId,
         path: c.path,
-        line: c.line,
-        side: c.side,
+        line: file ? null : c.line,
+        side: file ? null : c.side,
         startLine: range ? c.startLine : null,
         startSide: range ? (c.startSide ?? c.side) : null,
+        subject: file ? 'FILE' : 'LINE',
         body,
       },
     );
     return reload(repo, number);
   } catch (e) {
-    explain(e);
+    explain(e, file);
   }
 }
 
@@ -207,10 +207,41 @@ async function reply(repo: Repo, b: { number: number; threadId: string; commentD
   return reload(repo, number);
 }
 
+/** A unified diff's hunk headers as [oldStart, oldCount, newStart, newCount]. */
+export function diffHunks(diff: string): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) out.push([+m[1], m[2] === undefined ? 1 : +m[2], +m[3], m[4] === undefined ? 1 : +m[4]]);
+  return out;
+}
+
+const SHA = /^[0-9a-f]{40,64}$/;
+
+/**
+ * What GitHub takes comments on in `path` at `commit`: the hunks of the pull request's diff there
+ * (from where it leaves `base`), and how the old side of the diff shown (`oldest`'s parent) maps
+ * onto that; null when the repo doesn't have what it takes to tell.
+ */
+async function prLines(repo: Repo, q: URLSearchParams): Promise<PrLines | null> {
+  const [base, commit, oldest, path] = ['base', 'commit', 'oldest', 'path'].map((k) => q.get(k) ?? '');
+  if (!SHA.test(base) || !SHA.test(commit) || !path) throw new GithubError('Bad request.', 400);
+  const g = repo.git;
+  return g.memo(`pr-lines ${base} ${commit} ${oldest} ${path}`, async () => {
+    const from = await g.text(['merge-base', base, commit], { allowFail: true });
+    if (!SHA.test(from)) return null;
+    const diff = (a: string, b: string, context: number) =>
+      g.text(['diff', `-U${context}`, '--no-color', '--no-ext-diff', '--no-renames', a, b, '--', path], { allowFail: true });
+    const hunks = diffHunks(await diff(from, commit, 3)).map(([o, oc, n, nc]) => ({ left: [o, o + oc - 1], right: [n, n + nc - 1] }) as PrLines['hunks'][number]);
+    const old = SHA.test(oldest) ? await g.text(['rev-parse', '--verify', '-q', `${oldest}^`], { allowFail: true }) : from;
+    if (!SHA.test(old)) return null;
+    return { hunks, moved: old === from ? [] : diffHunks(await diff(from, old, 0)) };
+  });
+}
+
 const REACTIONS: Reaction[] = ['THUMBS_UP', 'THUMBS_DOWN', 'LAUGH', 'HOORAY', 'CONFUSED', 'HEART', 'ROCKET', 'EYES'];
 
 export const reviewGet: Record<string, GetRoute> = {
   reviewThreads: async (repo, q) => (await load(repo, num(q.get('number'), 'pull request number'), q.get('fresh') === '1')).review,
+  reviewLines: prLines,
 };
 
 export const reviewPost: Record<string, PostRoute> = {
@@ -252,6 +283,13 @@ export const reviewPost: Record<string, PostRoute> = {
     return reload(repo, num(b.number, 'pull request number'));
   },
   reviewApply: (repo, b: ApplySuggestion) => applySuggestion(repo, b),
+  reviewDiscard: async (repo, b: { number: number }) => {
+    const number = num(b.number, 'pull request number');
+    const { review } = await load(repo, number, true);
+    if (!review.pending) throw new GithubError('You have no review in progress on this pull request any more.', 409);
+    await graphql(`mutation DiscardReview($id: ID!) { deletePullRequestReview(input: { pullRequestReviewId: $id }) { clientMutationId } }`, { id: review.pending.id });
+    return reload(repo, number);
+  },
 };
 
 // Applying a suggestion: the commented lines are replaced in the working tree's file, only where
@@ -287,32 +325,40 @@ export function withSuggestion(file: string, s: Pick<ApplySuggestion, 'startLine
   return { text: out.join('\n'), at: k + 1 };
 }
 
-async function applySuggestion(repo: Repo, s: ApplySuggestion): Promise<{ line: number }> {
-  if (typeof s.path !== 'string' || !s.path || s.path.split('/').some((p) => p === '..' || p === '' || p === '.git')) {
-    throw new GitError('Bad path.');
+/** `path` of the working tree, as a regular file in the repository (not through a symlink out of it); else why not. */
+export async function workFile(repo: Repo, path: unknown): Promise<{ abs: string; mode: number }> {
+  if (typeof path !== 'string' || !path || path.split('/').some((p) => p === '..' || p === '' || p === '.git')) throw new GitError('Bad path.');
+  const abs = `${repo.git.root}/${path}`;
+  const [root, dir] = await Promise.all([realpath(repo.git.root), realpath(dirname(abs)).catch(() => null)]);
+  if (!dir || (dir !== root && !dir.startsWith(root + '/'))) throw new GitError(`${path} isn't in your files.`);
+  const st = await lstat(abs).catch(() => null);
+  if (!st) throw new GitError(`${path} isn't in your files.`);
+  if (!st.isFile()) throw new GitError(`${path} isn't a regular file; nothing was changed.`);
+  return { abs, mode: st.mode & 0o777 };
+}
+
+/** Replace file `abs` (`path`) with `text` through a temporary file, unless it no longer reads `before`. */
+export async function replaceFile(abs: string, path: string, mode: number, before: Buffer, text: string | Buffer) {
+  const tmp = `${abs.slice(0, abs.lastIndexOf('/') + 1)}.legit-${randomBytes(6).toString('hex')}`;
+  try {
+    await writeFile(tmp, text, { mode, flag: 'wx' });
+    // Changed in the meantime (an editor saving it): leave it be.
+    if (!(await readFile(abs)).equals(before)) throw new GitError(`${path} changed while applying; nothing was changed.`);
+    await rename(tmp, abs);
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
   }
+}
+
+async function applySuggestion(repo: Repo, s: ApplySuggestion): Promise<{ line: number }> {
   if (!Array.isArray(s.lines) || !Array.isArray(s.replacement) || !Number.isInteger(s.startLine)) throw new GitError('Bad suggestion.');
   return repo.exclusive(async () => {
-    const abs = `${repo.git.root}/${s.path}`;
-    // Not through a symlinked directory to somewhere outside the repository.
-    const [root, dir] = await Promise.all([realpath(repo.git.root), realpath(dirname(abs)).catch(() => null)]);
-    if (!dir || (dir !== root && !dir.startsWith(root + '/'))) throw new GitError(`${s.path} isn't in your files.`);
-    const st = await lstat(abs).catch(() => null);
-    if (!st) throw new GitError(`${s.path} isn't in your files.`);
-    if (!st.isFile()) throw new GitError(`${s.path} isn't a regular file; nothing was changed.`);
+    const { abs, mode } = await workFile(repo, s.path);
     const before = await readFile(abs);
     const r = withSuggestion(before.toString('utf8'), s);
     if ('error' in r) throw new GitError(r.error);
-    const tmp = `${abs.slice(0, abs.lastIndexOf('/') + 1)}.legit-${randomBytes(6).toString('hex')}`;
-    try {
-      await writeFile(tmp, r.text, { mode: st.mode & 0o777, flag: 'wx' });
-      // Changed in the meantime (an editor saving it): leave it be.
-      if (!(await readFile(abs)).equals(before)) throw new GitError(`${s.path} changed while applying; nothing was changed.`);
-      await rename(tmp, abs);
-    } catch (e) {
-      await unlink(tmp).catch(() => {});
-      throw e;
-    }
+    await replaceFile(abs, s.path, mode, before, r.text);
     return { line: r.at };
   });
 }

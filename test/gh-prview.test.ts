@@ -75,6 +75,30 @@ test('reviewers: the opinionated review wins, then the latest, then a request; t
   assert.equal(reviewers(pr).find((r) => r.login === 'defunkt')?.state, 'requested');
 });
 
+test('an approval or a request for changes can be dismissed, by someone who can write to the repository', () => {
+  const pr = payload().repository.pullRequest;
+  pr.latestOpinionatedReviews.nodes = [{ databaseId: 41, author: actor('defunkt'), state: 'APPROVED' } as any];
+  pr.latestReviews.nodes.push({ databaseId: 42, author: actor('hubot'), state: 'COMMENTED' } as any);
+  assert.deepEqual(reviewers(pr).map((r) => [r.login, r.reviewId]), [['defunkt', 41], ['mojombo', undefined], ['hubot', undefined], ['a/core', undefined]]);
+  assert.equal(toOverview(payload({}, { viewerPermission: 'WRITE' })).canDismiss, true);
+  assert.equal(toOverview(payload({}, { viewerPermission: 'TRIAGE' })).canDismiss, false);
+});
+
+test('the fake GitHub: dismissing a review needs a message, and only takes approvals and requests for changes', async () => {
+  const v = { owner: 'acme', name: 'widgets', number: 13 };
+  const hubot = async () => toOverview(await mockGraphql('query PrViewOverview', v));
+  const before = await hubot();
+  const r = before.reviewers.find((x) => x.login === 'hubot');
+  assert.equal(r?.state, 'changes');
+  const path = `/repos/acme/widgets/pulls/13/reviews/${r?.reviewId}/dismissals`;
+  await assert.rejects(mockRest('PUT', path, { message: '', event: 'DISMISS' }), /message/);
+  await mockRest('PUT', path, { message: 'Fixed', event: 'DISMISS' });
+  const after = await hubot();
+  assert.equal(after.reviewers.find((x) => x.login === 'hubot')?.state, 'dismissed');
+  assert.equal(after.reviewDecision, 'required');
+  await assert.rejects(mockRest('PUT', path, { message: 'Again', event: 'DISMISS' }), /Can not dismiss/);
+});
+
 test('the timeline groups commits pushed in a row by one person, and drops pending reviews', () => {
   const pc = (oid: string, who: string) => ({ __typename: 'PullRequestCommit', id: `c${oid}`, commit: { ...commit(oid, `C${oid}`), author: { name: who, user: actor(who) } } });
   const items = timeline([

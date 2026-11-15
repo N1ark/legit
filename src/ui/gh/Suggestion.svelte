@@ -1,24 +1,36 @@
 <script lang="ts">
-  // A ```suggestion block: the lines it was made on as removed, the suggestion as added, and a
-  // button applying it to the working tree's file (only where those lines still read the same).
+  // A ```suggestion block: the lines it was made on as removed, the suggestion as added, a button
+  // applying it to the working tree's file (only where those lines still read the same), and one
+  // adding it to the batch committed together (see SuggestionBatch).
   import { Button } from 'purr';
-  import { FileArrowDownRegular } from 'purr/glyphs';
+  import { FileArrowDownRegular, ListPlusRegular } from 'purr/glyphs';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { commentedLines } from '../lib/gh-threads.ts';
   import { tip } from '../lib/tip.ts';
-  import type { ReviewThread } from '../../shared/gh-review.ts';
+  import type { ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 
   interface Props {
+    number: number;
     thread: ReviewThread;
+    comment: ReviewComment;
+    /** Which block of the comment it is. */
+    index: number;
     lines: string[];
   }
-  let { thread, lines }: Props = $props();
+  let { number, thread, comment, index, lines }: Props = $props();
 
   const before = $derived(commentedLines(thread));
   const startLine = $derived(
     (thread.line !== null ? (thread.startLine ?? thread.line) : (thread.originalStartLine ?? thread.originalLine)) ?? 1,
   );
   let applying = $state(false);
+  const key = $derived(`${thread.id}:${comment.id}:${index}`);
+  const batched = $derived(!!reviews.batch[key]);
+
+  function batch() {
+    if (!before) return;
+    reviews.toggleBatch({ key, number, threadId: thread.id, author: comment.author, path: thread.path, startLine, lines: before, replacement: lines });
+  }
 
   async function apply() {
     if (!before) return;
@@ -45,6 +57,16 @@
       )}
     >
       <FileArrowDownRegular /> Apply
+    </Button>
+    <Button
+      size="sm"
+      variant="ghost"
+      onclick={batch}
+      pressed={batched}
+      disabled={!before}
+      {@attach tip(before ? (batched ? 'Take it out of the batch' : 'Commit it together with other suggestions, in one commit') : null)}
+    >
+      <ListPlusRegular /> {batched ? 'In batch' : 'Add to batch'}
     </Button>
   </div>
   <div class="lines mono">

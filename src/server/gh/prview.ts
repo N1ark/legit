@@ -46,7 +46,7 @@ const ITEM_TYPES = `[ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HE
 export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
-    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod viewerPermission
     squashMergeCommitTitle squashMergeCommitMessage
     pullRequest(number: $number) {
       id number title body url state isDraft isInMergeQueue mergeQueueEntry { position } createdAt mergedAt mergedBy { ${ACTOR} } author { ${ACTOR} }
@@ -57,7 +57,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
       milestone { number title url dueOn progressPercentage }
       closingIssuesReferences(first: 20) { nodes { __typename number title url state stateReason repository { nameWithOwner } } }
       reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { ${ACTOR} } ... on Team { combinedSlug avatarUrl } } } }
-      latestOpinionatedReviews(first: 50) { nodes { author { ${ACTOR} } state } }
+      latestOpinionatedReviews(first: 50) { nodes { databaseId author { ${ACTOR} } state } }
       latestReviews(first: 50) { nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
       suggestedReviewers { reviewer { ${ACTOR} } }
       reviews(states: PENDING, first: 5) { nodes { id author { login } comments { totalCount } } }
@@ -88,7 +88,9 @@ export function reviewers(pr: any): PrReviewer[] {
   for (const r of [...(pr.latestOpinionatedReviews?.nodes ?? []), ...(pr.latestReviews?.nodes ?? [])]) {
     const login = r.author?.login;
     if (!login || login === author || out.has(login) || r.state === 'PENDING') continue;
-    out.set(login, { login, avatar: r.author.avatarUrl ?? null, team: false, state: reviewState(r.state) });
+    const state = reviewState(r.state);
+    const dismissable = (state === 'approved' || state === 'changes') && Number.isInteger(r.databaseId);
+    out.set(login, { login, avatar: r.author.avatarUrl ?? null, team: false, state, ...(dismissable ? { reviewId: r.databaseId } : {}) });
   }
   for (const { requestedReviewer: r } of pr.reviewRequests?.nodes ?? []) {
     const login = r?.login ?? r?.combinedSlug;
@@ -242,6 +244,7 @@ export function toOverview(d: any): PrOverview {
     viewer,
     canUpdate: !!pr.viewerCanUpdate,
     mine: !!pr.viewerDidAuthor,
+    canDismiss: ['ADMIN', 'MAINTAIN', 'WRITE'].includes(repo.viewerPermission),
     labels: (pr.labels?.nodes ?? []).map((l: any): PrLabel => ({ name: l.name, color: l.color })),
     assignees: (pr.assignees?.nodes ?? []).map(user).filter(Boolean),
     milestone: milestone(pr.milestone),
@@ -375,6 +378,11 @@ export const prviewPost: Record<string, PostRoute> = {
     const n = b.milestone === null ? null : Number(b.milestone);
     if (n !== null && !(Number.isInteger(n) && n > 0)) throw new GithubError('Which milestone?', 400);
     return rest('PATCH', `${r.path}/issues/${r.number}`, { milestone: n });
+  }),
+  prviewDismiss: change((r, b) => {
+    const id = Number(b.reviewId);
+    if (!Number.isInteger(id) || id <= 0) throw new GithubError('Which review?', 400);
+    return rest('PUT', `${r.path}/pulls/${r.number}/reviews/${id}/dismissals`, { message: text(b.message, 'why it is dismissed'), event: 'DISMISS' });
   }),
   prviewLabels: change(async (r, b) => {
     const add = list(b.add);

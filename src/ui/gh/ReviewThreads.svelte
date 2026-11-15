@@ -1,12 +1,13 @@
 <script lang="ts">
   // Every review thread of pull request `number`, by file, unresolved first: each opens in place to
-  // read and answer, and "Show in diff" selects the commit it's on and scrolls to it. Also says
-  // how many comments of the viewer's review are pending, with a way to finish it. In a popover
+  // read and answer, and "Show in diff" selects the commit it's on and scrolls to it. Above them,
+  // the viewer's review in progress (see PendingReview), with a way to finish it. In a popover
   // (`ondone`), it also leads to the pull request's overview.
   import { Button, IconButton } from 'purr';
   import { ArrowsClockwiseRegular, ArticleRegular, CrosshairRegular } from 'purr/glyphs';
+  import PendingReview from './PendingReview.svelte';
+  import SuggestionBatch from './SuggestionBatch.svelte';
   import Thread from './Thread.svelte';
-  import { app } from '../lib/app.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { threadOrder } from '../lib/gh-threads.ts';
@@ -43,24 +44,8 @@
     refreshing = false;
   }
 
-  /** The commits to show a thread on: the one it was made on, else the pull request's up to its head. */
-  function where(t: ReviewThread): string[] | string {
-    const made = t.comments[0]?.originalCommit;
-    if (made && app.bySha.has(made)) return [made];
-    if (!data || t.outdated) return "It was made on a commit that isn't in your history any more.";
-    const local = data.commits.filter((c) => app.bySha.has(c));
-    if (local.length !== data.commits.length || !local.length) return "The pull request's commits on GitHub aren't the ones in your history.";
-    return local.toReversed();
-  }
-
   function show(t: ReviewThread) {
-    const w = where(t);
-    if (typeof w === 'string') return;
-    app.select(w[0]);
-    if (w.length > 1) app.select(w[w.length - 1], 'range');
-    reviews.opened[t.id] = true;
-    reviews.focus = { id: t.id, path: t.path };
-    ondone?.();
+    if (reviews.show(number, t)) ondone?.();
   }
 </script>
 
@@ -71,19 +56,13 @@
       <span class="muted">{unresolved} unresolved{data.threads.length > unresolved ? ` · ${data.threads.length - unresolved} resolved` : ''}</span>
     {/if}
     <span class="spacer"></span>
+    {#if !ondone}<SuggestionBatch {number} />{/if}
     {#if ondone}
       <Button size="sm" variant="ghost" onclick={() => (gh.showPr(number), ondone())}><ArticleRegular /> Overview</Button>
     {/if}
     <IconButton label="Refresh" size="sm" onclick={refresh} disabled={refreshing}><ArrowsClockwiseRegular /></IconButton>
   </div>
-  {#if data?.pending}
-    <div class="pending">
-      <span>
-        <b>{data.pending.comments}</b> pending {data.pending.comments === 1 ? 'comment' : 'comments'}: only you see them until you submit.
-      </span>
-      <Button size="sm" variant="primary" onclick={() => (gh.showPr(number), ondone?.())}>Finish review</Button>
-    </div>
-  {/if}
+  <PendingReview {number} {ondone} finish={!!ondone} />
   {#if !data}
     <p class="muted">Loading…</p>
   {:else if !files.length}
@@ -95,7 +74,7 @@
         <span class="muted">{f.open ? `${f.open} unresolved` : 'all resolved'}{f.threads.length > f.open ? ` · ${f.threads.length} threads` : ''}</span>
       </div>
       {#each f.threads as t (t.id)}
-        {@const w = where(t)}
+        {@const w = reviews.where(number, t)}
         <div class="row">
           <div class="thread"><Thread {number} thread={t} pending={!!data.pending} scope="panel:" hunk /></div>
           <IconButton
@@ -119,8 +98,7 @@
   }
 
   .head,
-  .file,
-  .pending {
+  .file {
     display: flex;
     align-items: center;
     gap: var(--gap-4);
@@ -139,17 +117,6 @@
     color: var(--color2);
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .pending {
-    padding: var(--gap-3) var(--gap-4);
-    border-radius: var(--radius);
-    background: var(--theme-soft);
-    font-size: var(--fs-sm);
-  }
-
-  .pending span {
-    flex: 1;
   }
 
   .row {

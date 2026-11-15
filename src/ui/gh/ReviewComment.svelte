@@ -95,7 +95,7 @@
         {#if 'md' in p}
           <Markdown text={p.md} images />
         {:else}
-          <Suggestion {thread} lines={p.suggestion} />
+          <Suggestion {number} {thread} {comment} index={k} lines={p.suggestion} />
         {/if}
       {/each}
     </div>

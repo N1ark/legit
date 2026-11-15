@@ -36,6 +36,8 @@ export interface PrReviewer {
   avatar: string | null;
   team: boolean;
   state: ReviewState | 'requested';
+  /** Their approval or request for changes, by REST id, which can be dismissed. */
+  reviewId?: number;
 }
 
 export interface PrCommit {
@@ -124,6 +126,8 @@ export interface PrOverview {
   canUpdate: boolean;
   /** The viewer opened it (so can't approve it). */
   mine: boolean;
+  /** The viewer can write to the repository, as dismissing a review takes (GitHub may still refuse). */
+  canDismiss: boolean;
   labels: PrLabel[];
   assignees: GhUser[];
   milestone: PrMilestone | null;
