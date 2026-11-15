@@ -4,6 +4,7 @@
   // right-clicking a file or a folder opens its menu. Conflicted files have a tree of their own, above the rest.
   // Once a row has the focus (clicked), ↑/↓ go to the file above or below instead of the next commit.
   import { Twisty, fixedRange, tooltip } from 'purr';
+  import { CheckBold } from 'purr/glyphs';
   import { tick, untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
   import { type TreeRow, fileTree, treeRows } from './lib/tree.ts';
@@ -15,6 +16,7 @@
     onopen,
     onmenu,
     ondirmenu,
+    mark,
     natural = $bindable(0),
   }: {
     files: FileSummary[];
@@ -27,6 +29,8 @@
     onmenu?: (e: MouseEvent, i: number) => void;
     /** A folder's context menu, with its full path. */
     ondirmenu?: (e: MouseEvent, dir: string) => void;
+    /** A pull request's marks on file i: viewed. */
+    mark?: (i: number) => { viewed: boolean } | null;
     /** How tall it would be with every row shown (out): a short tree needs no more room. */
     natural?: number;
   } = $props();
@@ -101,6 +105,8 @@
   const STATUS = { A: 'A', D: 'D', M: 'M', T: 'T', R: 'R', C: 'C' };
   const statusTitle = { A: 'added', D: 'deleted', M: 'modified', T: 'type changed', R: 'renamed', C: 'copied' };
 
+  const marksTip = (m: NonNullable<ReturnType<NonNullable<typeof mark>>>) => (m.viewed ? '\nViewed' : '');
+
   /** Where a renamed file came from: its old name, or its old path when it moved folders. */
   function source(f: FileSummary): string {
     const old = f.oldPath!;
@@ -144,6 +150,7 @@
       </button>
     {:else}
       {@const f = files[r.index]}
+      {@const m = mark?.(r.index)}
       <button
         class="row file"
         data-k={shown[0] + j}
@@ -151,7 +158,7 @@
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
-        use:tooltip={`${f.path}\n${f.conflicted ? 'conflicted, ' : ''}${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
+        use:tooltip={`${f.path}\n${f.conflicted ? 'conflicted, ' : ''}${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${m ? marksTip(m) : ''}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
         onclick={(e) => {
           // WebKit doesn't focus a clicked button: the arrows need it to.
           e.currentTarget.focus();
@@ -160,9 +167,10 @@
         ondblclick={onopen && (() => onopen(r.index))}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >
-        <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
+        <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'} class:seen={m?.viewed}
           >{r.name}{#if f.oldPath}<span class="from">← {source(f)}</span>{/if}</span
         >
+        {#if m?.viewed}<span class="mk seen"><CheckBold /></span>{/if}
         <span class="status mono" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'}
           >{f.untracked ? 'U' : STATUS[f.status]}</span
         >
@@ -257,6 +265,23 @@
 
   .from {
     margin-left: var(--gap-2);
+  }
+
+  .name.seen:not(.add, .del) {
+    color: var(--muted);
+  }
+
+  .mk {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    flex-shrink: 0;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+
+  .mk.seen {
+    color: var(--success);
   }
 
   .status {

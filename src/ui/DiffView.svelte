@@ -40,7 +40,7 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, TextIndentRegular, TrashRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
@@ -53,7 +53,10 @@
   import { addedLines, renderSide, renderedDiff, renderedPaths } from './lib/rendered.ts';
   import { DocDiff, type Fold } from './lib/md-diff.ts';
   import Composer from './gh/Composer.svelte';
+  import FileMarks from './gh/FileMarks.svelte';
+  import ReviewProgress from './gh/ReviewProgress.svelte';
   import Thread from './gh/Thread.svelte';
+  import { tracking } from './lib/gh-files.svelte.ts';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
   import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
   import { type DiffPosition, app, hideWhitespace, highlightKey } from './lib/app.svelte.ts';
@@ -285,6 +288,54 @@
         scroller.scrollTop += y - view.top - (view.bottom - view.top) / 4;
         measure();
       }
+    });
+  });
+
+  // GitHub's Viewed marks, on a diff of the pull request (lib/gh-files.svelte.ts).
+  const track = $derived(review?.track ?? null);
+  const paths = $derived(files.map((f) => f.path));
+  /** Fold a file marked viewed, unfold one unmarked. */
+  function foldViewed(i: number, on: boolean) {
+    if (!!collapsed[i] !== on) toggleCollapsed(i);
+  }
+  /** Mark file i viewed or not, folding it; refused, it's as it was. */
+  async function setViewed(i: number, on: boolean) {
+    const path = files[i].path;
+    foldViewed(i, on);
+    if (!(await track?.setViewed(path, on)) && alive && files[i]?.path === path) foldViewed(i, !on);
+  }
+  // Files marked viewed start folded, as on GitHub, once the marks are in (unless the view this one replaces said otherwise).
+  let foldedViewed = false;
+  $effect(() => {
+    const t = track;
+    if (!t?.viewable || foldedViewed) return;
+    foldedViewed = true;
+    untrack(() =>
+      files.forEach((f, i) => {
+        if (t.viewed(f.path) === 'VIEWED' && !initial?.files?.includes(f.path)) collapsed[i] = true;
+      }),
+    );
+  });
+  function viewedEntry(i: number): MaybeEntry {
+    const v = track?.viewed(files[i].path);
+    if (!track || !v) return false;
+    const on = v !== 'VIEWED';
+    return { label: on ? 'Mark as viewed' : 'Mark as not viewed', icon: on ? CheckSquareRegular : SquareRegular, note: `On #${track.pr?.number}`, run: () => setViewed(i, on) };
+  }
+  function treeMark(i: number) {
+    const p = files[i].path;
+    return track && { viewed: track.viewed(p) === 'VIEWED' };
+  }
+  // The shortcut toggles Viewed on the file at the top of the view (the first, above them).
+  $effect(() => {
+    const t = track;
+    if (!t) return;
+    return tracking.onKey(() => {
+      const i = Math.max(0, current);
+      if (i >= files.length) return;
+      const v = t.viewed(files[i].path);
+      if (v) setViewed(i, v !== 'VIEWED');
+      else if (t.pr && t.data) toast("Files are marked viewed on the pull request's whole diff: select all of its commits.");
     });
   });
 
@@ -1624,6 +1675,7 @@
       { label: 'Copy path', icon: CopyRegular, run: () => app.copy(`${app.repo?.root}/${f.path}`, 'path') },
       { label: 'Copy relative path', icon: CopyRegular, run: () => app.copy(f.path, 'relative path') },
       ...(onLine ? githubEntries(i, r) : []),
+      viewedEntry(i),
       ...(fileActions ? ['separator' as const, ...fileActions(f)] : []),
     ]);
   }
@@ -1706,11 +1758,21 @@
               <span>· {totals.ws} whitespace-only</span>
             {/if}
           </div>
+          {#if track}<ReviewProgress {track} {paths} />{/if}
         </div>
       </div>
       {#if showTree}
         <nav class="tree">
-          <FileTree {files} {current} onpick={reveal} onopen={openFile} onmenu={openMenu} ondirmenu={openDirMenu} bind:natural={treeNatural} />
+          <FileTree
+            {files}
+            {current}
+            onpick={reveal}
+            onopen={openFile}
+            onmenu={openMenu}
+            ondirmenu={openDirMenu}
+            mark={track ? treeMark : undefined}
+            bind:natural={treeNatural}
+          />
         </nav>
         <ResizeEdge
           side="left"
@@ -1805,6 +1867,7 @@
               </span>
             {/if}
             <span class="spacer"></span>
+            {#if track}<FileMarks {track} path={f.path} onviewed={(on) => setViewed(i, on)} />{/if}
             {#if renderSide(f)}
               <IconButton
                 size="sm"

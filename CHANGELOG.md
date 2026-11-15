@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- In a pull request's whole diff (all its commits selected), each file has **Viewed**, kept on GitHub as its own box is: ticking it folds the file, unticking unfolds it, and files you've viewed start folded. <kbd>v</kbd> ticks the file at the top of the diff; right-click a file (or its row in the file tree) for **Mark as viewed**. The tree ticks viewed files and counts them (*3 of 8 files viewed*); a file changed since you viewed it says **Changed since viewed**.
+
 ## 0.24.0 — 2026-11-14
 
 - In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.

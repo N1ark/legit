@@ -36,6 +36,7 @@
   import Brand from './Brand.svelte';
   import { WORK, app } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
+  import { tracking } from './lib/gh-files.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
@@ -135,7 +136,7 @@
 
   type Action =
     | 'undo' | 'redo' | 'branch' | 'repo' | 'help' | 'down' | 'up' | 'addDown' | 'addUp' | 'moveDown' | 'moveUp'
-    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto';
+    | 'open' | 'close' | 'settings' | 'merge' | 'rebase' | 'pr' | 'find' | 'findNext' | 'findPrev' | 'goto' | 'viewed';
   const C = 'Commits';
   const bindings: Binding<Action>[] = [
     { keys: 'j', action: 'down', label: 'Next commit', group: C },
@@ -161,6 +162,7 @@
     { keys: 'm', action: 'merge', label: 'Merge a branch into this one' },
     { keys: 'r', action: 'rebase', label: 'Rebase this branch onto another' },
     { keys: 'p', action: 'pr', label: "Show the branch's pull request" },
+    { keys: 'v', action: 'viewed', label: "Mark the file at the top of the pull request's diff viewed, or not" },
     // Only the desktop app has other repositories to switch to (and ⌘T opens a tab in a browser).
     ...(IS_TAURI ? [{ keys: '⌘T', action: 'repo' as const, label: 'Switch repository or worktree' }] : []),
     { keys: '⌘,', action: 'settings', label: 'Settings' },
@@ -191,6 +193,7 @@
     else if (action === 'goto') switcher = !switcher;
     else if (action === 'help') help = true;
     else if (action === 'pr') gh.togglePr();
+    else if (action === 'viewed') tracking.key();
     else if (action === 'settings') settings = 'syntax';
     else if (action === 'find') finder.start();
     else if (action === 'findNext' || action === 'findPrev') {

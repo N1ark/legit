@@ -7,4 +7,5 @@ import './issues.ts';
 import './checks.ts';
 import './prview.ts';
 import './review.ts';
+import './prfiles.ts';
 import './repos.ts';

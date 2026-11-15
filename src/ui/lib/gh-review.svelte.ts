@@ -5,6 +5,7 @@
 import { toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
+import { DiffTrack } from './gh-files.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
 import type { DiffSide, NewComment, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
 import { isLive } from '../../shared/github.ts';
@@ -145,6 +146,8 @@ export class DiffReview {
   }
 
   pr = $derived(reviews.pr);
+  /** Viewed marks of the files it shows. */
+  track: DiffTrack = new DiffTrack(this);
   data = $derived(this.pr ? (reviews.byNumber[this.pr.number] ?? null) : null);
 
   ctx: DiffContext = $derived.by(() => {
