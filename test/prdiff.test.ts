@@ -53,8 +53,8 @@ test('a pull request is read without checking it out: fetched into hidden refs, 
   const got = await post('prFetch', { number: 18, head: pr.headSha, base: pr.base });
   assert.equal(got.head, pr.headSha);
   assert.equal(got.offline, null);
-  assert.equal(git('rev-parse', 'refs/legit/pull/18/head'), pr.headSha);
-  assert.equal(git('rev-parse', 'refs/legit/pull/18/base'), git('rev-parse', 'origin/main'));
+  assert.equal(git('rev-parse', 'refs/worktree/legit/pull/18/head'), pr.headSha);
+  assert.equal(git('rev-parse', 'refs/worktree/legit/pull/18/base'), git('rev-parse', 'origin/main'));
   assert.equal(got.mergeBase, git('rev-parse', 'origin/main'));
   // Nothing else moved, and nothing lists the hidden refs.
   assert.deepEqual({ refs: refs(), head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain'), index: git('write-tree') }, before);
@@ -74,7 +74,7 @@ test('a pull request is read without checking it out: fetched into hidden refs, 
   const push = pr.timeline.find((i: any) => i.type === 'force-pushed').pushed;
   const old = await get('prCommit', { number: '18', sha: push.from });
   assert.equal(old.subject, 'Mention --watch in the README');
-  assert.equal(git('rev-parse', `refs/legit/pull/18/${push.from}`), push.from);
+  assert.equal(git('rev-parse', `refs/worktree/legit/pull/18/${push.from}`), push.from);
   const forced = await post('prCompare', { number: 18, from: push.from, to: push.to });
   assert.equal(forced.rebased, true);
   // A push of commits: from its first commit's parent.
@@ -98,9 +98,9 @@ test("a pull request's hidden refs go once nothing shows it, and any left go as 
   const { githubRoute } = await import('../src/server/gh/routes.ts');
   const { sweepPrRefs } = await import('../src/server/gh/prdiff.ts');
   const git = (...args: string[]) => execFileSync('git', args, { cwd: demo, encoding: 'utf8' }).trim();
-  const hidden = () => git('for-each-ref', '--format=%(refname)', 'refs/legit/pull/');
+  const hidden = () => git('for-each-ref', '--format=%(refname)', 'refs/worktree/legit/pull/');
   // Left over from a server that stopped while showing #14.
-  git('update-ref', 'refs/legit/pull/14/head', 'HEAD');
+  git('update-ref', 'refs/worktree/legit/pull/14/head', 'HEAD');
   const repo = await Repo.open(demo);
   await sweepPrRefs(repo);
   assert.equal(hidden(), '');
@@ -110,7 +110,7 @@ test("a pull request's hidden refs go once nothing shows it, and any left go as 
   // Two pages show #18: its refs stay until both have left it.
   await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
   await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
-  assert.deepEqual(hidden().split('\n'), ['refs/legit/pull/18/base', 'refs/legit/pull/18/head']);
+  assert.deepEqual(hidden().split('\n'), ['refs/worktree/legit/pull/18/base', 'refs/worktree/legit/pull/18/head']);
   await post('prRelease', { number: 18 });
   assert.notEqual(hidden(), '');
   await post('prRelease', { number: 18 });
@@ -118,10 +118,24 @@ test("a pull request's hidden refs go once nothing shows it, and any left go as 
   // Its commits are still here for a diff still open; showing it again fetches it again.
   assert.equal(git('cat-file', '-t', pr.headSha), 'commit');
   const again = await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
-  assert.equal(git('rev-parse', 'refs/legit/pull/18/head'), again.head);
+  assert.equal(git('rev-parse', 'refs/worktree/legit/pull/18/head'), again.head);
   await post('prRelease', { number: 18 });
   // Checking one out from the list (nothing showing it) keeps no ref.
   const plan = await post('prCheckoutPlan', { number: 16 });
   assert.equal(git('cat-file', '-t', plan.sha), 'commit');
   assert.equal(hidden(), '');
+});
+
+test("each worktree keeps its own pull request refs: one's cleaning up leaves another's", async () => {
+  const demo = join(dir, 'demo3');
+  execFileSync('node', ['scripts/gh-demo.ts', demo], { stdio: 'ignore' });
+  const { dropPrRefs } = await import('../src/server/gh/prdiff.ts');
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const other = join(dir, 'demo3-wt');
+  git(demo, 'worktree', 'add', '-q', '--detach', other);
+  git(demo, 'update-ref', 'refs/worktree/legit/pull/12/head', 'HEAD');
+  git(other, 'update-ref', 'refs/worktree/legit/pull/12/head', 'HEAD');
+  await dropPrRefs(await Repo.open(other));
+  assert.equal(git(other, 'for-each-ref', 'refs/worktree/legit/pull/'), '');
+  assert.match(git(demo, 'for-each-ref', '--format=%(refname)', 'refs/worktree/legit/pull/'), /^refs\/worktree\/legit\/pull\/12\/head$/);
 });

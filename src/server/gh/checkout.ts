@@ -1,5 +1,5 @@
 // Checking out a pull request. Its head is fetched from the base repository's remote (`pull/N/head`,
-// so a fork's works too) into refs/legit/pull/N/head, then put on a local branch: the head branch's
+// so a fork's works too) into refs/worktree/legit/pull/N/head, then put on a local branch: the head branch's
 // name when it's on a remote you have (tracking it there), else `<owner>/<branch>` (a fork's, tracking
 // nothing), else `pr/N`. The branch is made or fast-forwarded, then switched to or given a worktree of
 // its own. One that has diverged from the pull request is only reset when asked (its tip kept in Backups).
@@ -20,7 +20,7 @@ import { isLive } from '../../shared/github.ts';
 import { prState } from './pulls.ts';
 import type { PostRoute } from './routes.ts';
 
-export const PULL = 'refs/legit/pull';
+export const PULL = 'refs/worktree/legit/pull';
 
 /** What of a pull request's head decides where it goes. */
 export interface PrHead {

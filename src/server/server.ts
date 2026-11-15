@@ -174,7 +174,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       (rel) => /^(refs|rebase-merge|rebase-apply)(\/|$)/.test(rel),
       (name = '') => {
         // A pull request fetched to be read (gh/prdiff.ts) changes nothing shown.
-        if (name.endsWith('.lock') || /^refs[\\/]legit[\\/]pull[\\/]/.test(name)) return;
+        if (name.endsWith('.lock') || /^refs[\\/]worktree[\\/]legit[\\/]pull[\\/]/.test(name)) return;
         if (relevant.test(name)) notify();
         else if (name === 'index') notifyWork(undefined);
       },

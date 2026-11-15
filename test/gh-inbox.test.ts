@@ -93,7 +93,7 @@ test("check out a pull request: a branch tracking its head's, fast-forwarded whe
   const { head, remote, repo } = await withPr();
   const sha = await fetchPrHead(repo.git, 'origin', 5, 'feature');
   assert.equal(sha, head);
-  assert.equal(git('rev-parse', 'refs/legit/pull/5/head'), head);
+  assert.equal(git('rev-parse', 'refs/worktree/legit/pull/5/head'), head);
   assert.equal(git('rev-parse', 'refs/remotes/origin/feature'), head);
   const pr = { number: 5, head: 'feature', owner: 'a' };
   const plan = await planCheckout(repo, pr, sha, 'origin');

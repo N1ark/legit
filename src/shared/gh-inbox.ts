@@ -36,7 +36,7 @@ export type CheckoutRelation = 'new' | 'same' | 'behind' | 'ahead' | 'diverged';
 /** What checking out a pull request would do, worked out once its head is fetched (see server/gh/checkout.ts). */
 export interface CheckoutPlan {
   number: number;
-  /** The head, fetched into refs/legit/pull/<number>/head. */
+  /** The head, fetched into refs/worktree/legit/pull/<number>/head. */
   sha: string;
   branch: string;
   /** The branch's tip now; null when it's to be created. */

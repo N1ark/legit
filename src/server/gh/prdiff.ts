@@ -1,5 +1,5 @@
 // Reading a pull request without checking it out. Its head (GitHub's refs/pull/<n>/head) and base
-// branch are fetched into hidden refs, refs/legit/pull/<n>/…, that no branch list, log or backup
+// branch are fetched into hidden refs, refs/worktree/legit/pull/<n>/… (each worktree's own, as each has its own server), that no branch list, log or backup
 // lists; nothing else moves (no branch, HEAD, index, working tree, remote-tracking ref or FETCH_HEAD).
 // Its diffs are then `r…` keys (Repo.rangeDiff): Files changed is merge-base(base, head)..head.
 
@@ -17,7 +17,7 @@ import type { PrCompare, PrFetched } from '../../shared/gh-prdiff.ts';
 import type { CommitInfo } from '../../shared/types.ts';
 import type { Repo } from '../repo.ts';
 
-export const PULL = 'refs/legit/pull';
+export const PULL = 'refs/worktree/legit/pull';
 
 const SHA = /^[0-9a-f]{40,64}$/;
 
@@ -43,7 +43,7 @@ async function baseRemote(repo: Repo): Promise<{ remote: string; name: string | 
 
 const GONE = 'GitHub no longer has it';
 
-/** `git fetch` of `refspecs` into refs/legit/pull only; null when it worked, else why not (a phrase). */
+/** `git fetch` of `refspecs` into refs/worktree/legit/pull only; null when it worked, else why not (a phrase). */
 async function fetchRefs(repo: Repo, remote: string, refspecs: string[]): Promise<string | null> {
   if (MOCK) await db.syncPulls?.(repo.git.root);
   const r = await repo.git.run(

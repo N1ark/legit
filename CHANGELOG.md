@@ -17,6 +17,7 @@
 - GitHub's emoji shortcodes (`:+1:`, `:tada:`, `:octocat:`) show as emoji in comments, descriptions, commit messages and markdown files.
 - A long pull request's conversation and review threads come whole: every entry and thread, not only the last 100, so each review shows all its comments.
 - Checking out a fork's pull request that lets maintainers push (or is your own fork) adds the fork as a remote and tracks its branch, so **Push** sends your commits there. Any other fork's branch no longer offers **Publish** to your own remote.
+- Each worktree of a repository fetches the pull requests it reads for itself, so closing one in a worktree no longer deletes it from under another that's reading it.
 
 ## 0.25.0 — 2026-11-15
 

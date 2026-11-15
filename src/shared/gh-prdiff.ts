@@ -1,7 +1,7 @@
 // A pull request's changes read without checking it out (server/gh/prdiff.ts): what was fetched
 // of it, and the diffs between its versions.
 
-/** A pull request's head and base as fetched into hidden refs (refs/legit/pull/<n>/…). */
+/** A pull request's head and base as fetched into hidden refs (refs/worktree/legit/pull/<n>/…). */
 export interface PrFetched {
   number: number;
   head: string;
