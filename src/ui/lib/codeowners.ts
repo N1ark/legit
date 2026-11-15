@@ -110,5 +110,6 @@ export function ownersOf(rules: OwnerRule[], path: string): Owners | null {
   return null;
 }
 
-/** `login` is one of the owners by name (teams and e-mail addresses aren't checked). */
-export const ownedBy = (owners: string[], login: string) => !!login && owners.some((o) => o.toLowerCase() === `@${login.toLowerCase()}`);
+/** `login` is one of the owners, by name or through one of `teams` (`@org/slug`); e-mail addresses aren't matched. */
+export const ownedBy = (owners: string[], login: string, teams: readonly string[] = []) =>
+  !!login && owners.some((o) => o.toLowerCase() === `@${login.toLowerCase()}` || teams.includes(o.toLowerCase()));

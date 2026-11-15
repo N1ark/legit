@@ -98,6 +98,8 @@ test("a pull request's files: viewed marks (dismissed by a later change) and COD
   assert.equal(files.headSha, git('rev-parse', 'origin/feature/parser-errors'));
   assert.equal(files.codeowners.path, '.github/CODEOWNERS');
   assert.match(files.codeowners.text, /src\/parser\.ts @octocat @hubot/);
+  // CODEOWNERS names teams: the viewer's, asked once (and kept), match too.
+  assert.deepEqual(files.teams, ['@acme/docs']);
 
   db.filesPage = 1;
   try {

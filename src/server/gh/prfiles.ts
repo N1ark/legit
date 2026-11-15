@@ -47,13 +47,34 @@ interface Loaded {
 
 const loads = new Map<string, { at: number; value: Promise<Loaded> }>();
 
+const teamCache = new Map<string, { at: number; value: Promise<string[] | null> }>();
+
+/** The teams of `org` that `login` is on, as `@org/slug`: [] for a user's repository, null when GitHub won't say (no read:org). */
+function viewerTeams(org: string, login: string): Promise<string[] | null> {
+  return cached(teamCache, `${org}\0${login}`, 600_000, async () => {
+    try {
+      const d: any = await graphql(
+        `query ViewerTeams($org: String!, $login: String!) {
+          organization(login: $org) { teams(first: 100, userLogins: [$login]) { nodes { slug } } }
+        }`,
+        { org, login },
+      );
+      return (d.organization?.teams?.nodes ?? []).map((t: any) => `@${org}/${t.slug}`.toLowerCase());
+    } catch (e) {
+      // A user's repository has no organization; a token without read:org can't see its teams.
+      if (e instanceof GithubError && /could not resolve to an organization/i.test(e.message)) return [];
+      return null;
+    }
+  });
+}
+
 async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> {
   const r = await needGhRepos(repo);
   if (MOCK) db.reviewGit = repo.git;
   const key = `${r.base}#${number}`;
   if (fresh) loads.delete(key);
   return cached(loads, key, 10_000, async () => {
-    const out: PrFiles = { number, headSha: '', viewer: '', viewed: {}, codeowners: null };
+    const out: PrFiles = { number, headSha: '', viewer: '', viewed: {}, codeowners: null, teams: [] };
     let prId = '';
     let after: string | null = null;
     for (let page = 0; page < PAGES; page++) {
@@ -70,6 +91,8 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
       if (!pr.files?.pageInfo?.hasNextPage) break;
       after = pr.files.pageInfo.endCursor;
     }
+    // Teams only matter when CODEOWNERS names one.
+    out.teams = out.codeowners && /@[\w.-]+\/[\w.-]+/.test(out.codeowners.text) ? await viewerTeams(r.owner, out.viewer) : [];
     return { files: out, prId };
   });
 }

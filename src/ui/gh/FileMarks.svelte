@@ -27,7 +27,8 @@
   const ownersTip = $derived.by(() => {
     if (!owners) return '';
     const from = `${track.codeowners}, line ${owners.rule.line}: ${owners.rule.pattern}`;
-    return `Code owners: ${owners.owners.join(', ')}\n(${from})${mine ? '\nYou own this file' : ''}`;
+    const teams = !mine && !track.teamsKnown && owners.owners.some((o) => o.includes('/')) ? "\nWhether you're on its teams GitHub won't say: the token needs read:org" : '';
+    return `Code owners: ${owners.owners.join(', ')}\n(${from})${mine ? '\nYou own this file' : ''}${teams}`;
   });
 
   function notesTip() {

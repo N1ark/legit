@@ -81,3 +81,8 @@ async function mark(v: Record<string, any>, on: boolean) {
 
 onGraphql('MarkFileViewed', async (v) => ({ markFileAsViewed: await mark(v, true) }));
 onGraphql('UnmarkFileViewed', async (v) => ({ unmarkFileAsViewed: await mark(v, false) }));
+
+/** The viewer is on acme's docs team (CODEOWNERS gives it *.md). */
+onGraphql('ViewerTeams', (v) => ({
+  organization: v.org === 'acme' ? { teams: { nodes: v.login === db.viewer ? [{ slug: 'docs' }] : [] } } : null,
+}));

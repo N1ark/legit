@@ -165,9 +165,14 @@ export class DiffTrack {
     return m.get(path)!;
   }
 
-  /** The viewer is one of the file's owners by name. */
+  /** The viewer is one of the file's owners, by name or through a team. */
   mine(path: string): boolean {
-    return ownedBy(this.owners(path)?.owners ?? [], this.data?.viewer ?? '');
+    return ownedBy(this.owners(path)?.owners ?? [], this.data?.viewer ?? '', this.data?.teams ?? []);
+  }
+
+  /** Whether the viewer's teams are known (GitHub says them only to a token with read:org). */
+  get teamsKnown(): boolean {
+    return this.data?.teams !== null;
   }
 
   /** How many of the files the viewer owns. */

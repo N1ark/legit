@@ -23,6 +23,7 @@
 - The pull request lists (<kbd>⇧P</kbd>) come whole, past their first 50: the rest load while a list is shown, so filtering finds any of them.
 - Picking assignees or reviewers searches GitHub as you type, so anyone who can be assigned is found, not only the first 100.
 - Link issues to a pull request from **Closes** in its overview, or unlink one: that adds or takes out a "Closes #N" line in the description, which is how GitHub links them.
+- Code owners count your teams: a file CODEOWNERS gives to a team you're on is yours, in its header and in **Files you own**.
 
 ## 0.25.0 — 2026-11-15
 

@@ -21,7 +21,7 @@
       </span>
     {/if}
     {#if owned}
-      <label class="own" use:tooltip={`Show only the files ${track.codeowners} says you own (by name: teams aren't looked at)`}>
+      <label class="own" use:tooltip={`Show only the files ${track.codeowners} says you own, by name or through your teams${track.teamsKnown ? '' : " (which GitHub won't say: the token needs read:org)"}`}>
         <Switch label="Files you own" bind:checked={tracking.ownedOnly} />
         Files you own ({owned})
       </label>

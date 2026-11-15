@@ -13,6 +13,8 @@ export interface PrFiles {
   viewed: Record<string, ViewedState>;
   /** The base branch's CODEOWNERS (the first of GitHub's three places that has one), or null. */
   codeowners: { path: string; text: string } | null;
+  /** The viewer's teams in the repository's organization (`@org/slug`); null when GitHub won't say (the token lacks read:org). */
+  teams: string[] | null;
 }
 
 export type AnnotationLevel = 'notice' | 'warning' | 'failure';

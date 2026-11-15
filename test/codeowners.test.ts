@@ -107,4 +107,7 @@ test("the viewer owns a file named for them, whatever the case; teams and e-mail
   assert.ok(ownedBy(['@acme/devs', '@OctoCat'], 'octocat'));
   assert.ok(!ownedBy(['@acme/octocat', 'octocat@github.com'], 'octocat'));
   assert.ok(!ownedBy(['@octocat'], ''));
+  // Through a team the viewer is on.
+  assert.ok(ownedBy(['@acme/Docs'], 'octocat', ['@acme/docs']));
+  assert.ok(!ownedBy(['@acme/devs'], 'octocat', ['@acme/docs']));
 });
