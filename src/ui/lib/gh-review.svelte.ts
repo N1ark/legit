@@ -271,6 +271,11 @@ export class DiffReview {
     return m;
   });
 
+  /** File `path`'s threads this diff shows wherever it can (`belongs`), and those of them `placed` on its rows. */
+  threadsOn(path: string, placed?: Block[]): ReviewThread[] {
+    return (this.byPath.get(path) ?? []).filter((t) => belongs(t, this.ctx) || placed?.some((b) => b.thread === t));
+  }
+
   /** The commit GitHub gets comments on (the head for the whole pull request), or why there isn't one. */
   target = $derived.by((): { commit: string } | { why: string } => {
     const d = this.data;

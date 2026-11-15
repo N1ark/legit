@@ -59,7 +59,7 @@
   import Thread from './gh/Thread.svelte';
   import { tracking } from './lib/gh-files.svelte.ts';
   import { type Block, type DiffReview, reviews } from './lib/gh-review.svelte.ts';
-  import { type BlockLayout, heightAbove, layOut } from './lib/gh-threads.ts';
+  import { type BlockLayout, heightAbove, layOut, threadCounts } from './lib/gh-threads.ts';
   import { type DiffPosition, app, hideWhitespace, highlightKey, sideBySide } from './lib/app.svelte.ts';
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
@@ -301,6 +301,10 @@
       if (!scroller) return;
       if (onFile >= 0) {
         reviews.focus = null;
+        if (collapsed[i]) {
+          collapsed[i] = false;
+          flushSync();
+        }
         const y = tops[i] + HEAD + fileBlocks[i].slice(0, onFile).reduce((h, b) => h + blockHeight(b), 0);
         if (y < view.top + HEAD || y + Math.min(blockHeight(fileBlocks[i][onFile]), (view.bottom - view.top) / 2) > view.bottom) {
           scroller.scrollTop += y - view.top - HEAD;
@@ -361,9 +365,19 @@
     const on = v !== 'VIEWED';
     return { label: on ? 'Mark as viewed' : 'Mark as not viewed', icon: on ? CheckSquareRegular : SquareRegular, note: `On #${track.pr?.number}`, run: () => setViewed(i, on) };
   }
+  /** File i's review threads in this diff: how many are unresolved and resolved, and the first. */
+  const threadsOf = (i: number) => (review ? threadCounts(review.threadsOn(files[i].path, placedThreads[i]?.blocks)) : null);
   function treeMark(i: number) {
     const p = files[i].path;
-    return track && { viewed: track.viewed(p) === 'VIEWED', mine: track.mine(p), notes: track.counts(p) };
+    const threads = threadsOf(i);
+    return { viewed: track?.viewed(p) === 'VIEWED', mine: !!track?.mine(p), notes: track?.counts(p) ?? null, threads: threads && { open: threads.open, resolved: threads.resolved } };
+  }
+  /** Bring file i's first thread (its first unresolved one) into view. */
+  function showThreads(i: number) {
+    const t = threadsOf(i)?.first;
+    if (!t) return;
+    if (t.resolved) reviews.opened[t.id] = true;
+    reviews.focus = { id: t.id, path: t.path };
   }
   // The shortcut toggles Viewed on the file at the top of the view (the first, above them).
   $effect(() => {
@@ -1907,7 +1921,8 @@
             onopen={openFile}
             onmenu={openMenu}
             ondirmenu={openDirMenu}
-            mark={track ? treeMark : undefined}
+            mark={review ? treeMark : undefined}
+            onthreads={showThreads}
             only={track && tracking.ownedOnly && track.ownsAny(paths) ? (i) => !!track?.mine(files[i].path) : null}
             bind:natural={treeNatural}
           />

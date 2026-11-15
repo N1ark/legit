@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The file tree beside a pull request's diff shows which files have review threads: how many are unresolved (in colour), or a quiet tick for resolved ones only. Click the count to go to the first; a comment on the whole file of a folded file now unfolds it.
 - The purple bar beside the lines a thread is on lines up with the edge of the line numbers, and stays there as the code scrolls sideways.
 - A review thread, comment or CI annotation in the middle of added lines sits on their green (removed lines: their red), so the change still reads as one block; side by side, each side keeps its own.
 - **Side by side** works in a laptop-sized window, beside the commit list and the file tree (it needed the diff alone to be 760 px wide, so it silently stayed one above the other); where the diff really is too narrow, the switch says *too narrow here*.
