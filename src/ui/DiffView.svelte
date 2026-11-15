@@ -2915,9 +2915,9 @@
     background: var(--del-bg);
   }
 
-  /* The lines a review thread is about: a bar just inside the code, joined across them. */
-  .line.gh-range .code {
-    background: linear-gradient(to right, transparent 2px, var(--theme2) 2px 5px, transparent 5px) no-repeat;
+  /* The lines a review thread is about: the gutter's edge thickens into a bar, joined across them (and staying as the code scrolls). */
+  .line.gh-range .gutter {
+    box-shadow: inset -3px 0 0 var(--theme2);
   }
 
   /* Side by side: two columns, each scrolling sideways on its own, threads over both. */
@@ -2955,6 +2955,10 @@
 
   .half.right .gutter {
     box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
+  }
+
+  .half.right .line.gh-range .gutter {
+    box-shadow: inset 1px 0 0 var(--border), inset -3px 0 0 var(--theme2);
   }
 
   .half .hunk:empty {
