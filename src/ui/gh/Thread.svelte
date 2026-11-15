@@ -1,6 +1,7 @@
 <script lang="ts">
   // A review thread: a bar saying where it is and who said what (a click opens or closes it), its
   // comments, and a reply box with Resolve. Resolved threads start closed.
+  import type { Snippet } from 'svelte';
   import { Avatar, Button, Kbd, Tag, TextArea, Twisty, matches, tooltip } from 'purr';
   import { ArrowCounterClockwiseRegular, CheckCircleRegular } from 'purr/glyphs';
   import ReviewComment from './ReviewComment.svelte';
@@ -21,8 +22,10 @@
     scope?: string;
     /** Show the lines it was made on (it's not under them). */
     hunk?: boolean;
+    /** Buttons at the end of its header. */
+    actions?: Snippet;
   }
-  let { number, thread, path = false, moved = false, pending = false, scope = '', hunk = false }: Props = $props();
+  let { number, thread, path = false, moved = false, pending = false, scope = '', hunk = false, actions }: Props = $props();
   const context = $derived(hunk ? hunkLines(thread.comments[0]?.diffHunk ?? '').slice(-4) : []);
 
   const open = $derived(reviews.isOpen(thread, scope));
@@ -68,6 +71,7 @@
 </script>
 
 <section class="thread" class:open class:resolved={thread.resolved} aria-label="Review thread on {thread.path}, {label}">
+  <div class="top">
   <button class="bar" aria-expanded={open} onclick={() => reviews.toggle(thread, scope)}>
     <Twisty {open} size={10} />
     <Avatar name={first.author?.login ?? 'ghost'} src={first.author?.avatar} size={18} round />
@@ -92,6 +96,8 @@
       >
     {/if}
   </button>
+  {#if actions}<span class="actions">{@render actions()}</span>{/if}
+  </div>
   {#if open}
     {#if context.length}
       <div class="hunk mono" aria-label="The lines it was made on">
@@ -168,7 +174,25 @@
     overflow: hidden;
   }
 
+  .top {
+    display: flex;
+    align-items: center;
+  }
+
+  @media (hover: hover) {
+    .top:hover {
+      background: var(--bg2);
+    }
+  }
+
+  .actions {
+    display: flex;
+    padding-right: var(--gap-2);
+  }
+
   .bar {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: var(--gap-3);
@@ -178,10 +202,6 @@
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
-  }
-
-  .bar:hover {
-    background: var(--bg2);
   }
 
   .bar:focus-visible {

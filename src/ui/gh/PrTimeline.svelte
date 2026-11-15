@@ -159,14 +159,19 @@
 {#snippet thread(t: ReviewThread)}
   {@const w = reviews.where(pr.number, t)}
   <div class="row" class:flash={flash === t.id} data-thread={t.id}>
-    <div class="thread"><Thread number={pr.number} thread={t} pending={!!data?.pending} path hunk={!!t.comments[0]?.diffHunk} /></div>
-    <IconButton
-      label="Show in diff"
-      tip={typeof w === 'string' ? w : w.length > 1 ? "Show it in the pull request's changes" : 'Show it in the commit it was made on'}
-      size="sm"
-      disabled={typeof w === 'string'}
-      onclick={() => reviews.show(pr.number, t)}><CrosshairRegular /></IconButton
-    >
+    <div class="thread">
+      <Thread number={pr.number} thread={t} pending={!!data?.pending} path hunk={!!t.comments[0]?.diffHunk}>
+        {#snippet actions()}
+          <IconButton
+            label="Show in diff"
+            tip={typeof w === 'string' ? w : w.length > 1 ? "Show it in the pull request's changes" : 'Show it in the commit it was made on'}
+            size="sm"
+            disabled={typeof w === 'string'}
+            onclick={() => reviews.show(pr.number, t)}><CrosshairRegular /></IconButton
+          >
+        {/snippet}
+      </Thread>
+    </div>
   </div>
 {/snippet}
 
