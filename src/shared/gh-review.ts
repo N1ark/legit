@@ -94,3 +94,25 @@ export interface PrLines {
   /** The diff shown's old side against the base, `git diff -U0` hunks [baseStart, baseCount, oldStart, oldCount]: how its removed lines map to the base's. */
   moved: [number, number, number, number][];
 }
+
+/** Suggestions committed together (server/gh/suggestions.ts), each with its thread and author. */
+export interface ApplySuggestions {
+  /** The branch checked out and its head, as the page saw them: the pull request's. */
+  branch: string;
+  head: string;
+  suggestions: (ApplySuggestion & { threadId: string; author: GhUser | null })[];
+}
+
+/** One of a batch that wasn't applied (its index in it), and why. */
+export interface SuggestionRefused {
+  index: number;
+  path: string;
+  startLine: number;
+  why: string;
+}
+
+/** What came of a batch: the indices of those committed, and those refused. */
+export interface SuggestionsApplied {
+  applied: number[];
+  refused: SuggestionRefused[];
+}

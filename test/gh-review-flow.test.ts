@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import type { PrLines, PrReview } from '../src/shared/gh-review.ts';
+import type { PrLines, PrReview, SuggestionsApplied } from '../src/shared/gh-review.ts';
+import type { OpResult } from '../src/shared/types.ts';
 
 // The demo repo (scripts/gh-demo.ts) against the fake GitHub, as `LEGIT_GITHUB_MOCK=1` runs it.
 process.env.LEGIT_GITHUB_MOCK = '1';
@@ -76,4 +77,45 @@ test('discarding the pending review deletes its comments, and its replies in thr
   assert.ok(r.threads.every((t) => t.comments.every((c) => !c.pending)));
   assert.equal(r.threads.find((t) => t.id === other.id)?.comments.length, other.comments.length);
   await assert.rejects(post('reviewDiscard', { number: 12 }), /no review in progress/);
+});
+
+test('suggestions applied together: one commit with their authors, refusing those that overlap, changed or are on uncommitted files; undone like a commit', async () => {
+  const head = git('rev-parse', 'HEAD');
+  const hubot = { login: 'hubot', avatar: 'https://avatars.githubusercontent.com/u/123?v=4' };
+  const mona = { login: 'monalisa', avatar: 'https://github.com/monalisa.png' };
+  const me = { login: 'octocat', avatar: '' };
+  const s = (threadId: string, path: string, startLine: number, lines: string[], replacement: string[], author: typeof me) => ({ threadId, path, startLine, lines, replacement, author });
+  const suggestions = [
+    s('A', 'src/parser.ts', 11, ['  const specs: Spec[] = [];'], ['  const specs: Spec[] = []; // parsed'], hubot),
+    s('B', 'src/parser.ts', 12, ['  let i = 0;'], ['  let i = 0; // next token'], mona),
+    s('C', 'src/parser.ts', 11, ['  const specs: Spec[] = [];', '  let i = 0;'], ['  const specs: Spec[] = [], i = 0;'], mona),
+    s('D', 'src/parser.ts', 5, ['  nom: string;'], ['  name: string;'], hubot),
+    s('E', 'src/errors.ts', 3, ['    super(`line ${line}: ${message}`);'], ['    super(`${line}: ${message}`);'], hubot),
+    s('F', 'src/parser.ts', 5, ['  name: string;'], ['  name: string; // the widget'], me),
+  ];
+  const errors = `${dir}/src/errors.ts`;
+  writeFileSync(errors, readFileSync(errors, 'utf8') + '// mine\n');
+  await assert.rejects(post('reviewApplyBatch', { branch: 'main', head, suggestions }), /Check out main first/);
+  await assert.rejects(post('reviewApplyBatch', { branch: 'feature/parser-errors', head: 'f'.repeat(40), suggestions }), /has moved/);
+  const r = await post<OpResult & SuggestionsApplied>('reviewApplyBatch', { branch: 'feature/parser-errors', head, suggestions });
+  assert.deepEqual(r.applied.map((i) => suggestions[i].threadId), ['A', 'B', 'F']);
+  assert.deepEqual(r.refused.map((x) => [suggestions[x.index].threadId, x.why.match(/another suggestion|no longer has|uncommitted/)?.[0]]), [
+    ['C', 'another suggestion'],
+    ['D', 'no longer has'],
+    ['E', 'uncommitted'],
+  ]);
+  assert.match(r.note ?? '', /Committed 3 suggestions\. Not applied: src\/parser\.ts:11/);
+  assert.equal(git('rev-parse', 'HEAD~1'), head);
+  assert.equal(
+    git('log', '-1', '--format=%B'),
+    'Apply suggestions from code review\n\nCo-authored-by: hubot <123+hubot@users.noreply.github.com>\nCo-authored-by: monalisa <monalisa@users.noreply.github.com>',
+  );
+  assert.deepEqual(git('show', '--format=', '--name-only', 'HEAD').split('\n'), ['src/parser.ts']);
+  assert.match(git('show', 'HEAD:src/parser.ts'), /name: string; \/\/ the widget\n[\s\S]*specs: Spec\[\] = \[\]; \/\/ parsed\n {2}let i = 0; \/\/ next token\n/);
+  assert.equal(git('status', '--porcelain'), 'M src/errors.ts');
+  // Undo: HEAD goes back, the suggestions stay in the file, staged.
+  await repo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.match(readFileSync(`${dir}/src/parser.ts`, 'utf8'), /\/\/ parsed/);
+  assert.match(git('status', '--porcelain', 'src/parser.ts'), /^M {2}src\/parser\.ts$/);
 });

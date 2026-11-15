@@ -325,32 +325,40 @@ export function withSuggestion(file: string, s: Pick<ApplySuggestion, 'startLine
   return { text: out.join('\n'), at: k + 1 };
 }
 
-async function applySuggestion(repo: Repo, s: ApplySuggestion): Promise<{ line: number }> {
-  if (typeof s.path !== 'string' || !s.path || s.path.split('/').some((p) => p === '..' || p === '' || p === '.git')) {
-    throw new GitError('Bad path.');
+/** `path` of the working tree, as a regular file in the repository (not through a symlink out of it); else why not. */
+export async function workFile(repo: Repo, path: unknown): Promise<{ abs: string; mode: number }> {
+  if (typeof path !== 'string' || !path || path.split('/').some((p) => p === '..' || p === '' || p === '.git')) throw new GitError('Bad path.');
+  const abs = `${repo.git.root}/${path}`;
+  const [root, dir] = await Promise.all([realpath(repo.git.root), realpath(dirname(abs)).catch(() => null)]);
+  if (!dir || (dir !== root && !dir.startsWith(root + '/'))) throw new GitError(`${path} isn't in your files.`);
+  const st = await lstat(abs).catch(() => null);
+  if (!st) throw new GitError(`${path} isn't in your files.`);
+  if (!st.isFile()) throw new GitError(`${path} isn't a regular file; nothing was changed.`);
+  return { abs, mode: st.mode & 0o777 };
+}
+
+/** Replace file `abs` (`path`) with `text` through a temporary file, unless it no longer reads `before`. */
+export async function replaceFile(abs: string, path: string, mode: number, before: Buffer, text: string | Buffer) {
+  const tmp = `${abs.slice(0, abs.lastIndexOf('/') + 1)}.legit-${randomBytes(6).toString('hex')}`;
+  try {
+    await writeFile(tmp, text, { mode, flag: 'wx' });
+    // Changed in the meantime (an editor saving it): leave it be.
+    if (!(await readFile(abs)).equals(before)) throw new GitError(`${path} changed while applying; nothing was changed.`);
+    await rename(tmp, abs);
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
   }
+}
+
+async function applySuggestion(repo: Repo, s: ApplySuggestion): Promise<{ line: number }> {
   if (!Array.isArray(s.lines) || !Array.isArray(s.replacement) || !Number.isInteger(s.startLine)) throw new GitError('Bad suggestion.');
   return repo.exclusive(async () => {
-    const abs = `${repo.git.root}/${s.path}`;
-    // Not through a symlinked directory to somewhere outside the repository.
-    const [root, dir] = await Promise.all([realpath(repo.git.root), realpath(dirname(abs)).catch(() => null)]);
-    if (!dir || (dir !== root && !dir.startsWith(root + '/'))) throw new GitError(`${s.path} isn't in your files.`);
-    const st = await lstat(abs).catch(() => null);
-    if (!st) throw new GitError(`${s.path} isn't in your files.`);
-    if (!st.isFile()) throw new GitError(`${s.path} isn't a regular file; nothing was changed.`);
+    const { abs, mode } = await workFile(repo, s.path);
     const before = await readFile(abs);
     const r = withSuggestion(before.toString('utf8'), s);
     if ('error' in r) throw new GitError(r.error);
-    const tmp = `${abs.slice(0, abs.lastIndexOf('/') + 1)}.legit-${randomBytes(6).toString('hex')}`;
-    try {
-      await writeFile(tmp, r.text, { mode: st.mode & 0o777, flag: 'wx' });
-      // Changed in the meantime (an editor saving it): leave it be.
-      if (!(await readFile(abs)).equals(before)) throw new GitError(`${s.path} changed while applying; nothing was changed.`);
-      await rename(tmp, abs);
-    } catch (e) {
-      await unlink(tmp).catch(() => {});
-      throw e;
-    }
+    await replaceFile(abs, s.path, mode, before, r.text);
     return { line: r.at };
   });
 }

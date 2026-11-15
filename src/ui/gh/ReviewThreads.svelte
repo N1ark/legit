@@ -6,6 +6,7 @@
   import { Button, IconButton } from 'purr';
   import { ArrowsClockwiseRegular, ArticleRegular, CrosshairRegular } from 'purr/glyphs';
   import PendingReview from './PendingReview.svelte';
+  import SuggestionBatch from './SuggestionBatch.svelte';
   import Thread from './Thread.svelte';
   import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
@@ -55,6 +56,7 @@
       <span class="muted">{unresolved} unresolved{data.threads.length > unresolved ? ` · ${data.threads.length - unresolved} resolved` : ''}</span>
     {/if}
     <span class="spacer"></span>
+    {#if !ondone}<SuggestionBatch {number} />{/if}
     {#if ondone}
       <Button size="sm" variant="ghost" onclick={() => (gh.showPr(number), ondone())}><ArticleRegular /> Overview</Button>
     {/if}

@@ -6,8 +6,9 @@ import { toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { gh, ghPost, ghRequest } from './github.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, belongs, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
-import type { DiffSide, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread } from '../../shared/gh-review.ts';
-import { isLive } from '../../shared/github.ts';
+import type { ApplySuggestion, DiffSide, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread, SuggestionsApplied } from '../../shared/gh-review.ts';
+import { type GhUser, isLive } from '../../shared/github.ts';
+import type { OpResult } from '../../shared/types.ts';
 
 /** A comment being written on lines of a diff (`key`: the diff's), kept while the view comes and goes. */
 export interface Draft {
@@ -27,6 +28,14 @@ export interface Draft {
   suggest: string[] | null;
 }
 
+/** A suggestion picked to commit with others (`key`: its thread's, comment's and block's). */
+export interface Batched extends ApplySuggestion {
+  key: string;
+  number: number;
+  threadId: string;
+  author: GhUser | null;
+}
+
 /** Something shown under a row of a diff (row -1: at the top of the file): a thread, or a comment being written. */
 export type Block = { key: string; row: number; start: number } & ({ thread: ReviewThread; moved: boolean; draft?: undefined } | { draft: Draft; thread?: undefined });
 
@@ -40,6 +49,8 @@ class Reviews {
   replies = $state<Record<string, string>>({});
   /** A thread to bring into view in the diff showing it. */
   focus = $state<{ id: string; path: string } | null>(null);
+  /** Suggestions picked to apply together, by key. */
+  batch = $state<Record<string, Batched>>({});
   /** Heights threads were last measured at, so a diff opened again lays out without moving. */
   heights = new Map<string, number>();
 
@@ -145,6 +156,57 @@ class Reviews {
     if (w.length > 1) app.select(w[w.length - 1], 'range');
     this.opened[t.id] = true;
     this.focus = { id: t.id, path: t.path };
+    return true;
+  }
+
+  /** Pull request `number`'s suggestions picked to apply together. */
+  batched(number: number): Batched[] {
+    return Object.values(this.batch).filter((b) => b.number === number);
+  }
+
+  toggleBatch(b: Batched) {
+    if (this.batch[b.key]) delete this.batch[b.key];
+    else this.batch[b.key] = b;
+  }
+
+  /** Why pull request `number`'s suggestions can't be committed here, or null: they go on its branch, checked out at its head. */
+  batchWhy(number: number): string | null {
+    const d = this.byNumber[number];
+    const repo = app.repo;
+    if (!d || !repo) return 'Loading the pull request…';
+    if (gh.pr?.number !== number || !repo.branch) return `Check out #${number}'s branch to commit suggestions to it.`;
+    if (repo.head !== d.headSha) return `${repo.branch} isn't at #${number}'s head on GitHub: push or pull first, so the suggestions' lines are the ones in your files.`;
+    return null;
+  }
+
+  /** Commit pull request `number`'s batch of suggestions (see server/gh/suggestions.ts), then resolve their threads if asked. */
+  async applyBatch(number: number, resolve: boolean): Promise<boolean> {
+    const why = this.batchWhy(number);
+    if (why) {
+      toast.error(why);
+      return false;
+    }
+    const items = this.batched(number);
+    const { branch, head } = app.repo!;
+    let got: SuggestionsApplied | null = null;
+    const ok = await app.op(
+      'gh/reviewApplyBatch',
+      { branch, head, suggestions: items.map(({ key: _, number: __, ...s }) => s) },
+      undefined,
+      async (r) => void (got = r as OpResult & SuggestionsApplied),
+    );
+    const result = got as SuggestionsApplied | null;
+    if (!ok || !result) return false;
+    const applied = result.applied.map((i) => items[i]);
+    for (const b of applied) delete this.batch[b.key];
+    if (!result.refused.length) toast.success(`Committed ${applied.length === 1 ? 'the suggestion' : `${applied.length} suggestions`} to ${branch}`);
+    if (resolve) {
+      const threads = this.byNumber[number]?.threads ?? [];
+      for (const id of new Set(applied.map((b) => b.threadId))) {
+        const t = threads.find((x) => x.id === id);
+        if (t && !t.resolved && t.canResolve) await this.resolve(number, t, true);
+      }
+    }
     return true;
   }
 

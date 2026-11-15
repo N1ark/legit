@@ -104,6 +104,15 @@ db.threads = [
     comments: [say('monalisa', 24, 'Could this file say, in a line, when a `ParseError` is thrown and what `line` counts from?')],
   },
   {
+    id: 'PRRT_10', pr: 13, path: 'src/errors.ts', side: 'RIGHT', line: 2, commit: 0,
+    comments: [
+      say(
+        'hubot', 22,
+        'Room for the column, until tokens track it:\n\n```suggestion\n  constructor(message: string, readonly line: number, readonly column = 0) {\n```',
+      ),
+    ],
+  },
+  {
     id: 'PRRT_8', pr: 12, path: 'src/tokenizer.ts', side: 'RIGHT', line: 6, commit: 0,
     comments: [say('hubot', 90, '`12abc` comes out as a number and then a word. Is that what we want, or should it be an error?')],
   },

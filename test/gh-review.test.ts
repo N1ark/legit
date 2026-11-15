@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { diffHunks, toReview, withSuggestion } from '../src/server/gh/review.ts';
+import { noreplyEmail, withSuggestions } from '../src/server/gh/suggestions.ts';
 import type { PrLines, ReviewThread } from '../src/shared/gh-review.ts';
 import {
   baseLine,
@@ -214,6 +215,21 @@ test('applying a suggestion to a file', () => {
   assert.deepEqual(withSuggestion('a\r\nb\r\n', { startLine: 2, lines: ['b'], replacement: ['c'] }), { text: 'a\r\nc\r\n', at: 2 });
   assert.deepEqual(withSuggestion('a\nb', { startLine: 2, lines: ['b'], replacement: ['c'] }), { text: 'a\nc', at: 2 });
   assert.deepEqual(withSuggestion('a\nb\n', { startLine: 2, lines: ['b'], replacement: [] }), { text: 'a\n', at: 2 });
+});
+
+test('several suggestions in one file: each where it was found, overlapping ones refused', () => {
+  const r = withSuggestions('a\nb\nc\nd\ne\n', [
+    { startLine: 1, lines: ['a'], replacement: ['A', 'AA'] },
+    { startLine: 4, lines: ['d', 'e'], replacement: ['DE'] },
+    { startLine: 2, lines: ['b'], replacement: [] },
+    { startLine: 5, lines: ['e'], replacement: ['E'] },
+    { startLine: 3, lines: ['x'], replacement: ['X'] },
+  ]);
+  assert.equal(r.text, 'A\nAA\nc\nDE\n');
+  assert.deepEqual(r.applied, [0, 1, 2]);
+  assert.deepEqual(r.refused.map((x) => [x.index, /another suggestion/.test(x.why) ? 'overlap' : 'gone']), [[3, 'overlap'], [4, 'gone']]);
+  assert.equal(noreplyEmail({ login: 'hubot', avatar: 'https://avatars.githubusercontent.com/u/42?v=4' }), '42+hubot@users.noreply.github.com');
+  assert.equal(noreplyEmail({ login: 'mona', avatar: '' }), 'mona@users.noreply.github.com');
 });
 
 test("GitHub's payload becomes a review", () => {

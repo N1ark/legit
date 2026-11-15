@@ -1,9 +1,11 @@
 <script lang="ts">
   // Above a diff of the current branch's pull request: its review threads (unresolved count, and
-  // the viewer's pending comments), opening the threads panel. It keeps the threads loaded.
+  // the viewer's pending comments), opening the threads panel, and the batch of suggestions to
+  // commit. It keeps the threads loaded.
   import { Button, Popover } from 'purr';
   import { ChatsCircleRegular } from 'purr/glyphs';
   import ReviewThreads from './ReviewThreads.svelte';
+  import SuggestionBatch from './SuggestionBatch.svelte';
   import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { tip } from '../lib/tip.ts';
@@ -22,6 +24,7 @@
 </script>
 
 {#if pr && data && (data.threads.length || data.pending)}
+  <SuggestionBatch number={pr.number} />
   <span bind:this={button} class="holder">
     <Button
       variant="ghost"

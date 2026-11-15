@@ -11,6 +11,7 @@ import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
 import { reviewGet, reviewPost } from './review.ts';
+import { suggestionsPost } from './suggestions.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
 import type { GithubRepoInfo } from '../../shared/types.ts';
 import type { Repo } from '../repo.ts';
@@ -65,6 +66,7 @@ export const postRoutes: Record<string, PostRoute> = {
   ...checksPost,
   ...prviewPost,
   ...reviewPost,
+  ...suggestionsPost,
 };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
