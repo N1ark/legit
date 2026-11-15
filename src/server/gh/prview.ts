@@ -66,7 +66,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
         totalCount
         nodes { commit { oid abbreviatedOid messageHeadline author { name user { login } } statusCheckRollup { state } } }
       }
-      timelineItems(last: 100, itemTypes: ${ITEM_TYPES}) { nodes { __typename ${EVENTS} } }
+      timelineItems(last: 100, itemTypes: ${ITEM_TYPES}) { pageInfo { hasPreviousPage startCursor } nodes { __typename ${EVENTS} } }
     }
   }
 }`;
@@ -274,9 +274,30 @@ async function where(repo: Repo, number: unknown) {
   return { ...r, number: n, path: `/repos/${r.owner}/${r.name}` };
 }
 
+const TIMELINE_BEFORE = `query PrViewTimeline($owner: String!, $name: String!, $number: Int!, $before: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      timelineItems(last: 100, before: $before, itemTypes: ${ITEM_TYPES}) { pageInfo { hasPreviousPage startCursor } nodes { __typename ${EVENTS} } }
+    }
+  }
+}`;
+
+/** A long pull request's whole timeline: the overview has its last 100 entries; the rest come 100 at a time before them. */
+async function wholeTimeline(r: { owner: string; name: string; number: number }, d: any) {
+  const t = d.repository?.pullRequest?.timelineItems;
+  for (let page = 0; t?.pageInfo?.hasPreviousPage && page < 50; page++) {
+    const more = (await graphql(TIMELINE_BEFORE, { owner: r.owner, name: r.name, number: r.number, before: t.pageInfo.startCursor })).repository?.pullRequest?.timelineItems;
+    if (!more) break;
+    t.nodes = [...more.nodes, ...t.nodes];
+    t.pageInfo = more.pageInfo;
+  }
+}
+
 export async function prOverview(repo: Repo, number: unknown): Promise<PrOverview> {
   const r = await where(repo, number);
-  return toOverview(await graphql(OVERVIEW_QUERY, { owner: r.owner, name: r.name, number: r.number }));
+  const d = await graphql(OVERVIEW_QUERY, { owner: r.owner, name: r.name, number: r.number });
+  await wholeTimeline(r, d);
+  return toOverview(d);
 }
 
 async function options(repo: Repo, number: unknown): Promise<PrOptions> {

@@ -18,23 +18,44 @@ const COMMENT_FIELDS = `id databaseId body createdAt lastEditedAt url diffHunk v
   author { login avatarUrl } originalCommit { oid } commit { oid } pullRequestReview { id state }
   reactionGroups { content viewerHasReacted reactors { totalCount } }`;
 
+const THREAD_FIELDS = `id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType
+  viewerCanResolve viewerCanUnresolve viewerCanReply resolvedBy { login }
+  comments(first: 100) { nodes { ${COMMENT_FIELDS} } }`;
+
 const REVIEW_QUERY = `query ReviewThreads($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id number headRefOid baseRefOid
-      commits(last: 100) { nodes { commit { oid } } }
+      commits(last: 100) { pageInfo { hasPreviousPage startCursor } nodes { commit { oid } } }
       reviews(states: [PENDING], first: 5) { nodes { id viewerDidAuthor comments { totalCount } } }
-      reviewThreads(first: 100) {
-        nodes {
-          id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType
-          viewerCanResolve viewerCanUnresolve viewerCanReply resolvedBy { login }
-          comments(first: 100) { nodes { ${COMMENT_FIELDS} } }
-        }
-      }
+      reviewThreads(first: 100) { pageInfo { hasNextPage endCursor } nodes { ${THREAD_FIELDS} } }
     }
   }
 }`;
+
+/** A long pull request's other threads, and its earlier commits, 100 at a time. */
+const REVIEW_MORE = `query ReviewThreadsMore($owner: String!, $name: String!, $number: Int!, $after: String, $before: String, $threads: Boolean!, $commits: Boolean!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(last: 100, before: $before) @include(if: $commits) { pageInfo { hasPreviousPage startCursor } nodes { commit { oid } } }
+      reviewThreads(first: 100, after: $after) @include(if: $threads) { pageInfo { hasNextPage endCursor } nodes { ${THREAD_FIELDS} } }
+    }
+  }
+}`;
+
+/** Every thread and commit of `pr`, as the first query got them and pages after. */
+async function whole(r: { owner: string; name: string }, number: number, pr: any) {
+  const [t, c] = [pr.reviewThreads, pr.commits];
+  for (let page = 0; page < 50 && (t?.pageInfo?.hasNextPage || c?.pageInfo?.hasPreviousPage); page++) {
+    const threads = !!t?.pageInfo?.hasNextPage;
+    const commits = !!c?.pageInfo?.hasPreviousPage;
+    const more = (await graphql(REVIEW_MORE, { owner: r.owner, name: r.name, number, after: t?.pageInfo?.endCursor ?? null, before: c?.pageInfo?.startCursor ?? null, threads, commits })).repository?.pullRequest;
+    if (!more) break;
+    if (threads) [t.nodes, t.pageInfo] = [[...t.nodes, ...more.reviewThreads.nodes], more.reviewThreads.pageInfo];
+    if (commits) [c.nodes, c.pageInfo] = [[...more.commits.nodes, ...c.nodes], more.commits.pageInfo];
+  }
+}
 
 export function toComment(n: any): ReviewComment {
   return {
@@ -110,6 +131,7 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
     const d = await graphql(REVIEW_QUERY, { owner: r.owner, name: r.name, number });
     const pr = d.repository?.pullRequest;
     if (!pr) throw new GithubError(`Pull request #${number} isn't on GitHub.`, 404);
+    await whole(r, number, pr);
     return { review: toReview(d.viewer.login, pr), prId: pr.id };
   });
 }
@@ -117,7 +139,7 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
 /** GitHub's refusals, said in terms of what to do about them. */
 function explain(e: unknown, file = false): never {
   if (e instanceof GithubError && /part of the diff|could not be resolved|line must be/i.test(e.message)) {
-    const what = file ? 'files the pull request changes as of that commit' : 'lines of its diff of the pull request at that commit: the changed lines and the few around them';
+    const what = file ? 'files the pull request changes as of that commit' : 'lines of files the pull request changes as of that commit';
     throw new GithubError(
       `GitHub only takes comments on ${what} (${e.message.replace(/^GitHub: /, '')}).`,
       e.status,

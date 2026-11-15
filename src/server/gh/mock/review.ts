@@ -260,13 +260,40 @@ onGraphql('ReviewThreads', async (v) => {
         number: p.number,
         headRefOid: head,
         baseRefOid: tip(p.baseRefName) ?? '0'.repeat(40),
-        commits: { nodes: commits.map((oid) => ({ commit: { oid } })) },
+        commits: back(commits.map((oid) => ({ commit: { oid } })), null),
         reviews: {
           nodes: pending
             ? [{ id: pending.id, viewerDidAuthor: true, comments: { totalCount: pendingCount(pending) } }]
             : [],
         },
-        reviewThreads: { nodes: nodes.filter((t) => t.comments.nodes.length) },
+        reviewThreads: forth(nodes.filter((t) => t.comments.nodes.length), null),
+      },
+    },
+  };
+});
+
+/** GitHub's pages, with indices as cursors; `db.reviewPage` makes them small for tests. */
+const back = (all: any[], before: string | null) => {
+  const end = before === null ? all.length : Number(before);
+  const start = Math.max(0, end - (db.reviewPage ?? 100));
+  return { pageInfo: { hasPreviousPage: start > 0, startCursor: String(start) }, nodes: all.slice(start, end) };
+};
+const forth = (all: any[], after: string | null) => {
+  const start = after === null ? 0 : Number(after);
+  const end = start + (db.reviewPage ?? 100);
+  return { pageInfo: { hasNextPage: end < all.length, endCursor: String(end) }, nodes: all.slice(start, end) };
+};
+
+onGraphql('ReviewThreadsMore', async (v) => {
+  const p = pull(v.number);
+  const commits = await prCommits(p.number);
+  const head = tip(p.headRefName) ?? p.headRefOid;
+  const nodes = (await Promise.all(threads().filter((t) => t.pr === p.number).map((t) => threadNode(t, commits, head)))).filter((t) => t.comments.nodes.length);
+  return {
+    repository: {
+      pullRequest: {
+        ...(v.commits ? { commits: back(commits.map((oid) => ({ commit: { oid } })), v.before) } : {}),
+        ...(v.threads ? { reviewThreads: forth(nodes, v.after) } : {}),
       },
     },
   };

@@ -252,23 +252,39 @@ onGraphql('PrViewOverview', (v) => {
         reviews: { nodes: pending ? [{ id: pending.id, author: { login: db.viewer }, comments: { totalCount: count(pending) } }] : [] },
         autoMergeRequest: e.autoMerge ? { mergeMethod: e.autoMerge.method, enabledBy: { login: e.autoMerge.by } } : null,
         commits: { totalCount: list.length, nodes: list.map((commit) => ({ commit })) },
-        timelineItems: {
-          // As GitHub lists them: in the order they happened.
-          nodes: [
-            ...list.map((commit) => ({ __typename: 'PullRequestCommit', id: `PRC_${commit.oid}`, commit })),
-            ...e.timeline.map((t) =>
-              t.__typename === 'IssueComment' ? { ...t, viewerCanUpdate: t.author.login === db.viewer, viewerCanDelete: t.author.login === db.viewer }
-              : t.__typename === 'HeadRefForcePushedEvent' ? { ...t, afterCommit: t.afterCommit ?? { abbreviatedOid: list.at(-1)?.abbreviatedOid } }
-              : t,
-            ),
-          ].sort((a, b) => when(a) - when(b)).slice(-100),
-        },
+        timelineItems: page(timelineOf(p, e, list), null),
       },
     },
   };
 });
 
 const when = (n: any) => Date.parse(n.commit?.committedDate ?? n.createdAt) || 0;
+
+/** The whole timeline, as GitHub lists it: in the order things happened. */
+function timelineOf(p: any, e: any, list: any[]): any[] {
+  return [
+    ...list.map((commit) => ({ __typename: 'PullRequestCommit', id: `PRC_${commit.oid}`, commit })),
+    ...e.timeline.map((t: any) =>
+      t.__typename === 'IssueComment' ? { ...t, viewerCanUpdate: t.author.login === db.viewer, viewerCanDelete: t.author.login === db.viewer }
+      : t.__typename === 'HeadRefForcePushedEvent' ? { ...t, afterCommit: t.afterCommit ?? { abbreviatedOid: list.at(-1)?.abbreviatedOid } }
+      : t,
+    ),
+  ].sort((a, b) => when(a) - when(b));
+}
+
+/** `last: N` items before `before` (an index, as a cursor), as GitHub pages back; `db.timelinePage` makes pages small for tests. */
+function page(all: any[], before: string | null) {
+  const n = db.timelinePage ?? 100;
+  const end = before === null ? all.length : Number(before);
+  const start = Math.max(0, end - n);
+  return { pageInfo: { hasPreviousPage: start > 0, startCursor: String(start) }, nodes: all.slice(start, end) };
+}
+
+onGraphql('PrViewTimeline', (v) => {
+  const p = pull(v.number);
+  const e = extra(p.number);
+  return { repository: { pullRequest: { timelineItems: page(timelineOf(p, e, commits(p, e)), v.before) } } };
+});
 
 const count = (pending: any) => (Array.isArray(pending.comments) ? pending.comments.length : Number(pending.comments) || 0);
 

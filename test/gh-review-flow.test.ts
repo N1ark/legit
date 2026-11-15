@@ -129,3 +129,22 @@ test('suggestions applied together: one commit with their authors, refusing thos
   assert.match(readFileSync(`${dir}/src/parser.ts`, 'utf8'), /\/\/ parsed/);
   assert.match(git('status', '--porcelain', 'src/parser.ts'), /^M {2}src\/parser\.ts$/);
 });
+
+test("a long pull request's threads, commits and timeline come whole, page after page", async () => {
+  const all = await get('reviewThreads', { number: '13', fresh: '1' });
+  const overview = await get<{ timeline: unknown[] }>('prview', { number: '13' });
+  db.reviewPage = 1;
+  db.timelinePage = 2;
+  try {
+    const paged = await get('reviewThreads', { number: '13', fresh: '1' });
+    assert.ok(all.threads.length > 1);
+    assert.deepEqual(paged.threads.map((t) => t.id), all.threads.map((t) => t.id));
+    const pagedOverview = await get<{ timeline: unknown[] }>('prview', { number: '13' });
+    assert.ok(overview.timeline.length > 2);
+    const timeless = (x: unknown) => JSON.stringify(x, (k, v) => (k === 'at' ? undefined : v));
+    assert.equal(timeless(pagedOverview.timeline), timeless(overview.timeline));
+  } finally {
+    delete db.reviewPage;
+    delete db.timelinePage;
+  }
+});

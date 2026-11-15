@@ -15,6 +15,7 @@
 - The counts above a diff's file tree (*2 generated*, *3 whitespace-only*) wrap onto their own line in a narrow window instead of overlapping the switches below.
 - **Show in diff** sits in each thread's header in the conversation, inside its card.
 - GitHub's emoji shortcodes (`:+1:`, `:tada:`, `:octocat:`) show as emoji in comments, descriptions, commit messages and markdown files.
+- A long pull request's conversation and review threads come whole: every entry and thread, not only the last 100, so each review shows all its comments.
 
 ## 0.25.0 — 2026-11-15
 
