@@ -358,12 +358,19 @@ export class Repo {
    */
   private async squashDiff(key: string): Promise<CommitDiff> {
     const list: RawCommit[] = [];
-    for (const run of key.slice(1).split('.').reverse()) {
+    const runs = key.slice(1).split('.').reverse();
+    for (const run of runs) {
       const [newest, oldest = newest] = run.split('-');
       const after = newest === oldest ? [] : (await this.git.text(['rev-list', '--first-parent', '--reverse', newest, `^${oldest}`])).split('\n');
       const commits = await this.git.loadCommits([oldest, ...after]);
       if (commits.some((c, i) => i && c.parents[0] !== commits[i - 1].sha)) throw new GitError('History changed; refresh.');
       list.push(...commits);
+    }
+    // One run of consecutive commits squashes to its newest's tree, whatever merges it holds.
+    if (runs.length === 1) {
+      const from = (await this.mergedBaseSide(list)) ?? list[0].parents[0] ?? this.git.emptyTree;
+      const { out } = await this.git.run(['diff-tree', ...RENAME_ARGS, from, list.at(-1)!.sha]);
+      return parseDiff(out.toString('latin1'), key);
     }
     let tree = list[0].tree;
     const merger = this.git.merger();
@@ -383,6 +390,36 @@ export class Repo {
     }
     const { out } = await this.git.run(['diff-tree', ...RENAME_ARGS, list[0].parents[0] ?? this.git.emptyTree, tree]);
     return parseDiff(out.toString('latin1'), key);
+  }
+
+  /**
+   * When `list` (consecutive commits, oldest first) merges the default branch in midway, what the
+   * diff of them all starts from so that what those merges brought isn't shown as theirs: as on
+   * GitHub, from where the branch last met the default branch. Null when nothing was merged in so.
+   */
+  private async mergedBaseSide(list: RawCommit[]): Promise<string | null> {
+    if (!list.some((c) => c.parents.length > 1)) return null;
+    const { branch, head } = await this.git.headState();
+    const name = (await baseBranch(this.git, branch, head))?.name;
+    const base = name ? await this.git.text(['rev-parse', '-q', '--verify', `${name}^{commit}`], { allowFail: true }) : null;
+    if (!base) return null;
+    const on = (sha: string) => this.isAncestor(sha, base);
+    let from = list[0].parents[0] ?? null;
+    let merged = false;
+    for (const c of list) {
+      const [first, ...others] = c.parents;
+      if (!others.length || (await on(c.sha)) || !(await Promise.all(others.map(on))).every(Boolean)) continue;
+      merged = true;
+      // Nothing of the branch's own came between: the merge is where it meets the base now.
+      if (from === first) from = c.sha;
+      else if (others.length === 1 && (!from || (await this.isAncestor(from, others[0])))) from = others[0];
+      else return null;
+    }
+    return merged ? from : null;
+  }
+
+  private isAncestor(a: string, b: string): Promise<boolean> {
+    return this.git.memo(`is-ancestor ${a} ${b}`, async () => (await this.git.run(['merge-base', '--is-ancestor', a, b], { allowFail: true })).code === 0);
   }
 
   /**

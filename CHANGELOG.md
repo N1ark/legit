@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Selecting a branch's commits for its whole diff no longer shows what merging main into it midway brought in.
+
 ## 0.24.0 — 2026-11-14
 
 - In the diff's file tree, once you've clicked a file, <kbd>↑</kbd>/<kbd>↓</kbd> go to the file above or below instead of the next commit.
