@@ -89,6 +89,7 @@
     rowOfPlace,
     rowPlace,
     rowsIn,
+    runAround,
     shownRanges,
   } from './lib/rows.ts';
   import { type Anchor, type Knot, anchorAt, readKnots, rowAnchor, rowOfAnchor, yOf } from './lib/place.ts';
@@ -2056,7 +2057,7 @@
           {:else if !collapsed[i]}
             {#if fileBlocks[i]}
               <div class="gh-top" style:height="{fileBlocksHeight(i)}px">
-                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b)}{/each}
+                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b, -1)}{/each}
               </div>
             {/if}
             {#if leads[i]}
@@ -2153,7 +2154,7 @@
                           {/if}
                         </div>
                       {/if}
-                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}{@render ghBlock(b)}{/each}
+                      {#each blockLayout[i]?.byRow.get(r) ?? [] as b (b.key)}{@render ghBlock(b, runAround(rows.kind, r, r + 1))}{/each}
                     {/each}
                   </div>
                 {/if}
@@ -2263,7 +2264,8 @@
             </div>
           {/if}
           {#if blocks?.byRow.has(v)}
-            <div style:height="{blocksAbove(i, v + 1) - blocksAbove(i, v)}px"></div>
+            {@const run = runAround(rows.kind, r, v + 1 < half.length ? half[v + 1] : -1)}
+            <div class:in-add={run === ADDED} class:in-del={run === REMOVED} style:height="{blocksAbove(i, v + 1) - blocksAbove(i, v)}px"></div>
           {/if}
         {/each}
       </div>
@@ -2279,8 +2281,8 @@
   {/each}
 {/snippet}
 
-{#snippet ghBlock(b: Block)}
-  <div class="gh-slot" style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
+{#snippet ghBlock(b: Block, run: number)}
+  <div class="gh-slot" class:in-add={run === ADDED} class:in-del={run === REMOVED} style:height="{blockHeight(b)}px" style:width="{paneWidth}px">
     <div {@attach measureBlock(b)}>{@render blockBody(b)}</div>
   </div>
 {/snippet}
@@ -2902,6 +2904,15 @@
     box-sizing: border-box;
     padding: 6px var(--sp-4) 6px 40px;
     overflow: hidden;
+  }
+
+  /* Inside a run of added (or removed) lines, what sits under one keeps their tint, so the run reads as one block. */
+  .in-add {
+    background: var(--add-bg);
+  }
+
+  .in-del {
+    background: var(--del-bg);
   }
 
   /* The lines a review thread is about: a bar just inside the code, joined across them. */

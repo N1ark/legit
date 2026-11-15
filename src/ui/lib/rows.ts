@@ -300,6 +300,12 @@ export function rowOfChange(rows: FileRows, c: number): number {
   return -1;
 }
 
+/** The run of changes something between rows `above` and `below` sits inside (-1 for neither, as a filler is): ADDED or REMOVED when both are, else -1. */
+export function runAround(kind: ArrayLike<number>, above: number, below: number): number {
+  const k = above >= 0 && above < kind.length ? kind[above] : -1;
+  return (k === ADDED || k === REMOVED) && below >= 0 && below < kind.length && kind[below] === k ? k : -1;
+}
+
 /** [first, end) of the rows overlapping [top, bottom), where row r starts at y(r), never decreasing, and y(count) is the end. */
 export function rowsIn(count: number, y: (r: number) => number, top: number, bottom: number): [number, number] {
   let lo = 0;

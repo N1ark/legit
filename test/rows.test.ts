@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { HunkData } from '../src/shared/types.ts';
-import { type FileRows, buildRows, isHead, rowMap, rowsIn } from '../src/ui/lib/rows.ts';
+import { ADDED, type FileRows, REMOVED, buildRows, isHead, rowMap, rowsIn, runAround } from '../src/ui/lib/rows.ts';
 
 const naive = (from: FileRows, to: FileRows) =>
   Array.from(from.kind, (k, r) =>
@@ -64,4 +64,13 @@ test('a row is found again in another version by its old line, edits above it or
   // Lines added above it in the file: new numbers move, old ones don't.
   const after = buildRows([h(2, '+++'), h(10, '  ++  ')].map((x, k) => (k ? { ...x, newStart: 13 } : x)));
   assert.deepEqual(rowOfPlace(after, p), { r: 8, frac: 0.5 });
+});
+
+test('runAround is the run of changes both rows are in, else none', () => {
+  // Header, unchanged, two removed, two added, unchanged.
+  const rows = buildRows([{ header: '@@', oldStart: 1, newStart: 1, types: ' --++ ', text: ['a', 'b', 'c', 'B', 'C', 'd'], eof: [] }]);
+  const k = rows.kind;
+  assert.deepEqual([runAround(k, 2, 3), runAround(k, 4, 5)], [REMOVED, ADDED]);
+  // At a run's edge, between unchanged lines, or past either end.
+  for (const [a, b] of [[1, 2], [3, 4], [5, 6], [0, 1], [6, 7], [-1, 2], [4, -1]]) assert.equal(runAround(k, a, b), -1, `${a} ${b}`);
 });
