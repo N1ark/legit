@@ -4,9 +4,11 @@
 
 import { GithubError, MOCK, graphql, rest } from './client.ts';
 import { needGhRepos } from './context.ts';
+import { toIssueRef } from './issues.ts';
 import { db } from './mock/registry.ts';
 import { forgetPrs, prState } from './pulls.ts';
 import type { GhUser } from '../../shared/github.ts';
+import type { IssueRef } from '../../shared/gh-issues.ts';
 import type {
   CheckState, MergeMethod, MergeState, PrCommit, PrItem, PrLabel, PrMilestone, PrOptions, PrOverview, PrReviewer, ReviewEvent, ReviewState,
 } from '../../shared/gh-prview.ts';
@@ -53,6 +55,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
       labels(first: 50) { nodes { name color } }
       assignees(first: 20) { nodes { ${ACTOR} } }
       milestone { number title url dueOn progressPercentage }
+      closingIssuesReferences(first: 20) { nodes { __typename number title url state stateReason repository { nameWithOwner } } }
       reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { ${ACTOR} } ... on Team { combinedSlug avatarUrl } } } }
       latestOpinionatedReviews(first: 50) { nodes { author { ${ACTOR} } state } }
       latestReviews(first: 50) { nodes { author { ${ACTOR} } state } }
@@ -228,6 +231,7 @@ export function toOverview(d: any): PrOverview {
     labels: (pr.labels?.nodes ?? []).map((l: any): PrLabel => ({ name: l.name, color: l.color })),
     assignees: (pr.assignees?.nodes ?? []).map(user).filter(Boolean),
     milestone: milestone(pr.milestone),
+    closes: (pr.closingIssuesReferences?.nodes ?? []).map(toIssueRef).filter((r: IssueRef | null): r is IssueRef => !!r),
     reviewers: reviewers(pr),
     suggested: (pr.suggestedReviewers ?? []).map((s: any) => user(s.reviewer)).filter(Boolean),
     commits,

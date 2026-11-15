@@ -59,6 +59,13 @@ interface Extra {
 
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
 
+/** The issues "Closes #N" (or fixes, resolves) in a description names, as GitHub links them. */
+const closing = (body: string) =>
+  [...(body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #(\d+)/gi)]
+    .map((m) => db.issues?.find((i: any) => i.number === Number(m[1])))
+    .filter(Boolean)
+    .map((i: any) => ({ __typename: 'Issue', ...i, url: `https://github.com/acme/widgets/issues/${i.number}`, repository: { nameWithOwner: 'acme/widgets' } }));
+
 // #14 comes from someone else, so the viewer can review it.
 if (pull(14)) pull(14).author = actor('monalisa');
 if (pull(12)) {
@@ -75,7 +82,7 @@ if (pull(12)) {
   ].join('\n');
 }
 if (pull(13)) pull(13).body = 'Stacked on #12.\n\nParse errors now say where they happened:\n\n```\nspec.widget:12:4: expected `}`\n```';
-if (pull(14)) pull(14).body = 'Stacked on #13.\n\nColours the location and points a caret at the column.';
+if (pull(14)) pull(14).body = 'Stacked on #13.\n\nColours the location and points a caret at the column.\n\nCloses #16';
 
 db.prview = {
   9: {
@@ -216,6 +223,7 @@ onGraphql('PrViewOverview', (v) => {
         labels: { nodes: e.labels.map((name) => ({ name, color: LABELS[name] ?? 'ededed' })) },
         assignees: { nodes: e.assignees.map(actor) },
         milestone: MILESTONES.find((m) => m.number === e.milestone) ?? null,
+        closingIssuesReferences: { nodes: closing(p.body) },
         reviewRequests: {
           nodes: e.requested.map((r) => ({ requestedReviewer: r.includes('/') ? { combinedSlug: r, avatarUrl: avatar(r.split('/')[0]) } : actor(r) })),
         },

@@ -1,6 +1,7 @@
 // A pull request's overview (its conversation tab), shared by server/gh/prview.ts and ui/gh/PrView.svelte.
 
 import type { GhUser, PrState } from './github.ts';
+import type { IssueRef } from './gh-issues.ts';
 
 /** A check rollup's state; null when the commit has no checks. */
 export type CheckState = 'success' | 'failure' | 'error' | 'pending' | 'expected' | null;
@@ -124,6 +125,8 @@ export interface PrOverview {
   labels: PrLabel[];
   assignees: GhUser[];
   milestone: PrMilestone | null;
+  /** The issues merging it will close: linked on GitHub, or named by "Closes #N" in the description. */
+  closes: IssueRef[];
   reviewers: PrReviewer[];
   /** GitHub's suggestions, from who touched the changed lines. */
   suggested: GhUser[];

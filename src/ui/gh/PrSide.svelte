@@ -1,13 +1,16 @@
 <script lang="ts">
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
-  // labels, milestone and size. All but the size change from a menu of the repository's choices.
+  // labels, milestone, the issues it closes and size. Reviewers, assignees, labels and milestone
+  // change from a menu of the repository's choices.
   import { Avatar, IconButton, Tag, formatDate, menu, tooltip } from 'purr';
-  import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
+  import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, InfoRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrLabel, PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
   import { type GhUser, isLive } from '../../shared/github.ts';
   import { app } from '../lib/app.svelte.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
   import PickMany, { type Choice } from './PickMany.svelte';
+  import RefIcon from './RefIcon.svelte';
+  import { refStateWords } from '../lib/gh-links.ts';
 
   interface Props {
     pr: PrOverview;
@@ -18,6 +21,9 @@
   let { pr, act, working, options }: Props = $props();
 
   const open = $derived(isLive(pr.state));
+  /** `owner/name`, to name another repository's issues in full. */
+  const here = $derived(pr.url.split('/').slice(3, 5).join('/').toLowerCase());
+  const CLOSES_TIP = 'Write “Closes #N” in the description to link an issue';
 
   const REVIEW: Record<PrReviewer['state'], { icon: GlyphComponent; color: string }> = {
     approved: { icon: CheckCircleFill, color: 'var(--success)' },
@@ -229,6 +235,27 @@
   </section>
 
   <section>
+    <header>
+      <h3>Closes</h3>
+      <button class="info muted" aria-label={CLOSES_TIP} use:tooltip={CLOSES_TIP}><InfoRegular /></button>
+    </header>
+    {#if pr.closes.length}
+      <ul>
+        {#each pr.closes as i (i.url)}
+          <li>
+            <button class="issue" onclick={() => app.openUrl(i.url)} use:tooltip={`${refStateWords(i)} · open on GitHub`}>
+              <RefIcon ref={i} />
+              <span class="name"><span class="muted">{i.repo.toLowerCase() === here ? '' : i.repo}#{i.number}</span> {i.title}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted">No issues</p>
+    {/if}
+  </section>
+
+  <section>
     <header><h3>Changes</h3></header>
     <p class="size">
       <span class="add">+{pr.additions}</span>
@@ -344,6 +371,29 @@
 
   .due {
     font-size: var(--fs-xs);
+  }
+
+  .info {
+    display: inline-flex;
+    font-size: var(--icon-sm);
+    border-radius: var(--radius-sm);
+  }
+
+  .issue {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .issue:hover .name {
+      text-decoration: underline;
+    }
   }
 
   .size {

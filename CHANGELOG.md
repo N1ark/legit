@@ -4,6 +4,7 @@
 
 - Assign people to a pull request from its overview, picked as labels are (tick several, applied together when the picker closes), or **assign yourself** when no one is. Assigning shows in the conversation.
 - A pull request's overview shows its milestone, how far along it is and when it's due; set or clear it from the side panel.
+- The overview's side panel lists the issues a pull request will close, open or closed; click one to open it on GitHub. “Closes #N” in the description links one.
 
 ## 0.24.0 — 2026-11-14
 

@@ -201,3 +201,12 @@ test('a milestone maps with its progress, and the fake GitHub sets and clears it
     `removed this from the ${second.title} milestone`,
   ]);
 });
+
+test('the issues a pull request closes map as references, and the fake GitHub links what its description names', async () => {
+  const node = { __typename: 'Issue', number: 4, title: 'T', url: 'u', state: 'CLOSED', stateReason: 'NOT_PLANNED', repository: { nameWithOwner: 'a/b' } };
+  const [ref] = toOverview(payload({ closingIssuesReferences: { nodes: [node, null] } })).closes;
+  assert.deepEqual([ref.number, ref.state, ref.notPlanned, ref.isPullRequest, ref.repo], [4, 'closed', true, false, 'a/b']);
+  assert.deepEqual(toOverview(payload()).closes, []);
+  const o = toOverview(await mockGraphql('query PrViewOverview', { owner: 'acme', name: 'widgets', number: 14 }));
+  assert.deepEqual(o.closes.map((i) => [i.number, i.state]), [[16, 'open']]);
+});
