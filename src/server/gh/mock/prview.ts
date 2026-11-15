@@ -19,6 +19,10 @@ const DESCRIPTIONS: Record<string, string> = {
   'good first issue': 'Good for newcomers',
 };
 const USERS = ['octocat', 'hubot', 'monalisa', 'defunkt', 'mojombo'];
+const MILESTONES = [
+  { number: 3, title: 'v0.4', url: 'https://github.com/acme/widgets/milestone/3', dueOn: ago(-24 * 12), progressPercentage: 62.5 },
+  { number: 4, title: 'v1.0', url: 'https://github.com/acme/widgets/milestone/4', dueOn: null, progressPercentage: 18.2 },
+];
 
 let ids = 100;
 const nextId = (prefix: string) => `${prefix}_kwDO${++ids}`;
@@ -38,6 +42,7 @@ interface Extra {
   createdAt: string;
   labels: string[];
   assignees: string[];
+  milestone?: number | null;
   /** Logins, or `org/team` for a team. */
   requested: string[];
   checks: 'SUCCESS' | 'FAILURE' | 'PENDING' | null;
@@ -84,7 +89,7 @@ db.prview = {
     ],
   },
   12: {
-    createdAt: ago(52), labels: ['enhancement', 'parser'], assignees: ['octocat'], requested: ['hubot'], checks: 'SUCCESS',
+    createdAt: ago(52), labels: ['enhancement', 'parser'], assignees: ['octocat'], milestone: 3, requested: ['hubot'], checks: 'SUCCESS',
     additions: 214, deletions: 37, changedFiles: 6, autoMerge: null,
     timeline: [
       event('ReviewRequestedEvent', 'octocat', 51, { requestedReviewer: { login: 'monalisa' } }),
@@ -210,6 +215,7 @@ onGraphql('PrViewOverview', (v) => {
         viewerCanDisableAutoMerge: !!e.autoMerge,
         labels: { nodes: e.labels.map((name) => ({ name, color: LABELS[name] ?? 'ededed' })) },
         assignees: { nodes: e.assignees.map(actor) },
+        milestone: MILESTONES.find((m) => m.number === e.milestone) ?? null,
         reviewRequests: {
           nodes: e.requested.map((r) => ({ requestedReviewer: r.includes('/') ? { combinedSlug: r, avatarUrl: avatar(r.split('/')[0]) } : actor(r) })),
         },
@@ -241,6 +247,7 @@ onGraphql('PrViewOptions', () => ({
     assignableUsers: { nodes: USERS.map(actor) },
     labels: { nodes: Object.entries(LABELS).map(([name, color]) => ({ name, color, description: DESCRIPTIONS[name] ?? null })) },
     refs: { nodes: Object.keys(db.tips).filter((t) => !t.startsWith('origin/')).map((name) => ({ name })) },
+    milestones: { nodes: MILESTONES },
   },
 }));
 
@@ -375,6 +382,18 @@ onRest('DELETE /repos/:owner/:repo/issues/:number/assignees', (params, _, body) 
     e.timeline.push(event('UnassignedEvent', db.viewer, 0, { assignee: { login } }));
   }
   return { number: Number(params.number), assignees: e.assignees.map(actor) };
+});
+
+onRest('PATCH /repos/:owner/:repo/issues/:number', (params, _, body) => {
+  const e = extra(Number(params.number));
+  if (body.milestone !== undefined && body.milestone !== e.milestone) {
+    const title = (n: number | null | undefined) => MILESTONES.find((m) => m.number === n)?.title;
+    if (body.milestone !== null && !title(body.milestone)) throw new GithubError('GitHub: Validation Failed', 422);
+    if (e.milestone) e.timeline.push(event('DemilestonedEvent', db.viewer, 0, { milestoneTitle: title(e.milestone) }));
+    if (body.milestone) e.timeline.push(event('MilestonedEvent', db.viewer, 0, { milestoneTitle: title(body.milestone) }));
+    e.milestone = body.milestone;
+  }
+  return { number: Number(params.number) };
 });
 
 onRest('POST /repos/:owner/:repo/issues/:number/labels', (params, _, body) => {

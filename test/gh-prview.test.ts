@@ -178,3 +178,26 @@ test('the fake GitHub: assignees come and go, each with an event', async () => {
   const events = o.timeline.flatMap((t) => (t.kind === 'event' && t.type.endsWith('assigned') ? [eventText(t)] : []));
   assert.deepEqual(events, ['self-assigned this', 'assigned hubot', 'unassigned hubot']);
 });
+
+test('a milestone maps with its progress, and the fake GitHub sets and clears it with events', async () => {
+  const m = { number: 2, title: 'v1', url: 'u', dueOn: null, progressPercentage: 50 };
+  assert.deepEqual(toOverview(payload({ milestone: m })).milestone, { number: 2, title: 'v1', url: 'u', dueOn: null, progress: 50 });
+  assert.equal(toOverview(payload({ milestone: null })).milestone, null);
+  const v = { owner: 'acme', name: 'widgets', number: 13 };
+  const options = (await mockGraphql('query PrViewOptions', v)) as any;
+  const [first, second] = options.repository.milestones.nodes;
+  await mockRest('PATCH', '/repos/acme/widgets/issues/13', { milestone: first.number });
+  await mockRest('PATCH', '/repos/acme/widgets/issues/13', { milestone: second.number });
+  assert.equal(toOverview(await mockGraphql('query PrViewOverview', v)).milestone?.title, second.title);
+  await mockRest('PATCH', '/repos/acme/widgets/issues/13', { milestone: null });
+  await assert.rejects(mockRest('PATCH', '/repos/acme/widgets/issues/13', { milestone: 999 }), /Validation Failed/);
+  const o = toOverview(await mockGraphql('query PrViewOverview', v));
+  assert.equal(o.milestone, null);
+  const events = o.timeline.flatMap((t) => (t.kind === 'event' && t.type.endsWith('milestoned') ? [eventText(t)] : []));
+  assert.deepEqual(events, [
+    `added this to the ${first.title} milestone`,
+    `removed this from the ${first.title} milestone`,
+    `added this to the ${second.title} milestone`,
+    `removed this from the ${second.title} milestone`,
+  ]);
+});

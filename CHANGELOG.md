@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Assign people to a pull request from its overview, picked as labels are (tick several, applied together when the picker closes), or **assign yourself** when no one is. Assigning shows in the conversation.
+- A pull request's overview shows its milestone, how far along it is and when it's due; set or clear it from the side panel.
 
 ## 0.24.0 — 2026-11-14
 

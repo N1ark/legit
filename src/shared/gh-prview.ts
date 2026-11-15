@@ -18,6 +18,16 @@ export interface PrLabel {
   description?: string | null;
 }
 
+export interface PrMilestone {
+  number: number;
+  title: string;
+  url: string | null;
+  /** ISO time. */
+  dueOn: string | null;
+  /** How much of it is closed, 0 to 100. */
+  progress: number | null;
+}
+
 /** Someone asked to review, or who did: their latest review, else `requested`. */
 export interface PrReviewer {
   /** A user's login, or a team's `org/slug`. */
@@ -68,12 +78,13 @@ export interface PrPushed extends Item {
 
 export type PrEventType =
   | 'merged' | 'closed' | 'reopened' | 'ready' | 'draft' | 'force-pushed' | 'review-requested' | 'review-request-removed'
-  | 'labeled' | 'unlabeled' | 'base-changed' | 'renamed' | 'head-deleted' | 'assigned' | 'unassigned';
+  | 'labeled' | 'unlabeled' | 'base-changed' | 'renamed' | 'head-deleted' | 'assigned' | 'unassigned'
+  | 'milestoned' | 'demilestoned';
 
 export interface PrEvent extends Item {
   kind: 'event';
   type: PrEventType;
-  /** A reviewer or assignee, a label's name, a new base or title, a commit's short SHA, depending on `type`. */
+  /** A reviewer or assignee, a label's or milestone's name, a new base or title, a commit's short SHA, depending on `type`. */
   subject?: string;
   /** What it was before: a force push's old tip, the old base or title. */
   before?: string;
@@ -112,6 +123,7 @@ export interface PrOverview {
   mine: boolean;
   labels: PrLabel[];
   assignees: GhUser[];
+  milestone: PrMilestone | null;
   reviewers: PrReviewer[];
   /** GitHub's suggestions, from who touched the changed lines. */
   suggested: GhUser[];
@@ -134,9 +146,11 @@ export interface PrOverview {
   timeline: PrItem[];
 }
 
-/** What the pickers offer: who can review, the repository's labels and branches. */
+/** What the pickers offer: who can review or be assigned, the repository's labels, branches and open milestones. */
 export interface PrOptions {
   users: GhUser[];
   labels: PrLabel[];
   branches: string[];
+  /** Soonest due first. */
+  milestones: PrMilestone[];
 }

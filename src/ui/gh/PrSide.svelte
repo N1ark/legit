@@ -1,10 +1,11 @@
 <script lang="ts">
   // Beside a pull request's conversation: its reviewers (with their latest review), assignees,
-  // labels and size. Reviewers, assignees and labels change from a menu of the repository's choices.
-  import { Avatar, IconButton, Tag, tooltip } from 'purr';
+  // labels, milestone and size. All but the size change from a menu of the repository's choices.
+  import { Avatar, IconButton, Tag, formatDate, menu, tooltip } from 'purr';
   import { ChatCircleFill, CheckCircleFill, CircleFill, CircleRegular, GearRegular, MinusCircleFill, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrLabel, PrOptions, PrOverview, PrReviewer } from '../../shared/gh-prview.ts';
   import { type GhUser, isLive } from '../../shared/github.ts';
+  import { app } from '../lib/app.svelte.ts';
   import { REVIEW_LABEL, ghAvatar } from '../lib/gh-prview.ts';
   import PickMany, { type Choice } from './PickMany.svelte';
 
@@ -92,6 +93,23 @@
       chosen: now,
       apply: (keys) => setAssignees(now, keys.slice(0, 10), all),
     };
+  }
+
+  async function pickMilestone(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
+    const anchor = e.currentTarget;
+    const all = (await options())?.milestones;
+    if (!all) return;
+    const now = pr.milestone?.number ?? null;
+    const set = (milestone: number | null) => void (milestone !== now && act('prviewMilestone', { milestone }));
+    menu.showFor(
+      anchor,
+      [
+        ...all.map((m) => ({ label: m.title, note: m.dueOn ? `Due by ${formatDate(m.dueOn)}` : undefined, checked: m.number === now, run: () => set(m.number) })),
+        ...(all.length ? ['separator' as const] : []),
+        { label: all.length ? 'No milestone' : 'No open milestones', disabled: now === null, checked: !all.length ? undefined : now === null, run: () => set(null) },
+      ],
+      'Set milestone',
+    );
   }
 
   async function pickLabels(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
@@ -184,6 +202,33 @@
   </section>
 
   <section>
+    <header>
+      <h3>Milestone</h3>
+      {#if pr.canUpdate}
+        <IconButton label="Set milestone" size="sm" disabled={working} onclick={pickMilestone}><GearRegular /></IconButton>
+      {/if}
+    </header>
+    {#if pr.milestone}
+      {@const m = pr.milestone}
+      <div class="milestone">
+        {#if m.url}
+          <button class="btn btn--link title" onclick={() => m.url && app.openUrl(m.url)} use:tooltip={'Open on GitHub'}>{m.title}</button>
+        {:else}
+          <span class="title">{m.title}</span>
+        {/if}
+        {#if m.progress !== null}
+          <span class="bar" role="progressbar" aria-label="{Math.round(m.progress)}% complete" aria-valuenow={Math.round(m.progress)} aria-valuemin={0} aria-valuemax={100}>
+            <span style:width="{m.progress}%"></span>
+          </span>
+        {/if}
+        {#if m.dueOn}<span class="muted due">Due by {formatDate(m.dueOn)}</span>{/if}
+      </div>
+    {:else}
+      <p class="muted">None</p>
+    {/if}
+  </section>
+
+  <section>
     <header><h3>Changes</h3></header>
     <p class="size">
       <span class="add">+{pr.additions}</span>
@@ -265,6 +310,40 @@
 
   p {
     margin: 0;
+  }
+
+  .milestone {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-2);
+    min-width: 0;
+  }
+
+  .milestone .title {
+    align-self: flex-start;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .bar {
+    display: block;
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: var(--bg3);
+    overflow: hidden;
+  }
+
+  .bar > span {
+    display: block;
+    height: 100%;
+    background: var(--success);
+  }
+
+  .due {
+    font-size: var(--fs-xs);
   }
 
   .size {

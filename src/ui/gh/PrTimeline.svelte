@@ -2,7 +2,7 @@
   // A pull request's timeline: comments (the viewer's own editable), reviews with their state
   // and words, pushes, and everything else as one-line events.
   import { Avatar, Button, ConfirmButton, IconButton, Kbd, Tag, TextArea, formatFull, formatRelative, matches, tooltip } from 'purr';
-  import { ArrowsClockwiseRegular, ChatCircleFill, CheckCircleFill, EyeRegular, GitBranchRegular, GitCommitRegular, GitMergeBold, GitPullRequestClosedBold, GitPullRequestDraftRegular, GitPullRequestRegular, PencilSimpleRegular, TagRegular, TextTRegular, TrashRegular, UserMinusRegular, UserPlusRegular, XCircleFill, type GlyphComponent } from 'purr/glyphs';
+  import { ArrowsClockwiseRegular, ChatCircleFill, CheckCircleFill, EyeRegular, FlagRegular, GitBranchRegular, GitCommitRegular, GitMergeBold, GitPullRequestClosedBold, GitPullRequestDraftRegular, GitPullRequestRegular, PencilSimpleRegular, TagRegular, TextTRegular, TrashRegular, UserMinusRegular, UserPlusRegular, XCircleFill, type GlyphComponent } from 'purr/glyphs';
   import type { PrComment, PrEventType, PrOverview, ReviewState } from '../../shared/gh-prview.ts';
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
@@ -33,6 +33,8 @@
     'head-deleted': GitBranchRegular,
     assigned: UserPlusRegular,
     unassigned: UserMinusRegular,
+    milestoned: FlagRegular,
+    demilestoned: FlagRegular,
   };
 
   const REVIEW: Record<ReviewState, { icon: GlyphComponent; color: string; text: string }> = {
