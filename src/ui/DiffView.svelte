@@ -347,11 +347,12 @@
     foldViewed(i, on);
     if (!(await track?.setViewed(path, on)) && alive && files[i]?.path === path) foldViewed(i, !on);
   }
-  // Files marked viewed start folded, as on GitHub, once the marks are in (unless the view this one replaces said otherwise).
+  // In the pull request's whole diff, files marked viewed start folded, as on GitHub, once the marks are in (unless the view
+  // this one replaces said otherwise). One commit shows only part of a file's change, so there they stay open.
   let foldedViewed = false;
   $effect(() => {
     const t = track;
-    if (!t?.viewable || foldedViewed) return;
+    if (!t?.viewable || !t.whole || foldedViewed) return;
     foldedViewed = true;
     untrack(() =>
       files.forEach((f, i) => {
@@ -388,7 +389,8 @@
       if (i >= files.length) return;
       const v = t.viewed(files[i].path);
       if (v) setViewed(i, v !== 'VIEWED');
-      else if (t.pr && t.data) toast("Files are marked viewed on the pull request's whole diff: select all of its commits.");
+      else if (t.pr && t.data && review?.data)
+        toast(t.viewable ? `${files[i].path} isn't part of #${t.pr.number}.` : `Files are marked viewed in diffs of #${t.pr.number}'s commits, as GitHub has them.`);
     });
   });
 
@@ -1979,26 +1981,27 @@
               ondblclick={() => openFile(i)}
               >{#if f.oldPath}<span class="old">{f.oldPath}</span> <span class="muted">→</span>{' '}{/if}{f.path}</span
             >
-            {#if f.conflicted}<span use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
+            {#if f.conflicted}<span class="tg" use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
             {#if onstage && (f.unshown || mixed.has(f.path))}
               <span
+                class="tg"
                 use:tooltip={f.unshown ??
                   "Changed again after staging, so what's staged is neither version. Pick a line to stage the new version of its block, or unpick it."}
                 ><Tag color="var(--warn)" label="staged differently" /></span
               >
             {/if}
             {#if f.generated}
-              <span use:tooltip={'Collapsed by default; the README says how to change which files'}><Tag label="generated" /></span>
+              <span class="tg" use:tooltip={'Collapsed by default; the README says how to change which files'}><Tag label="generated" /></span>
             {/if}
             {#if hideWhitespace.value && onlyWhitespace(f)}
-              <span use:tooltip={'Every change here is whitespace only'}><Tag label="whitespace only" /></span>
+              <span class="tg" use:tooltip={'Every change here is whitespace only'}><Tag label="whitespace only" /></span>
             {/if}
             {#if placedThreads[i]?.elsewhere.length}
               {@const n = placedThreads[i].elsewhere.length}
               <span
-                class="away"
+                class="away tg"
                 data-away={i}
                 use:tooltip={"Review threads on this file, made on this commit, that aren't on a line of its diff: outdated, or on lines it doesn't show"}
               >
@@ -2011,7 +2014,7 @@
             {/if}
             {#if rendered[i] && (placedThreads[i]?.blocks.some((b) => !b.note) || fileBlocks[i])}
               {@const n = (placedThreads[i]?.blocks.filter((b) => !b.note).length ?? 0) + (fileBlocks[i]?.length ?? 0)}
-              <span use:tooltip={'Review threads on lines of this file show with its diff'}>
+              <span class="tg" use:tooltip={'Review threads on lines of this file show with its diff'}>
                 <Tag
                   color="var(--theme2)"
                   label="{n} {n === 1 ? 'thread' : 'threads'} in the diff"
@@ -2480,6 +2483,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Squeezed, the path gives way first (to a dozen characters), then the tags; the controls and counts never do. */
+  .fhead > :global(*) {
+    flex-shrink: 0;
+  }
+
+  .fhead > .path {
+    flex-shrink: 1000;
+    min-width: 12ch;
+  }
+
+  .fhead > :is(.tg, :global(.marks)) {
+    flex-shrink: 1;
+    min-width: 0;
   }
 
   .path .old {
@@ -3022,8 +3040,9 @@
     color: var(--warn);
   }
 
-  .away {
+  .tg {
     display: inline-flex;
+    min-width: 0;
   }
 
   .away-list {

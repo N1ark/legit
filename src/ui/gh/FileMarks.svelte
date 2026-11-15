@@ -1,7 +1,8 @@
 <script lang="ts">
   // In a file's header in a diff of the pull request: its code owners (the viewer's own marked),
-  // CI's annotations on its lines (a click goes to the first), and the Viewed box.
+  // CI's annotations on its lines (a click goes to the first), and the Viewed toggle.
   import { Tag, tooltip } from 'purr';
+  import { CheckSquareFill, SquareRegular } from 'purr/glyphs';
   import NoteIcon from './NoteIcon.svelte';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import type { DiffTrack } from '../lib/gh-files.svelte.ts';
@@ -13,7 +14,7 @@
     path: string;
     /** The file's rows, once in: annotations on lines they don't show are said so. */
     rows?: RowsLike;
-    /** Mark it viewed (true) or not, from its box. */
+    /** Mark it viewed (true) or not, from its toggle. */
     onviewed: (on: boolean) => void;
   }
   let { track, path, rows, onviewed }: Props = $props();
@@ -59,10 +60,15 @@
   {#if viewed === 'DISMISSED'}
     <span class="marks" use:tooltip={'You marked it viewed, and it changed since'}><Tag color="var(--warn)" label="Changed since viewed" /></span>
   {/if}
-  <label class="viewed" class:is-on={viewed === 'VIEWED'} use:tooltip={viewed === 'VIEWED' ? 'Marked viewed on GitHub (v)' : 'Mark viewed on GitHub, and fold it (v)'}>
-    <input type="checkbox" class="checkbox" checked={viewed === 'VIEWED'} onchange={(e) => onviewed(e.currentTarget.checked)} />
-    Viewed
-  </label>
+  {@const on = viewed === 'VIEWED'}
+  <button
+    class="btn btn--sm viewed"
+    class:is-on={on}
+    aria-pressed={on}
+    use:tooltip={on ? 'Viewed on GitHub: click to mark it not viewed, and unfold it (v)' : 'Mark viewed on GitHub, and fold it (v)'}
+    onclick={() => onviewed(!on)}
+    >{#if on}<CheckSquareFill />{:else}<SquareRegular />{/if}Viewed</button
+  >
 {/if}
 
 <style>
@@ -78,23 +84,17 @@
   }
 
   .viewed {
-    display: inline-flex;
-    align-items: center;
     gap: var(--gap-2);
-    padding: 0 var(--gap-3);
-    height: var(--btn-md);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: var(--fs-xs);
-    color: var(--muted);
-    cursor: pointer;
     flex-shrink: 0;
-    user-select: none;
   }
 
   .viewed.is-on {
     background: var(--theme-soft);
     border-color: var(--theme-mid);
     color: var(--color2);
+  }
+
+  .viewed.is-on :global(svg) {
+    color: var(--theme2);
   }
 </style>

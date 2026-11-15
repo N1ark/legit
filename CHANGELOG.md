@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Viewed** is a clear button in each file's header, in any diff of a pull request's commits (one commit too, not only its whole diff), and never squeezed out: a long path gives way first. <kbd>v</kbd> and **Mark as viewed** in the file tree's menu work there too; files viewed start folded only in the whole diff.
 - The file tree beside a pull request's diff shows which files have review threads: how many are unresolved (in colour), or a quiet tick for resolved ones only. Click the count to go to the first; a comment on the whole file of a folded file now unfolds it.
 - The purple bar beside the lines a thread is on lines up with the edge of the line numbers, and stays there as the code scrolls sideways.
 - A review thread, comment or CI annotation in the middle of added lines sits on their green (removed lines: their red), so the change still reads as one block; side by side, each side keeps its own.
