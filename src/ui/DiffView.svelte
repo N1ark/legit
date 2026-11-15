@@ -452,8 +452,10 @@
   // pairs each file's rows, drawn in two columns that scroll sideways apart. The geometry below is then in those
   // rows (v), not the FileRows' (r), which everything else keeps working in: vrow() goes from one to the other.
   const SIDE_GUTTER = 62;
-  const SIDE_MIN = 760;
-  const wantSide = $derived(sideBySide.value && !onresolve && !editing && (paneWidth || knownPaneWidth) >= SIDE_MIN);
+  /** About 22 columns of code a side: narrower, it stays one above the other, and the switch says so. */
+  const SIDE_MIN = 520;
+  const tooNarrow = $derived(sideBySide.value && !onresolve && (paneWidth || knownPaneWidth) < SIDE_MIN);
+  const wantSide = $derived(sideBySide.value && !onresolve && !editing && !tooNarrow);
   let side = $state(untrack(() => wantSide));
   const sideCache = new WeakMap<FileRows, SideBySide>();
   /** File i's rows side by side, when they show so. */
@@ -1881,13 +1883,16 @@
             <div class="stat">
               <label
                 class="ws"
-                use:tooltip={sideBySide.value && !side && !editing
-                  ? 'The diff is too narrow to show side by side, so it shows one above the other (S)'
-                  : 'Old lines on the left, new ones on the right (S)'}
+                use:tooltip={tooNarrow
+                  ? 'The diff is too narrow to show side by side, so it shows one above the other: widen the window or narrow the file tree (S)'
+                  : sideBySide.value && editing
+                    ? 'One above the other while a line is edited (S)'
+                    : 'Old lines on the left, new ones on the right (S)'}
               >
                 <Switch label="Side by side" bind:checked={sideBySide.value} />
                 Side by side
               </label>
+              {#if tooNarrow}<span class="dot narrow">too narrow here</span>{/if}
             </div>
           {/if}
         </div>
@@ -2370,6 +2375,10 @@
 
   .dot {
     position: relative;
+  }
+
+  .narrow {
+    color: var(--warn);
   }
 
   .dot::before {
