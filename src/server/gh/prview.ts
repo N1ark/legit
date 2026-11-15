@@ -19,7 +19,7 @@ const ACTOR = 'login avatarUrl';
 const EVENTS = `
   ... on IssueComment { id databaseId author { ${ACTOR} } body createdAt lastEditedAt viewerCanUpdate viewerCanDelete }
   ... on PullRequestReview { id author { ${ACTOR} } state body createdAt submittedAt comments { totalCount } }
-  ... on PullRequestCommit { id commit { oid abbreviatedOid messageHeadline committedDate author { name user { ${ACTOR} } } } }
+  ... on PullRequestCommit { id commit { oid abbreviatedOid messageHeadline committedDate author { name user { ${ACTOR} } } statusCheckRollup { state } } }
   ... on HeadRefForcePushedEvent { id actor { ${ACTOR} } createdAt beforeCommit { oid abbreviatedOid } afterCommit { oid abbreviatedOid } }
   ... on MergedEvent { id actor { ${ACTOR} } createdAt commit { abbreviatedOid } mergeRefName }
   ... on ClosedEvent { id actor { ${ACTOR} } createdAt }
@@ -119,7 +119,7 @@ export function timeline(nodes: any[]): PrItem[] {
         break;
       case 'PullRequestCommit': {
         const c = n.commit;
-        const entry = { sha: c.oid, short: c.abbreviatedOid, headline: c.messageHeadline };
+        const entry = { sha: c.oid, short: c.abbreviatedOid, headline: c.messageHeadline, checks: check(c.statusCheckRollup?.state) };
         const actor = user(c.author?.user) ?? (c.author?.name ? { login: c.author.name, avatar: '' } : null);
         const last = out.at(-1);
         if (last?.kind === 'commits' && last.actor?.login === actor?.login) last.commits.push(entry);

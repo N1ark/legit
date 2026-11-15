@@ -76,7 +76,7 @@ export interface PrReview extends Item {
 /** Commits pushed in a row, as one entry. */
 export interface PrPushed extends Item {
   kind: 'commits';
-  commits: { sha: string; short: string; headline: string }[];
+  commits: Omit<PrCommit, 'author'>[];
 }
 
 export type PrEventType =

@@ -1009,6 +1009,9 @@ export const hideWhitespace = persisted<boolean>('legit:hide-whitespace', false)
 /** Show diffs side by side, old on the left and new on the right, where they're wide enough. */
 export const sideBySide = persisted<boolean>('legit:side-by-side', false);
 
+/** Which end of a pull request's conversation comes first. */
+export const conversationOrder = persisted<'oldest' | 'newest'>('legit:conversation-order', 'oldest', (v): v is 'oldest' | 'newest' => v === 'oldest' || v === 'newest');
+
 /** Bigger files aren't highlighted ahead of being shown: the worker can't be interrupted. */
 const PREHIGHLIGHT_ROWS = 3000;
 

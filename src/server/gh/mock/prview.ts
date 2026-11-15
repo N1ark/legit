@@ -31,8 +31,8 @@ const nextId = (prefix: string) => `${prefix}_kwDO${++ids}`;
 const comment = (login: string, hours: number, body: string) => ({
   __typename: 'IssueComment', id: nextId('IC'), databaseId: ++ids, author: actor(login), body, createdAt: ago(hours), lastEditedAt: null,
 });
-const review = (login: string, hours: number, state: string, body: string, comments = 0) => ({
-  __typename: 'PullRequestReview', id: nextId('PRR'), databaseId: ++ids, author: actor(login), state, body, createdAt: ago(hours), submittedAt: ago(hours),
+const review = (login: string, hours: number, state: string, body: string, comments = 0, id = nextId('PRR')) => ({
+  __typename: 'PullRequestReview', id, databaseId: ++ids, author: actor(login), state, body, createdAt: ago(hours), submittedAt: ago(hours),
   comments: { totalCount: comments },
 });
 const event = (type: string, login: string, hours: number, more: Record<string, unknown> = {}) => ({
@@ -54,7 +54,9 @@ interface Extra {
   autoMerge: { method: string; by: string } | null;
   mergedAt?: string;
   mergedBy?: string;
-  /** Timeline nodes after the commits, oldest first. */
+  /** When each commit was pushed, in hours ago, oldest first (the last for the rest); else when it was opened. */
+  pushed?: number[];
+  /** Timeline nodes besides the commits, oldest first. */
   timeline: any[];
 }
 
@@ -98,7 +100,7 @@ db.prview = {
   },
   12: {
     createdAt: ago(52), labels: ['enhancement', 'parser'], assignees: ['octocat'], milestone: 3, requested: ['hubot'], checks: 'SUCCESS',
-    additions: 214, deletions: 37, changedFiles: 6, autoMerge: null,
+    additions: 214, deletions: 37, changedFiles: 6, autoMerge: null, pushed: [52, 33],
     timeline: [
       event('ReviewRequestedEvent', 'octocat', 51, { requestedReviewer: { login: 'monalisa' } }),
       event('ReviewRequestedEvent', 'octocat', 51, { requestedReviewer: { login: 'hubot' } }),
@@ -106,16 +108,22 @@ db.prview = {
       event('LabeledEvent', 'octocat', 51, { label: { name: 'parser', color: LABELS.parser } }),
       comment('defunkt', 30, 'Does this handle nested specs? The `dashboard.widget` fixture has three levels of `panel { … }`.'),
       comment('octocat', 28, 'Yes: blocks recurse, and I added that fixture to the tests (`parser.test.ts`).'),
-      review('monalisa', 20, 'APPROVED', 'Looks good. The tokenizer is much easier to follow than the old regex soup. 🎉'),
+      review('monalisa', 20, 'APPROVED', 'Looks good. The tokenizer is much easier to follow than the old regex soup. 🎉', 1, 'PRR_12_mona'),
       comment('hubot', 6, 'CI passed on macOS, Linux and Windows.'),
     ],
   },
   13: {
-    createdAt: ago(40), labels: ['parser'], assignees: ['octocat'], requested: [], checks: 'PENDING',
-    additions: 58, deletions: 9, changedFiles: 3, autoMerge: null,
+    createdAt: ago(76), labels: ['parser'], assignees: ['octocat'], requested: [], checks: 'PENDING',
+    additions: 58, deletions: 9, changedFiles: 3, autoMerge: null, pushed: [76, 52],
     timeline: [
+      event('LabeledEvent', 'octocat', 75.9, { label: { name: 'parser', color: LABELS.parser } }),
+      review('hubot', 70, 'COMMENTED', 'A first look: the line numbers are a big help already.', 1, 'PRR_13_first'),
+      review('monalisa', 68, 'COMMENTED', '', 1, 'PRR_13_loop'),
+      comment('octocat', 60, 'Thanks both! The `ParseError` change is in; columns next.'),
+      review('hubot', 50, 'COMMENTED', '', 1, 'PRR_13_column'),
       event('ConvertToDraftEvent', 'octocat', 39),
-      review('hubot', 26, 'CHANGES_REQUESTED', 'Line numbers are off by one for files with CRLF line endings, see the two comments.', 2),
+      review('monalisa', 26, 'COMMENTED', 'A couple of things in the parser.', 2, 'PRR_13_parser'),
+      review('hubot', 25, 'CHANGES_REQUESTED', 'Line numbers are off by one for files with CRLF line endings, and the props loop needs a guard.', 2, 'PRR_13_crlf'),
       event('HeadRefForcePushedEvent', 'octocat', 8, { beforeCommit: { abbreviatedOid: 'a71c0de' }, afterCommit: null }),
       comment('octocat', 7.5, "Fixed CRLF. Still working on columns for tabs, so it stays a draft for now."),
     ],
@@ -156,8 +164,9 @@ function commits(p: any, e: Extra) {
   const out = db.gitDir && base && head ? local('log', '--reverse', format, `${base}..${head}`) : remoteGit('log', '--reverse', format, `refs/heads/${p.baseRefName}..refs/pull/${p.number}/head`);
   let rows = out.split('\n').filter(Boolean).map((l) => l.split('\x1f'));
   if (!rows.length) rows = [['3f2a9c1'.padEnd(40, '0'), '3f2a9c1', p.title, p.author.login]];
+  const at = (i: number) => (e.pushed?.length ? ago(e.pushed[Math.min(i, e.pushed.length - 1)]) : e.createdAt);
   return rows.map(([oid, short, headline, name], i) => ({
-    oid, abbreviatedOid: short.slice(0, 7), messageHeadline: headline, committedDate: e.createdAt,
+    oid, abbreviatedOid: short.slice(0, 7), messageHeadline: headline, committedDate: at(i),
     author: { name, user: USERS.includes(name) ? actor(name) : p.author },
     statusCheckRollup: e.checks ? { state: i === rows.length - 1 ? e.checks : 'SUCCESS' } : null,
   }));
@@ -243,6 +252,7 @@ onGraphql('PrViewOverview', (v) => {
         autoMergeRequest: e.autoMerge ? { mergeMethod: e.autoMerge.method, enabledBy: { login: e.autoMerge.by } } : null,
         commits: { totalCount: list.length, nodes: list.map((commit) => ({ commit })) },
         timelineItems: {
+          // As GitHub lists them: in the order they happened.
           nodes: [
             ...list.map((commit) => ({ __typename: 'PullRequestCommit', id: `PRC_${commit.oid}`, commit })),
             ...e.timeline.map((t) =>
@@ -250,12 +260,14 @@ onGraphql('PrViewOverview', (v) => {
               : t.__typename === 'HeadRefForcePushedEvent' ? { ...t, afterCommit: t.afterCommit ?? { abbreviatedOid: list.at(-1)?.abbreviatedOid } }
               : t,
             ),
-          ].slice(-100),
+          ].sort((a, b) => when(a) - when(b)).slice(-100),
         },
       },
     },
   };
 });
+
+const when = (n: any) => Date.parse(n.commit?.committedDate ?? n.createdAt) || 0;
 
 const count = (pending: any) => (Array.isArray(pending.comments) ? pending.comments.length : Number(pending.comments) || 0);
 
@@ -295,21 +307,22 @@ onGraphql('PrViewNoAutoMerge', (v) => {
   return { disablePullRequestAutoMerge: { clientMutationId: null } };
 });
 
-function addReview(number: number, event: string, body: string, comments: number) {
+function addReview(number: number, event: string, body: string, comments: number, id?: string) {
   const p = pull(number);
   if (event !== 'COMMENT' && p.author?.login === db.viewer) {
     throw new GithubError(`GitHub: Can not ${event === 'APPROVE' ? 'approve' : 'request changes on'} your own pull request`, 422);
   }
   const state = event === 'APPROVE' ? 'APPROVED' : event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'COMMENTED';
   const e = extra(number);
-  e.timeline.push(review(db.viewer, 0, state, body, comments));
+  e.timeline.push(review(db.viewer, 0, state, body, comments, id));
   e.requested = e.requested.filter((r) => r !== db.viewer);
 }
 
 onGraphql('PrViewSubmitReview', (v) => {
   const number = Number(Object.keys(db.pending).find((k) => db.pending[k]?.id === v.id));
   if (!number) throw new GithubError('GitHub: Could not resolve to a PullRequestReview.', 404);
-  addReview(number, v.event, v.body ?? '', count(db.pending[number]));
+  // Submitted, it keeps its id: its comments are the review's.
+  addReview(number, v.event, v.body ?? '', count(db.pending[number]), v.id);
   delete db.pending[number];
   return { submitPullRequestReview: { clientMutationId: null } };
 });

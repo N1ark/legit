@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.
+
 ## 0.25.0 — 2026-11-15
 
 - In a pull request's whole diff (all its commits selected), each file has **Viewed**, kept on GitHub as its own box is: ticking it folds the file, unticking unfolds it, and files you've viewed start folded. <kbd>v</kbd> ticks the file at the top of the diff; right-click a file (or its row in the file tree) for **Mark as viewed**. The tree ticks viewed files and counts them (*3 of 8 files viewed*); a file changed since you viewed it says **Changed since viewed**.

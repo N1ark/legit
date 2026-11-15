@@ -1,6 +1,6 @@
 <script lang="ts">
-  // A pull request in place of a commit, as GitHub's Conversation tab: its description, commits,
-  // timeline and merge box, with who reviews it and its labels beside them. One query loads it
+  // A pull request in place of a commit, as GitHub's Conversation tab: its description and changes,
+  // then the conversation with the merge box, with who reviews it and its labels beside them. One query loads it
   // all (again on each refresh and on focus); every change answers with the overview as it now is.
   // Opened again within a minute, it shows the overview it had at once, while it loads again.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
@@ -298,34 +298,38 @@
 
         <ReviewThreads number={pr.number} />
 
-        <PrTimeline {pr} {act} {working} />
-
-        {#if pr.state !== 'closed' || pr.canUpdate}
-          <PrMergeBox {pr} {act} {working} />
-        {/if}
-
-        <section class="card compose" aria-label="Add a comment">
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="card-body" onkeydown={onCommentKey}>
-            <TextArea bind:value={comment} rows={3} placeholder="Comment…" aria-label="Comment" />
-            <div class="actions end">
-              {#if pr.canUpdate && pr.state === 'closed'}
-                <Button onclick={() => setOpen(true)} disabled={working}>Reopen</Button>
-              {:else if pr.canUpdate && pr.state !== 'merged'}
-                <Button onclick={() => setOpen(false)} disabled={working}>
-                  <GitPullRequestClosedRegular /> {comment.trim() ? 'Close with comment' : 'Close'}
-                </Button>
-              {/if}
-              <Button variant="primary" onclick={send} disabled={!comment.trim() || working}>Comment <Kbd hint="⌘↩" /></Button>
-            </div>
-          </div>
-        </section>
+        <PrTimeline {pr} {act} {working} {composer} />
       </div>
 
       <PrSide {pr} {act} {working} {options} />
     </div>
   {/if}
 </div>
+
+{#snippet composer()}
+  {#if pr}
+    {#if pr.state !== 'closed' || pr.canUpdate}
+      <PrMergeBox {pr} {act} {working} />
+    {/if}
+
+    <section class="card compose" aria-label="Add a comment">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="card-body" onkeydown={onCommentKey}>
+        <TextArea bind:value={comment} rows={3} placeholder="Comment…" aria-label="Comment" />
+        <div class="actions end">
+          {#if pr.canUpdate && pr.state === 'closed'}
+            <Button onclick={() => setOpen(true)} disabled={working}>Reopen</Button>
+          {:else if pr.canUpdate && pr.state !== 'merged'}
+            <Button onclick={() => setOpen(false)} disabled={working}>
+              <GitPullRequestClosedRegular /> {comment.trim() ? 'Close with comment' : 'Close'}
+            </Button>
+          {/if}
+          <Button variant="primary" onclick={send} disabled={!comment.trim() || working}>Comment <Kbd hint="⌘↩" /></Button>
+        </div>
+      </div>
+    </section>
+  {/if}
+{/snippet}
 
 <style>
   .view {
