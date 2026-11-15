@@ -1,11 +1,12 @@
 <script lang="ts">
   // The header's pull requests button (⇧P), with how many ask for your review: opens the inbox.
-  // The lists load again with each GitHub refresh.
+  // Also hosts what checking one out asks. The lists load again with each GitHub refresh.
   import { Badge, IconButton } from 'purr';
   import { GitPullRequestRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import { inbox } from '../lib/gh-inbox.svelte.ts';
   import { gh } from '../lib/github.svelte.ts';
+  import PrCheckoutDialog from './PrCheckoutDialog.svelte';
   import PrInbox from './PrInbox.svelte';
 
   $effect(() => {
@@ -29,6 +30,7 @@
 {#if inbox.open}
   <PrInbox onclose={() => (inbox.open = false)} />
 {/if}
+<PrCheckoutDialog />
 
 <style>
   .prs {

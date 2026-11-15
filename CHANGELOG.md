@@ -3,6 +3,7 @@
 ## Unreleased
 
 - The repository's pull requests, in GitHub's lists: **Review requested** (from you, or a team you're on), **Yours**, **Assigned** and **All open**, each with its author, head and base, review decision, checks and last update. Open it with <kbd>⇧P</kbd>, the pull requests button in the header (which counts the reviews waiting for you) or **Pull requests…** in the GitHub menu; type to filter, <kbd>⇥</kbd> for the next list, <kbd>↩</kbd> to open one's overview. `#123`, `123` or a pull request's URL opens any one, closed or merged too.
+- **Check out** in a pull request's overview (or <kbd>⌘↩</kbd> in the list) fetches it, a fork's too, and switches to its branch, made or fast-forwarded, tracking the head branch when it's on a remote you have. A branch of yours that has diverged from it is never overwritten: it asks whether to reset it (its commits kept in Backups) or check out on another branch. **Review in a worktree** (<kbd>⌥↩</kbd>) does the same in a new worktree next to the repository and shows it, leaving your checkout as it is.
 
 ## 0.24.0 — 2026-11-14
 

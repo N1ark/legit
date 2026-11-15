@@ -1,5 +1,6 @@
-// Fake pull request lists (the inbox's searches, and one by number), with a few more pull requests
-// for them: a fork's, someone else's assigned to the viewer, a closed one.
+// Fake pull request lists (the inbox's searches, one by number) and checkout lookups, with a few more
+// pull requests for them: a fork's, someone else's assigned to the viewer, a closed one. Their heads
+// are in the demo's remote as refs/pull/N/head (scripts/gh-demo.ts).
 
 import { db, onGraphql } from './registry.ts';
 import { prNode } from './pulls.ts';
@@ -102,3 +103,15 @@ onGraphql('PrInbox', (v) => ({
 const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
 
 onGraphql('PrLookup', (v) => ({ viewer: { login: db.viewer }, repository: { pullRequest: pull(v.number) ? inboxNode(pull(v.number)) : null } }));
+
+onGraphql('PrCheckout', (v) => {
+  const p = pull(v.number);
+  return {
+    repository: {
+      pullRequest: p && {
+        number: p.number, state: p.state, isDraft: p.isDraft, headRefName: p.headRefName,
+        headRepository: p.headRepository ?? { nameWithOwner: 'acme/widgets' }, headRepositoryOwner: p.headRepositoryOwner ?? { login: 'acme' },
+      },
+    },
+  };
+});

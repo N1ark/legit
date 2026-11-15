@@ -1,12 +1,13 @@
 <script lang="ts">
   // The repository's pull requests (⇧P), in GitHub's lists: review requested, yours, assigned to
-  // you, all open. Type to filter; ↩ opens one's overview. `#123`, `123` or its URL opens any one,
-  // closed or merged too.
-  import { Avatar, CommandPalette, Highlight, Kbd, Segmented, formatFull, formatRelative, rank, tooltip, type PaletteItem, type RowState } from 'purr';
-  import { ArrowSquareOutRegular, ChatCircleRegular, MagnifyingGlassRegular } from 'purr/glyphs';
+  // you, all open. Type to filter; ↩ opens one's overview, ⌘↩ checks it out, ⌥↩ reviews it in a
+  // worktree. `#123`, `123` or its URL opens any one, closed or merged too.
+  import { Avatar, CommandPalette, Highlight, IconButton, Kbd, Segmented, formatFull, formatRelative, matches, rank, tooltip, type PaletteItem, type RowState } from 'purr';
+  import { ArrowSquareOutRegular, ChatCircleRegular, FolderSimplePlusRegular, GitBranchRegular, MagnifyingGlassRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
   import type { InboxPr } from '../../shared/gh-inbox.ts';
   import { app } from '../lib/app.svelte.ts';
+  import { checkoutPr, checkouts } from '../lib/gh-checkout.svelte.ts';
   import { LISTS, inboxList, parsePrRef } from '../lib/gh-inbox.ts';
   import { inbox } from '../lib/gh-inbox.svelte.ts';
   import { checksLabel } from '../lib/gh-prview.ts';
@@ -61,6 +62,21 @@
     return rank(rows, q, { keys: [(i) => i.label, (i) => i.detail ?? '', (i) => i.keywords?.join(' ') ?? ''], limit: 200 });
   }
 
+  function choose(item: Row, e: KeyboardEvent | MouseEvent) {
+    const n = item.pr?.number;
+    const key = 'key' in e ? e : null;
+    if (n && key && matches('⌘↩', key)) checkoutPr(n);
+    else if (n && key && matches('⌥↩', key)) checkoutPr(n, true);
+    else item.run?.(e);
+  }
+
+  /** A row's button: the palette closes first, as choosing a row does. */
+  function action(e: MouseEvent, run: () => unknown) {
+    e.stopPropagation();
+    onclose();
+    run();
+  }
+
   // ⇥ and ⇧⇥ in the field walk the lists.
   function tabs(node: HTMLElement) {
     const field = node.parentElement?.querySelector('input');
@@ -101,6 +117,7 @@
   {onclose}
   bind:query
   {search}
+  onchoose={choose}
   label="Pull requests"
   placeholder="Filter, or #123 to open any…"
   emptyText={emptyText}
@@ -145,6 +162,14 @@
             <CheckIcon state={p.checks === 'error' ? 'failure' : p.checks === 'expected' ? 'pending' : p.checks} />
           </span>
         {/if}
+        <span class="actions" class:shown={state.active}>
+          <IconButton label="Check out" shortcut="⌘↩" size="sm" disabled={checkouts.fetching !== null} onclick={(e) => action(e, () => checkoutPr(p.number))}>
+            <GitBranchRegular />
+          </IconButton>
+          <IconButton label="Review in a worktree" shortcut="⌥↩" size="sm" disabled={checkouts.fetching !== null} onclick={(e) => action(e, () => checkoutPr(p.number, true))}>
+            <FolderSimplePlusRegular />
+          </IconButton>
+        </span>
       </span>
     {:else}
       <span class="state muted">{#if item.icon}<item.icon />{:else}<MagnifyingGlassRegular />{/if}</span>
@@ -170,6 +195,8 @@
   {/snippet}
   {#snippet footer()}
     <span><Kbd hint="↩" /> open</span>
+    <span><Kbd hint="⌘↩" /> check out</span>
+    <span><Kbd hint="⌥↩" /> review in a worktree</span>
     <span><Kbd hint="⇥" /> next list</span>
   {/snippet}
 </CommandPalette>
@@ -255,5 +282,22 @@
   .checks {
     display: inline-flex;
     font-size: var(--icon-md);
+  }
+
+  /* Shown on the cursor's row (and on hover), so the others have the room. */
+  .actions {
+    display: flex;
+    gap: var(--gap-1);
+    opacity: 0;
+  }
+
+  .actions.shown {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .actions {
+      opacity: 1;
+    }
   }
 </style>

@@ -44,7 +44,7 @@ const known = new Map<string, { at: number; pr: PullRequest | null }>();
 export async function prForBranch(repo: Repo, branch: string, fresh = false): Promise<PullRequest | null> {
   const r = await ghRepos(repo, branch);
   if (!r) return null;
-  const key = `${r.base}\0${r.headOwner}\0${branch}`;
+  const key = `${r.base}\0${r.headOwner}\0${r.head ?? branch}`;
   if (fresh) [prs, known].forEach((m) => m.delete(key));
   return cached(prs, key, TTL, async () => {
     const d = await graphql(
@@ -53,7 +53,7 @@ export async function prForBranch(repo: Repo, branch: string, fresh = false): Pr
           pullRequests(headRefName: $head, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }
         }
       }`,
-      { owner: r.owner, name: r.name, head: branch },
+      { owner: r.owner, name: r.name, head: r.head ?? branch },
     );
     const pr = pickPr(d.repository?.pullRequests.nodes ?? [], r.headOwner);
     known.set(key, { at: Date.now(), pr });
@@ -65,7 +65,7 @@ export async function prForBranch(repo: Repo, branch: string, fresh = false): Pr
 export async function knownPr(repo: Repo, branch: string, stale = false): Promise<PullRequest | null | undefined> {
   const r = await ghRepos(repo, branch);
   if (!r) return null;
-  const hit = known.get(`${r.base}\0${r.headOwner}\0${branch}`);
+  const hit = known.get(`${r.base}\0${r.headOwner}\0${r.head ?? branch}`);
   return hit && (stale || Date.now() - hit.at < TTL) ? hit.pr : undefined;
 }
 
