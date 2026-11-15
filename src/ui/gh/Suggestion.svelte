@@ -4,6 +4,7 @@
   // adding it to the batch committed together (see SuggestionBatch).
   import { Button } from 'purr';
   import { FileArrowDownRegular, ListPlusRegular } from 'purr/glyphs';
+  import { gh } from '../lib/github.svelte.ts';
   import { reviews } from '../lib/gh-review.svelte.ts';
   import { commentedLines } from '../lib/gh-threads.ts';
   import { tip } from '../lib/tip.ts';
@@ -26,6 +27,8 @@
   let applying = $state(false);
   const key = $derived(`${thread.id}:${comment.id}:${index}`);
   const batched = $derived(!!reviews.batch[key]);
+  // Your files are the checked-out branch's: another pull request's suggestion has nothing to apply to.
+  const elsewhere = $derived(gh.pr?.number !== number);
 
   function batch() {
     if (!before) return;
@@ -33,7 +36,7 @@
   }
 
   async function apply() {
-    if (!before) return;
+    if (!before || elsewhere) return;
     applying = true;
     await reviews.apply(thread.path, startLine, before, lines);
     applying = false;
@@ -49,9 +52,11 @@
       variant="ghost"
       onclick={apply}
       loading={applying}
-      disabled={!before}
+      disabled={!before || elsewhere}
       {@attach tip(
-        before
+        elsewhere
+          ? `Check out #${number}'s branch to apply its suggestions to your files`
+          : before
           ? `Replace ${before.length === 1 ? 'this line' : `these ${before.length} lines`} in your copy of ${thread.path}, if unchanged; it shows in your uncommitted changes`
           : "Only suggestions on the new side's lines can be applied",
       )}
