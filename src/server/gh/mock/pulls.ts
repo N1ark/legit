@@ -1,6 +1,7 @@
 // Fake pull requests, for the branches scripts/gh-demo.ts creates in acme/widgets.
 
 import { db, onGraphql } from './registry.ts';
+import { remoteSha } from './remote.ts';
 
 const user = (login: string) => ({ login, avatarUrl: `https://github.com/${login}.png` });
 
@@ -29,7 +30,7 @@ db.nextNumber = 20;
 /** A fake pull request in GraphQL's shape (the fields of PR_FIELDS, and a few more). */
 export const prNode = (p: any) => ({
   ...p,
-  headRefOid: db.tips[p.headRefName] ?? p.headRefOid,
+  headRefOid: (p.fork ? remoteSha(`refs/pull/${p.number}/head`) : db.tips[p.headRefName]) ?? p.headRefOid,
   url: `https://github.com/acme/widgets/pull/${p.number}`,
   repository: { nameWithOwner: 'acme/widgets' },
   headRepositoryOwner: p.headRepositoryOwner ?? { login: 'acme' },

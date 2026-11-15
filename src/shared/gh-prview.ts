@@ -77,6 +77,8 @@ export interface PrEvent extends Item {
   subject?: string;
   /** What it was before: a force push's old tip, the old base or title. */
   before?: string;
+  /** A force push's old and new tips, in full. */
+  pushed?: { from: string; to: string };
   label?: PrLabel;
 }
 
@@ -115,7 +117,7 @@ export interface PrOverview {
   reviewers: PrReviewer[];
   /** GitHub's suggestions, from who touched the changed lines. */
   suggested: GhUser[];
-  /** The last 100, oldest first. */
+  /** The last 100, oldest first (`prCommits` lists them all). */
   commits: PrCommit[];
   commitCount: number;
   /** The head commit's checks. */
@@ -130,6 +132,8 @@ export interface PrOverview {
   squash: { title: string; message: string };
   /** The viewer's review in progress (diff comments not yet submitted). */
   pending: { id: string; comments: number } | null;
+  /** The commit the viewer's latest submitted review was on. */
+  myReview: { sha: string; at: string | null } | null;
   /** The last 100 entries, oldest first. */
   timeline: PrItem[];
 }

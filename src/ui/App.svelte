@@ -50,6 +50,7 @@
   const SquashView = lazy(() => import('./SquashView.svelte'));
   const StashView = lazy(() => import('./StashView.svelte'));
   const PrView = lazy(() => import('./gh/PrView.svelte'));
+  const PrDiffView = lazy(() => import('./gh/PrDiffView.svelte'));
   const QuickSwitcher = lazy(() => import('./QuickSwitcher.svelte'));
   // Shown once `github` is set, after the first screen: loaded then, not with it.
   const PrChip = lazy(() => import('./gh/PrChip.svelte'));
@@ -283,6 +284,10 @@
       {#if gh.view?.kind === 'pr'}
         {#key gh.view.number}
           <PrView.component number={gh.view.number} />
+        {/key}
+      {:else if gh.view?.kind === 'prdiff'}
+        {#key gh.view}
+          <PrDiffView.component number={gh.view.number} show={gh.view.show} />
         {/key}
       {:else if app.stash}
         {#key app.stash.sha}

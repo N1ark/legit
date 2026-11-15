@@ -10,6 +10,7 @@ import { knownPr, prForBranch } from './pulls.ts';
 import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prviewGet, prviewPost } from './prview.ts';
+import { prdiffGet, prdiffPost } from './prdiff.ts';
 import { reviewGet, reviewPost } from './review.ts';
 import { type GithubStatus, type PullRequest, isLive } from '../../shared/github.ts';
 import type { GithubRepoInfo } from '../../shared/types.ts';
@@ -57,6 +58,7 @@ export const getRoutes: Record<string, GetRoute> = {
   ...checksGet,
   ...prviewGet,
   ...reviewGet,
+  ...prdiffGet,
 };
 export const postRoutes: Record<string, PostRoute> = {
   ...notificationsPost,
@@ -65,6 +67,7 @@ export const postRoutes: Record<string, PostRoute> = {
   ...checksPost,
   ...prviewPost,
   ...reviewPost,
+  ...prdiffPost,
 };
 
 if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');

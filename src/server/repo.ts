@@ -313,8 +313,8 @@ export class Repo {
   }
 
   /**
-   * A commit's diff, a stash's (`s<sha>`), a working-tree snapshot (`w<n>`, from `work()`), or what
-   * squashing some commits would make (`q…`, see `squashDiff`).
+   * A commit's diff, a stash's (`s<sha>`), a working-tree snapshot (`w<n>`, from `work()`), what
+   * squashing some commits would make (`q…`, see `squashDiff`), or between two commits (`r…`, see `rangeDiff`).
    */
   async diff(sha: string): Promise<CommitDiff> {
     if (/^w\d+$/.test(sha)) {
@@ -330,7 +330,11 @@ export class Repo {
       return cached.diff;
     }
     // `s<sha>`: a stash's changes, untracked files included. Cached while it's worked out, so it's worked out once.
-    const diff = sha.startsWith('s') ? stashDiff(this.git, sha.slice(1), sha) : sha.startsWith('q') ? this.squashDiff(sha) : commitDiff(this.git, sha);
+    const diff =
+      sha.startsWith('s') ? stashDiff(this.git, sha.slice(1), sha)
+      : sha.startsWith('q') ? this.squashDiff(sha)
+      : sha.startsWith('r') ? this.rangeDiff(sha)
+      : commitDiff(this.git, sha);
     const entry = { diff, bytes: 0 };
     this.diffs.set(sha, entry);
     diff.then(
@@ -420,6 +424,31 @@ export class Repo {
 
   private isAncestor(a: string, b: string): Promise<boolean> {
     return this.git.memo(`is-ancestor ${a} ${b}`, async () => (await this.git.run(['merge-base', '--is-ancestor', a, b], { allowFail: true })).code === 0);
+  }
+
+  /**
+   * The diff between two commits, for key `r<to>-<from>`; with `-<toBase>-<fromBase>` after them,
+   * only in the files either changes against its base (`from` was rebased into `to`: the files
+   * only the base changed in between are left out).
+   */
+  private async rangeDiff(key: string): Promise<CommitDiff> {
+    const [to, from, toBase, fromBase] = key.slice(1).split('-');
+    let paths: string[] | null = null;
+    if (toBase && fromBase) {
+      const changed = async (a: string, b: string) =>
+        (await this.git.run(['diff-tree', '-r', '-z', '--name-only', '--no-renames', a, b])).out.toString('latin1').split('\0').filter(Boolean);
+      paths = [...new Set([...(await changed(fromBase, from)), ...(await changed(toBase, to))])];
+      if (!paths.length) return parseDiff('', key);
+    }
+    // Many paths are filtered from the whole diff rather than passed to git.
+    const few = paths && paths.length <= 1000 ? paths : null;
+    const { out } = await this.git.run(
+      [...(few ? ['--literal-pathspecs'] : []), 'diff-tree', ...RENAME_ARGS, from, to, ...(few ? ['--', ...few] : [])],
+    );
+    const d = parseDiff(out.toString('latin1'), key);
+    if (!paths || few) return d;
+    const keep = new Set(paths);
+    return { ...d, files: d.files.filter((f) => keep.has(f.path) || (f.oldPath !== undefined && keep.has(f.oldPath))) };
   }
 
   /**

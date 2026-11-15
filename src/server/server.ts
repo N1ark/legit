@@ -86,8 +86,8 @@ function unchanged(req: IncomingMessage, res: ServerResponse, etag: string | und
   return true;
 }
 
-/** Diff keys (see `Repo.diff`): a commit, a stash, a working-tree snapshot, or a squash's result. */
-const KEY = String.raw`(s?[0-9a-f]{40,64}|w\d+|q[0-9a-f]{40,64}(?:[-.][0-9a-f]{40,64})*)`;
+/** Diff keys (see `Repo.diff`): a commit, a stash, a working-tree snapshot, a squash's result, or between two commits. */
+const KEY = String.raw`(s?[0-9a-f]{40,64}|w\d+|q[0-9a-f]{40,64}(?:[-.][0-9a-f]{40,64})*|r[0-9a-f]{40,64}-[0-9a-f]{40,64}(?:-[0-9a-f]{40,64}-[0-9a-f]{40,64})?)`;
 const DIFF = new RegExp(`^/api/diff/${KEY}$`);
 const DIFF_FILES = new RegExp(`^/api/diff/${KEY}/files$`);
 const DIFF_OLD = new RegExp(`^/api/diff/${KEY}/old$`);
@@ -172,7 +172,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       d,
       (rel) => /^(refs|rebase-merge|rebase-apply)(\/|$)/.test(rel),
       (name = '') => {
-        if (name.endsWith('.lock')) return;
+        // A pull request fetched to be read (gh/prdiff.ts) changes nothing shown.
+        if (name.endsWith('.lock') || /^refs[\\/]legit[\\/]pull[\\/]/.test(name)) return;
         if (relevant.test(name)) notify();
         else if (name === 'index') notifyWork(undefined);
       },
@@ -283,8 +284,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     }
     const work = /^w\d+$/.test(d.sha);
     const paths = d.files.map((f) => f.path);
-    // A squash's attributes are its newest commit's.
-    const source = work ? null : d.sha.replace(/^[sq]/, '').split(/[-.]/)[0];
+    // A squash's attributes are its newest commit's, a range's its new side's.
+    const source = work ? null : d.sha.replace(/^[sqr]/, '').split(/[-.]/)[0];
     const [generated, sizes] = await Promise.all([generatedPaths(repo.git, source, paths, settings.collapse), fileSizes(repo.git, d)]);
     const s = summarize(d, generated, syntaxes(settings.syntax, paths));
     for (const [k, size] of sizes) Object.assign(s.files[k], size);
