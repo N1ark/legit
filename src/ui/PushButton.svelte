@@ -17,6 +17,7 @@
   const info = $derived(app.repo?.push ?? null);
   const mode = $derived(
     !info ? null
+    : info.foreign ? 'foreign'
     : info.publish ? 'publish'
     : info.ahead && info.behind ? (info.rewritten ? 'rewritten' : 'diverged')
     : info.ahead ? 'push'
@@ -176,6 +177,12 @@
       <ConfirmButton confirmLabel="Click to force push" onconfirm={() => push(true)} disabled={pushDisabled} {@attach tip(pushTitle)}>
         <WarningBold /> Force push <span class="count">↑{info.ahead}</span>
       </ConfirmButton>
+    {:else if mode === 'foreign' && info.foreign}
+      <span
+        class="when"
+        {@attach tip(`From ${info.foreign.split(':')[0]}'s fork, which doesn't let maintainers push to ${info.foreign.split(':')[1]}: there's nowhere to push this branch`)}
+        >{info.foreign.split(':')[0]}'s fork</span
+      >
     {:else if mode === 'push' || mode === 'publish'}
       <Button variant="primary" onclick={() => push(false)} disabled={pushDisabled} {@attach tip(pushTitle)}>
         <CloudArrowUpRegular />

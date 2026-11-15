@@ -79,7 +79,7 @@ export async function checkoutPr(number: number, worktree = false): Promise<bool
   }
   const from = app.repo?.branch;
   let path = '';
-  const body = { number, sha: plan.sha, branch, tip, upstream, head: plan.head, reset, stash, newWorktree: worktree };
+  const body = { number, sha: plan.sha, branch, tip, upstream, addRemote: upstream ? plan.addRemote : null, head: plan.head, reset, stash, newWorktree: worktree };
   if (!(await app.op('checkoutPr', body, undefined, async (r) => (path = (r as { path?: string }).path ?? '')))) return false;
   const said = checkedOut(plan, branch) + (stash && from ? ` Your changes are stashed on ${from}.` : '');
   if (worktree && path) {

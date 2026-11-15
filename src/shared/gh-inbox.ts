@@ -55,4 +55,6 @@ export interface CheckoutPlan {
   worktree: string | null;
   /** A free name to check it out as instead, when the branch has diverged. */
   alternative: string;
+  /** A fork's remote to add for `upstream` to be on: its branch takes your pushes (maintainers may push, or it's yours). */
+  addRemote: { name: string; url: string } | null;
 }

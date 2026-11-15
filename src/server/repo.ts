@@ -1222,7 +1222,9 @@ export class Repo {
         )
       : '';
     const name = set ? remoteRef.slice('refs/heads/'.length) : branch;
-    return { remote: target, branch: name, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null };
+    // A fork's pull request (checkout.ts) whose fork takes no pushes: publishing would put it on your remote instead.
+    const foreign = set ? '' : await this.git.text(['config', '--get', `branch.${branch}.legit-head`], { allowFail: true });
+    return { remote: target, branch: name, publish: true, ahead: Number(count) || 0, behind: 0, rewritten: false, tip: null, ...(foreign ? { foreign } : {}) };
   }
 
   /**
@@ -1263,6 +1265,7 @@ export class Repo {
       const force = req.force === true || req.force === 'overwrite' || req.force === 'fetch' ? req.force : false;
       let info = await this.pushInfo(branch);
       if (!info) throw new GitError('This repository has no remote to push to.');
+      if (info.foreign) throw new GitError(`${branch} is ${info.foreign.replace(':', "'s ")}, a fork that doesn't take your pushes; nothing was pushed.`);
       if (force === 'fetch') {
         await fetchFrom(this.git, info.remote);
         info = (await this.pushInfo(branch))!;

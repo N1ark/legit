@@ -2,6 +2,7 @@
 // pull requests for them: a fork's, someone else's assigned to the viewer, a closed one. Their heads
 // are in the demo's remote as refs/pull/N/head (scripts/gh-demo.ts).
 
+import { existsSync } from 'node:fs';
 import { db, onGraphql } from './registry.ts';
 import { prNode } from './pulls.ts';
 
@@ -104,14 +105,23 @@ const pull = (n: number) => db.pulls.find((p: any) => p.number === n);
 
 onGraphql('PrLookup', (v) => ({ viewer: { login: db.viewer }, repository: { pullRequest: pull(v.number) ? inboxNode(pull(v.number)) : null } }));
 
+/** A fork's repository is the bare repo gh-demo.ts makes beside the demo (`<dir>.fork.git`). */
+const fork = (r: { nameWithOwner: string }, cross: boolean) => ({
+  ...r,
+  url: cross && db.gitDir && existsSync(`${db.gitDir}.fork.git`) ? `${db.gitDir}.fork.git` : `https://github.com/${r.nameWithOwner}`,
+  sshUrl: null,
+});
+
 onGraphql('PrCheckout', (v) => {
   const p = pull(v.number);
   return {
     repository: {
       pullRequest: p && {
-        number: p.number, state: p.state, isDraft: p.isDraft, headRefName: p.headRefName,
-        headRepository: p.headRepository ?? { nameWithOwner: 'acme/widgets' }, headRepositoryOwner: p.headRepositoryOwner ?? { login: 'acme' },
+        number: p.number, state: p.state, isDraft: p.isDraft, headRefName: p.headRefName, maintainerCanModify: !!p.maintainerCanModify,
+        headRepository: fork(p.headRepository ?? { nameWithOwner: 'acme/widgets' }, !!p.isCrossRepository),
+        headRepositoryOwner: p.headRepositoryOwner ?? { login: 'acme' },
       },
     },
+    viewer: { login: db.viewer },
   };
 });

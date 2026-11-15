@@ -87,6 +87,7 @@ if (MOCK) console.log('legit: GitHub calls go to the mock (LEGIT_GITHUB_MOCK)');
 
 /** The mock answers about the repo's branches as they are now. */
 async function mockTips(repo: Repo) {
+  db.gitDir = repo.git.root;
   const refs = await repo.git.text(['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads', 'refs/remotes/origin']);
   db.tips = Object.fromEntries(refs.split('\n').filter(Boolean).map((l) => l.split(' ')));
 }

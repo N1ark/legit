@@ -97,6 +97,8 @@ export interface PushInfo {
   rewritten: boolean;
   /** The remote branch's tip as last fetched; null when publishing. A force push overwrites exactly this. */
   tip: string | null;
+  /** A fork's pull request checked out with no remote to push to (its `owner:branch`): nothing is offered. */
+  foreign?: string;
 }
 
 export type LineKind = ' ' | '+' | '-';

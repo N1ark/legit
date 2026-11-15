@@ -10,6 +10,7 @@ const dir = resolve(process.argv[2] ?? 'gh-demo');
 const bare = `${dir}.remote.git`;
 rmSync(dir, { recursive: true, force: true });
 rmSync(bare, { recursive: true, force: true });
+rmSync(`${dir}.fork.git`, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 
 const env = { ...process.env, GIT_AUTHOR_NAME: 'Mona Octocat', GIT_AUTHOR_EMAIL: 'octocat@users.noreply.github.com' };
@@ -160,6 +161,9 @@ commit('Handle CRLF line endings when building', {
   'src/build.ts': "import { readFileSync } from 'node:fs';\n\nexport function build(path: string): string {\n  const text = readFileSync(path, 'utf8').replace(/\\r\\n/g, '\\n');\n  return text.trim();\n}\n",
 });
 git('push', '-q', 'origin', 'HEAD:refs/pull/15/head');
+// defunkt's fork, which lets maintainers push to fix-crlf.
+execFileSync('git', ['init', '-q', '--bare', `${dir}.fork.git`]);
+git('push', '-q', `${dir}.fork.git`, 'HEAD:refs/heads/fix-crlf');
 git('switch', '-q', '-c', 'try/yaml', 'main');
 commit('Read specs from YAML too', { 'src/yaml.ts': "export const isYaml = (path: string) => path.endsWith('.widget.yaml');\n" });
 git('push', '-q', 'origin', 'HEAD:refs/pull/10/head');

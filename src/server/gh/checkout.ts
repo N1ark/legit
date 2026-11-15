@@ -13,7 +13,7 @@ import { runWithProgress } from '../progress.ts';
 import type { Repo } from '../repo.ts';
 import { carry, networkEnv } from '../sync.ts';
 import { addWorktree, worktrees } from '../worktrees.ts';
-import { graphql } from './client.ts';
+import { MOCK, graphql } from './client.ts';
 import { dropPrRefs, prHeld, sweepPrRefs } from './prdiff.ts';
 import { needGhRepos } from './context.ts';
 import { isLive } from '../../shared/github.ts';
@@ -114,7 +114,7 @@ export async function planCheckout(repo: Repo, pr: PrHead, sha: string, remote: 
   const worktree = list.find((w) => w.branch === branch && !w.current && !w.missing)?.path ?? null;
   const alternative = await freeName(git, branch === fallback ? `${fallback}-2` : fallback);
   const head = `${pr.owner}:${pr.head}`;
-  return { number: pr.number, sha, branch, tip, relation, ahead, behind, head, upstream, current: current === branch, worktree, alternative };
+  return { number: pr.number, sha, branch, tip, relation, ahead, behind, head, upstream, current: current === branch, worktree, alternative, addRemote: null };
 }
 
 export interface CheckoutRequest {
@@ -124,6 +124,8 @@ export interface CheckoutRequest {
   /** The branch's tip the plan saw; null to create it. */
   tip: string | null;
   upstream?: { remote: string; branch: string } | null;
+  /** The fork's remote to add first, for `upstream` to be on (see `forkRemote`). */
+  addRemote?: { name: string; url: string } | null;
   /** `owner:branch` of the head, noted on a branch that tracks nothing (see context.ts). */
   head?: string;
   /** Reset a branch that has diverged to the pull request. */
@@ -149,6 +151,7 @@ export async function checkoutPr(repo: Repo, req: CheckoutRequest): Promise<OpRe
   if ((await git.run(['cat-file', '-e', `${sha}^{commit}`], { allowFail: true })).code !== 0) throw new GitError(`#${n}'s head isn't here any more; try again.`);
   const branch = String(req.branch ?? '');
   if (!(await validName(git, branch))) throw new GitError(`"${branch}" is not a valid branch name.`);
+  if (req.addRemote && req.upstream?.remote === req.addRemote.name) await addFork(git, req.addRemote, req.upstream.branch);
   const up = req.upstream && (await git.remotes()).names.includes(req.upstream.remote) && (await validName(git, req.upstream.branch)) ? req.upstream : null;
   const label = `check out #${n}`;
   const state = await repo.exclusive(async () => {
@@ -179,7 +182,8 @@ export async function checkoutPr(repo: Repo, req: CheckoutRequest): Promise<OpRe
     if (up && !hadUpstream) {
       await git.run(['config', `branch.${branch}.remote`, up.remote]);
       await git.run(['config', `branch.${branch}.merge`, `refs/heads/${up.branch}`]);
-    } else if (!hadUpstream && typeof req.head === 'string' && /^[\w.-]+:[^\s]+$/.test(req.head)) {
+    }
+    if (!hadUpstream && (!up || req.addRemote) && typeof req.head === 'string' && /^[\w.-]+:[^\s]+$/.test(req.head)) {
       // GitHub looks a branch's pull request up by its name: this one's is another.
       await git.run(['config', `branch.${branch}.legit-head`, req.head]);
     }
@@ -191,14 +195,35 @@ export async function checkoutPr(repo: Repo, req: CheckoutRequest): Promise<OpRe
   return { ...w, note: state.note, branch };
 }
 
+/** Add the fork's remote (unless it's there already, as that URL) and fetch its branch, for the branch to track. */
+async function addFork(git: Git, fork: { name: string; url: string }, branch: string) {
+  if (!/^[\w.-]+$/.test(fork.name) || fork.name.startsWith('-') || (!MOCK && !githubRepo(fork.url))) throw new GitError(`Bad remote ${fork.name} (${fork.url}).`);
+  if (!(await validName(git, branch))) throw new GitError(`"${branch}" is not a valid branch name.`);
+  const { names, urls } = await git.remotes();
+  if (names.includes(fork.name) && urls.get(fork.name) !== fork.url) throw new GitError(`A remote named ${fork.name} is there already, for ${urls.get(fork.name)}; try again.`);
+  if (!names.includes(fork.name)) {
+    const r = await git.run(['remote', 'add', fork.name, fork.url], { allowFail: true });
+    if (r.code !== 0) throw new GitError(`Couldn't add the remote ${fork.name}; nothing was changed.\n${r.err.trim()}`);
+  }
+  const r = await runWithProgress(git, 'fetch', fork.name, ['fetch', '--no-tags', fork.name, `+refs/heads/${branch}:refs/remotes/${fork.name}/${branch}`], {
+    allowFail: true,
+    timeout: 120_000,
+    env: await networkEnv(git),
+  });
+  if (r.code !== 0) throw new GitError(`Added the remote ${fork.name}, but couldn't fetch ${branch} from it; nothing else was changed.\n${r.err.trim()}`);
+}
+
 /** The pull request's head branch, its repository, and whether it's still open. */
 async function prHead(repo: Repo, n: number) {
   const r = await needGhRepos(repo);
   const d = await graphql(
     `query PrCheckout($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
-        pullRequest(number: $number) { number state isDraft headRefName headRepository { nameWithOwner } headRepositoryOwner { login } }
+        pullRequest(number: $number) {
+          number state isDraft headRefName maintainerCanModify headRepository { nameWithOwner url sshUrl } headRepositoryOwner { login }
+        }
       }
+      viewer { login }
     }`,
     { owner: r.owner, name: r.name, number: n },
   );
@@ -207,7 +232,24 @@ async function prHead(repo: Repo, n: number) {
   return {
     base: r.base, number: n, head: p.headRefName as string, live: isLive(prState(p)),
     repo: (p.headRepository?.nameWithOwner ?? null) as string | null, owner: (p.headRepositoryOwner?.login ?? 'ghost') as string,
+    url: (p.headRepository?.url ?? null) as string | null, sshUrl: (p.headRepository?.sshUrl ?? null) as string | null,
+    // Its branch takes pushes from you: maintainers may push to it, or it's your fork.
+    pushable: !!p.maintainerCanModify || (p.headRepositoryOwner?.login ?? '').toLowerCase() === (d.viewer?.login ?? '').toLowerCase(),
   };
+}
+
+/**
+ * The remote to add for a fork whose branch takes your pushes, so its branch can track it there: named
+ * after its owner, with the same kind of URL (SSH or HTTPS) as the base repository's remote.
+ */
+async function forkRemote(git: Git, pr: { repo: string | null; owner: string; url: string | null; sshUrl: string | null; pushable: boolean }, base: string) {
+  if (!pr.repo || !pr.pushable || !pr.url) return null;
+  const { names, urls } = await git.remotes();
+  const ssh = /^(git@|ssh:)/.test(urls.get(base) ?? '');
+  const url = ssh && pr.sshUrl ? pr.sshUrl : MOCK ? pr.url : `${pr.url.replace(/\/$/, '')}.git`;
+  let name = pr.owner.replace(/[^\w.-]/g, '-');
+  for (let k = 2; names.includes(name); k++) name = `${pr.owner}-${k}`;
+  return { name, url };
 }
 
 /** Fetch pull request `number`'s head and work out where it would go (see `planCheckout`). */
@@ -217,10 +259,11 @@ export async function checkoutPlan(repo: Repo, body: any): Promise<CheckoutPlan>
   if (!base) throw new GitError(`No remote here is ${pr.base}, where #${pr.number} is: add one to check it out.`);
   const same = pr.repo?.toLowerCase() === pr.base.toLowerCase();
   const remote = same ? base : pr.repo ? await remoteFor(repo.git, pr.repo) : null;
+  const addRemote = !same && !remote ? await forkRemote(repo.git, pr, base) : null;
   await sweepPrRefs(repo);
   const sha = await fetchPrHead(repo.git, base, pr.number, same && pr.live ? pr.head : null);
   try {
-    return await planCheckout(repo, pr, sha, remote);
+    return { ...(await planCheckout(repo, pr, sha, remote ?? addRemote?.name ?? null)), addRemote };
   } finally {
     // Its commits stay until git's garbage collection, long after the checkout that follows.
     if (!prHeld(repo, pr.number)) await dropPrRefs(repo, pr.number);

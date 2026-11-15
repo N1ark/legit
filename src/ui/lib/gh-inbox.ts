@@ -35,7 +35,7 @@ const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
 export function checkedOut(plan: CheckoutPlan, branch: string): string {
   const pr = `#${plan.number}`;
   if (branch !== plan.branch || plan.relation === 'new') {
-    const up = branch === plan.branch && plan.upstream ? `, tracking ${plan.upstream.remote}/${plan.upstream.branch}` : '';
+    const up = branch === plan.branch && plan.upstream ? `, tracking ${plan.upstream.remote}/${plan.upstream.branch}${plan.addRemote ? ` (the fork, added as the remote ${plan.addRemote.name})` : ''}` : '';
     return `${pr} is on a new branch, ${branch}${up}.`;
   }
   if (plan.relation === 'behind') return `Fast-forwarded ${branch} to ${pr} (${commits(plan.behind)}).`;
