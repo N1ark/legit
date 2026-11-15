@@ -17,6 +17,7 @@ import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { issueRepo } from './gh/context.ts';
+import { knownPr } from './gh/pulls.ts';
 import { buildMessage, parseMessage } from './message.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
@@ -397,16 +398,34 @@ export class Repo {
   }
 
   /**
-   * When `list` (consecutive commits, oldest first) merges the default branch in midway, what the
-   * diff of them all starts from so that what those merges brought isn't shown as theirs: as on
-   * GitHub, from where the branch last met the default branch. Null when nothing was merged in so.
+   * When `list` (consecutive commits, oldest first) merges its base in midway, what the diff of them
+   * all starts from so that what those merges brought isn't shown as theirs: as on GitHub, from where
+   * the branch last met its base. The base is the branch's pull request's (a stacked one's is the
+   * branch below), as last looked up, else the default branch. Null when nothing was merged in so.
    */
   private async mergedBaseSide(list: RawCommit[]): Promise<string | null> {
     if (!list.some((c) => c.parents.length > 1)) return null;
     const { branch, head } = await this.git.headState();
-    const name = (await baseBranch(this.git, branch, head))?.name;
-    const base = name ? await this.git.text(['rev-parse', '-q', '--verify', `${name}^{commit}`], { allowFail: true }) : null;
-    if (!base) return null;
+    const sha = (name: string) => this.git.text(['rev-parse', '-q', '--verify', `${name}^{commit}`], { allowFail: true });
+    const names: string[] = [];
+    const pr = branch ? await knownPr(this, branch, true).catch(() => null) : null;
+    if (pr?.base) {
+      const { names: remotes } = await this.git.remotes();
+      for (const r of ['upstream', 'origin', ...remotes]) if (remotes.includes(r)) names.push(`refs/remotes/${r}/${pr.base}`);
+      names.push(`refs/heads/${pr.base}`);
+    }
+    const fallback = (await baseBranch(this.git, branch, head))?.name;
+    if (fallback) names.push(fallback);
+    for (const name of names) {
+      const base = await sha(name);
+      const from = base ? await this.metBase(list, base) : null;
+      if (from) return from;
+    }
+    return null;
+  }
+
+  /** Where `list` last met `base`, when it merges `base` in midway (see `mergedBaseSide`); else null. */
+  private async metBase(list: RawCommit[], base: string): Promise<string | null> {
     const on = (sha: string) => this.isAncestor(sha, base);
     let from = list[0].parents[0] ?? null;
     let merged = false;
