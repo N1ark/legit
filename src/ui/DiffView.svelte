@@ -834,7 +834,7 @@
   const lead = (i: number) => fileBlocksHeight(i) + leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) =>
-    rendered[i] ? renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : leads[i] ? 0 : NOTE);
+    rendered[i] ? fileBlocksHeight(i) + renderedHeight(i) : lead(i) + (files[i].rows ? linesHeight(i) : leads[i] ? 0 : NOTE);
   /** The first file that isn't conflicted, after some that are (they come first): the rule goes above it; else -1. */
   const merged = $derived.by(() => {
     const k = files.findIndex((f) => !f.conflicted);
@@ -2162,8 +2162,8 @@
                 />
               </span>
             {/if}
-            {#if rendered[i] && (placedThreads[i]?.blocks.some((b) => !b.note) || fileBlocks[i])}
-              {@const n = (placedThreads[i]?.blocks.filter((b) => !b.note).length ?? 0) + (fileBlocks[i]?.length ?? 0)}
+            {#if rendered[i] && placedThreads[i]?.blocks.some((b) => !b.note)}
+              {@const n = placedThreads[i].blocks.filter((b) => !b.note).length}
               <span class="tg" use:tooltip={'Review threads on lines of this file show with its diff'}>
                 <Tag
                   color="var(--theme2)"
@@ -2199,7 +2199,12 @@
 
           {#if !collapsed[i] && rendered[i]}
             {@const page = renderedView(i, rows)}
-            <div class="body page" style:height="{bodyHeight(i)}px">
+            {#if fileBlocks[i]}
+              <div class="gh-top" style:height="{fileBlocksHeight(i)}px">
+                {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b, -1)}{/each}
+              </div>
+            {/if}
+            <div class="body page" style:height="{renderedHeight(i)}px">
               {#if page === undefined}
                 <div class="note status">Loading…</div>
               {:else}

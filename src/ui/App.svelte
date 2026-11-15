@@ -199,6 +199,7 @@
       { label: 'Editing a line (double-click it): save / add a line', hints: ['↩', '⇧↩'] },
       { label: 'Revert edits, clear picked changes', hints: ['Esc'] },
       { label: "Branch list: a branch's commits to cherry-pick / pick them", hints: ['→', '⌘↩'] },
+      { label: 'Pull requests (⇧P): the next list / check one out / review it in a worktree', hints: ['⇥', '⌘↩', '⌥↩'] },
     ],
   });
 

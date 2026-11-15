@@ -27,6 +27,8 @@
 - CI annotations on lines a diff doesn't show are listed from the file's header (*1 annotation off the diff*), each with **Show line N**, which opens the lines there and goes to it.
 - **Files you own** leaves the other files out of the diff too, not only the file tree (*1 of 3 files*), keeping your place.
 - Side by side, a hunk's header reads across both halves: each side's lines, and the function they're in.
+- Comments on a whole file show above it when it's shown rendered (markdown, CSV, JSON) too.
+- The shortcuts list (<kbd>?</kbd>) has the pull request list's keys: <kbd>⇥</kbd> for the next list, <kbd>⌘↩</kbd> to check one out, <kbd>⌥↩</kbd> to review it in a worktree.
 
 ## 0.25.0 — 2026-11-15
 
