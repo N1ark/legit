@@ -161,11 +161,18 @@ async function prCommits(n: number): Promise<string[]> {
   return out ? out.split('\n') : [];
 }
 
-/** GitHub's `diff_hunk`: the hunk of `base...commit` holding the line, up to it; null when it isn't in the diff. */
+/**
+ * GitHub's `diff_hunk`: the hunk of `base...commit` holding the line, up to it, its context grown to
+ * reach a line expanded beyond the diff's three; null when the file isn't in the diff or hasn't the line.
+ */
 async function hunkFor(base: string, commit: string, path: string, side: 'LEFT' | 'RIGHT', line: number): Promise<string | null> {
+  return (await hunkIn('-U3', base, commit, path, side, line)) ?? hunkIn('--unified=1000000', base, commit, path, side, line);
+}
+
+async function hunkIn(context: string, base: string, commit: string, path: string, side: 'LEFT' | 'RIGHT', line: number): Promise<string | null> {
   const g = git();
   if (!g) return null;
-  const diff = await g.text(['diff', '-U3', '--no-color', '--no-ext-diff', `${base}...${commit}`, '--', path], { allowFail: true });
+  const diff = await g.text(['diff', context, '--no-color', '--no-ext-diff', `${base}...${commit}`, '--', path], { allowFail: true });
   let hunk: string[] | null = null;
   let o = 0;
   let n = 0;
@@ -282,7 +289,7 @@ async function newThread(pr: number, commit: string, c: NewThread, review?: stri
   if (c.file) {
     if (!(await changes(base, commit, c.path))) throw new GithubError('GitHub: Validation Failed: path is not part of the diff', 422);
   } else if (!c.line || !(await hunkFor(base, commit, c.path, side, c.line)) || (c.startLine && !(await hunkFor(base, commit, c.path, c.startSide ?? side, c.startLine)))) {
-    throw new GithubError('GitHub: Validation Failed: pull_request_review_thread.line must be part of the diff', 422);
+    throw new GithubError('GitHub: Validation Failed: pull_request_review_thread.line could not be resolved', 422);
   }
   const t: MockThread = {
     id: `PRRT_${next++}`, pr, path: c.path, side, line: c.file ? null : (c.line ?? null), startLine: c.file ? undefined : (c.startLine ?? undefined),

@@ -170,10 +170,10 @@ test("where a new comment goes, by the pull request's diff on GitHub", () => {
   assert.deepEqual(commentTarget(DIFF, 2, 2, { base: false }, pr), { side: 'LEFT', line: 9 });
   assert.deepEqual(commentTarget(DIFF, 2, 3, { base: false }, pr), { side: 'RIGHT', line: 11, startLine: 9, startSide: 'LEFT' });
   assert.deepEqual(commentTarget(DIFF, 1, 1, { base: false }, pr), { side: 'RIGHT', line: 10 });
-  // Further from a change than GitHub's three lines of context; or in two of its hunks.
-  assert.match((commentTarget(DIFF, 1, 1, { base: true }, { hunks: [{ left: [11, 12], right: [11, 13] }], moved: [] }) as { error: string }).error, /whole file/);
+  // Further from a change than GitHub's three lines of context (an expanded line), or across two of its hunks: GitHub takes them.
+  assert.deepEqual(commentTarget(DIFF, 1, 1, { base: true }, { hunks: [{ left: [11, 12], right: [11, 13] }], moved: [] }), { side: 'RIGHT', line: 10 });
   const two: PrLines = { hunks: [{ left: [10, 10], right: [10, 10] }, { left: [11, 12], right: [11, 13] }], moved: [] };
-  assert.match((commentTarget(DIFF, 1, 3, { base: true }, two) as { error: string }).error, /one block/);
+  assert.deepEqual(commentTarget(DIFF, 1, 3, { base: true }, two), { side: 'RIGHT', line: 11, startLine: 10, startSide: 'RIGHT' });
   // A removed line an earlier commit added isn't in the base; a file the pull request doesn't change takes none.
   assert.match((commentTarget(DIFF, 2, 2, { base: false }, { hunks: pr.hunks, moved: [[10, 0, 11, 1]] }) as { error: string }).error, /base/);
   assert.match((commentTarget(DIFF, 3, 3, { base: false }, { hunks: [], moved: [] }) as { error: string }).error, /doesn't change this file/);

@@ -64,6 +64,16 @@ test("what GitHub takes comments on in a file at a commit: the pull request's di
   db.threads = db.threads.filter((x: { id: string }) => x.id !== t?.id);
 });
 
+test('a line shown by expanding the diff takes a comment, beyond the three lines around a change', async () => {
+  const head = git('rev-parse', 'HEAD');
+  // parser.ts's hunks end at line 4 and start at 13: line 8 is only seen by expanding.
+  const r = await post('reviewComment', { number: 13, commitId: head, path: 'src/parser.ts', line: 8, side: 'RIGHT', body: 'Expanded' });
+  const t = r.threads.find((x) => x.comments[0].body === 'Expanded');
+  assert.deepEqual([t?.side, t?.line], ['RIGHT', 8]);
+  db.threads = db.threads.filter((x: { id: string }) => x.id !== t?.id);
+  await assert.rejects(post('reviewComment', { number: 13, commitId: head, path: 'README.md', line: 1, side: 'RIGHT', body: 'Nope' }), /could not be resolved/);
+});
+
 test('discarding the pending review deletes its comments, and its replies in threads that stay', async () => {
   // #12's fixture review holds two comments, each a thread of its own.
   let r = await get('reviewThreads', { number: '12', fresh: '1' });

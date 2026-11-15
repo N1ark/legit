@@ -190,20 +190,12 @@ export function baseLine(moved: PrLines['moved'], line: number): number | null {
   return line - delta;
 }
 
-/** The hunk of the pull request's diff that has `line` on `side`, or -1. */
-export function hunkOf(pr: PrLines, side: DiffSide, line: number): number {
-  return pr.hunks.findIndex((h) => {
-    const [a, b] = side === 'LEFT' ? h.left : h.right;
-    return line >= a && line <= b;
-  });
-}
-
 type Target = { line: number; side: DiffSide; startLine?: number; startSide?: DiffSide };
 
 /**
  * Where a new comment on rows a..b goes on GitHub, or why it can't. With `pr` (what GitHub takes
- * comments on in the file), removed lines go by the base's numbers and lines outside its diff are
- * refused; without it, removed lines only when the diff's old side is the base.
+ * comments on in the file), removed lines go by the base's numbers, and any line of a file the pull
+ * request changes is taken (expanded ones too); without it, removed lines only when the diff's old side is the base.
  */
 export function commentTarget(rows: RowsLike, a: number, b: number, ctx: Pick<DiffContext, 'base'>, pr?: PrLines | null): Target | { error: string } {
   if (a > b) [a, b] = [b, a];
@@ -218,12 +210,6 @@ export function commentTarget(rows: RowsLike, a: number, b: number, ctx: Pick<Di
       return { error: "That removed line isn't in the pull request's base (an earlier commit of it added the line), so GitHub can't place a comment on it: comment where that line was added, or on the whole file." };
     }
     if (!pr.hunks.length) return { error: "The pull request doesn't change this file as of this commit, so GitHub takes no comments on it." };
-    const h = hunkOf(pr, end.side, e);
-    const hs = hunkOf(pr, start.side, s);
-    if (h < 0 || hs < 0) {
-      return { error: "GitHub takes comments only on the pull request's changed lines and the three around them; comment on the whole file instead." };
-    }
-    if (h !== hs) return { error: "Pick lines within one block of the pull request's diff: GitHub takes a comment on one." };
     [start, end] = [{ ...start, line: s }, { ...end, line: e }];
   } else if (!ctx.base && (end.side === 'LEFT' || start.side === 'LEFT')) {
     return { error: "GitHub reads removed lines against the pull request's base, which isn't this commit's parent: comment on added or unchanged lines." };
