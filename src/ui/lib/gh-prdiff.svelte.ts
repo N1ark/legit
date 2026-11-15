@@ -18,6 +18,8 @@ class PrDiffs {
   commits = $state.raw<Record<number, { head: string; list: PrCommit[] }>>({});
 
   private loads = new Map<string, Promise<PrFetched>>();
+  /** Pull requests whose hidden refs this page keeps, until it leaves them (`showing`). */
+  private held = new Set<number>();
   private lists = new Map<string, Promise<PrCommit[]>>();
 
   /** `f`, unless it's the answer for a head older than the one asked for since. */
@@ -31,7 +33,9 @@ class PrDiffs {
     let p = again ? undefined : this.loads.get(key);
     if (p) return p;
     this.note(pr.number, { head: pr.headSha, got: null, error: null }, false);
-    p = ghPost<PrFetched>('prFetch', { number: pr.number, head: pr.headSha, base: pr.base });
+    const hold = !this.held.has(pr.number);
+    this.held.add(pr.number);
+    p = ghPost<PrFetched>('prFetch', { number: pr.number, head: pr.headSha, base: pr.base, hold });
     this.loads.set(key, p);
     p.then(
       (got) => this.note(pr.number, { head: pr.headSha, got, error: null }),
@@ -41,6 +45,27 @@ class PrDiffs {
       },
     );
     return p;
+  }
+
+  /** Let go of every pull request but `number`, the one shown (none: null), so its hidden refs go. */
+  showing(number: number | null) {
+    for (const n of [...this.held]) if (n !== number) this.release(n);
+  }
+
+  /** Let go of all of them, as the page goes; `keepalive` sees the request out. */
+  leave() {
+    for (const n of this.held) void fetch(`/api/gh/prRelease`, { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify({ number: n }) }).catch(() => {});
+    this.held.clear();
+    this.loads.clear();
+    this.fetched = {};
+  }
+
+  private release(n: number) {
+    this.held.delete(n);
+    for (const k of [...this.loads.keys()]) if (k.startsWith(`${n}@`)) this.loads.delete(k);
+    const { [n]: _, ...rest } = this.fetched;
+    this.fetched = rest;
+    ghPost('prRelease', { number: n }).catch(() => {});
   }
 
   /** Every commit of `pr` as far as it's loaded (see `loadCommits`), oldest first. */

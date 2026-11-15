@@ -95,6 +95,41 @@ export function fetchPr(repo: Repo, number: number, head: string, base: string):
   });
 }
 
+/** Pages showing each pull request, by repository and number: its refs stay while any does. */
+const holds = new Map<string, number>();
+const holdKey = (repo: Repo, n: number) => `${repo.git.root}\0${n}`;
+const swept = new Map<string, Promise<void>>();
+
+/**
+ * Delete the hidden refs of pull request `number` (of every one, without it), and forget they were
+ * fetched. Their commits stay readable until git's garbage collection, so a diff still open works.
+ */
+export async function dropPrRefs(repo: Repo, number?: number): Promise<void> {
+  const prefix = number === undefined ? `${PULL}/` : `${PULL}/${number}/`;
+  const refs = (await repo.git.text(['for-each-ref', '--format=%(refname)', prefix], { allowFail: true })).split('\n').filter(Boolean);
+  if (refs.length) await repo.git.run(['update-ref', '--no-deref', '--stdin'], { input: refs.map((r) => `delete ${r}\n`).join(''), allowFail: true });
+  const mine = `${repo.git.root}\0${number ?? ''}`;
+  for (const k of fetches.keys()) if (number === undefined ? k.startsWith(`${repo.git.root}\0`) : k.startsWith(`${mine}\0`)) fetches.delete(k);
+}
+
+/** Once per repository a server opens: the refs of pull requests left open when it last stopped. */
+export function sweepPrRefs(repo: Repo): Promise<void> {
+  let p = swept.get(repo.git.root);
+  if (!p) swept.set(repo.git.root, (p = dropPrRefs(repo)));
+  return p;
+}
+
+/** Pull request `number`'s refs, unless a page is still showing it. */
+export async function releasePr(repo: Repo, number: number): Promise<void> {
+  const k = holdKey(repo, number);
+  const left = (holds.get(k) ?? 0) - 1;
+  if (left > 0) return void holds.set(k, left);
+  holds.delete(k);
+  await dropPrRefs(repo, number);
+}
+
+export const prHeld = (repo: Repo, number: number) => (holds.get(holdKey(repo, number)) ?? 0) > 0;
+
 /** Commit `rev` of pull request `number` (`<sha>^`: its first parent), fetched from GitHub by SHA if it isn't here. */
 async function ensure(repo: Repo, number: number, rev: string): Promise<string> {
   const parent = rev.endsWith('^');
@@ -173,9 +208,16 @@ export const prdiffGet: Record<string, GetRoute> = {
 };
 
 export const prdiffPost: Record<string, PostRoute> = {
-  prFetch: (repo, b) => {
+  prFetch: async (repo, b) => {
     if (typeof b?.base !== 'string' || !b.base || b.base.startsWith('-')) throw new GithubError('Which base branch?', 400);
-    return fetchPr(repo, num(b?.number), sha(b?.head, 'head'), b.base);
+    const n = num(b?.number);
+    await sweepPrRefs(repo);
+    if (b.hold) holds.set(holdKey(repo, n), (holds.get(holdKey(repo, n)) ?? 0) + 1);
+    return fetchPr(repo, n, sha(b?.head, 'head'), b.base);
+  },
+  prRelease: async (repo, b) => {
+    await releasePr(repo, num(b?.number));
+    return { ok: true };
   },
   prCompare: (repo, b) => {
     if (typeof b?.from !== 'string') throw new GithubError('Compare from where?', 400);

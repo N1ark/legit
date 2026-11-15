@@ -14,6 +14,7 @@ import type { Repo } from '../repo.ts';
 import { carry, networkEnv } from '../sync.ts';
 import { addWorktree, worktrees } from '../worktrees.ts';
 import { graphql } from './client.ts';
+import { dropPrRefs, prHeld, sweepPrRefs } from './prdiff.ts';
 import { needGhRepos } from './context.ts';
 import { isLive } from '../../shared/github.ts';
 import { prState } from './pulls.ts';
@@ -141,8 +142,11 @@ export interface CheckoutRequest {
 export async function checkoutPr(repo: Repo, req: CheckoutRequest): Promise<OpResult & { branch: string; path?: string }> {
   const git = repo.git;
   const n = number(req?.number);
-  const sha = await git.resolve(`${PULL}/${n}/head`);
-  if (!sha || sha !== req.sha) throw new GitError(`#${n} was fetched again meanwhile; try again.`);
+  // The plan's commit, which its ref (gone once nothing shows the pull request) needn't still name.
+  const at = await git.resolve(`${PULL}/${n}/head`);
+  const sha = typeof req.sha === 'string' && /^[0-9a-f]{40,64}$/.test(req.sha) ? req.sha : null;
+  if (!sha || (at && at !== sha)) throw new GitError(`#${n} was fetched again meanwhile; try again.`);
+  if ((await git.run(['cat-file', '-e', `${sha}^{commit}`], { allowFail: true })).code !== 0) throw new GitError(`#${n}'s head isn't here any more; try again.`);
   const branch = String(req.branch ?? '');
   if (!(await validName(git, branch))) throw new GitError(`"${branch}" is not a valid branch name.`);
   const up = req.upstream && (await git.remotes()).names.includes(req.upstream.remote) && (await validName(git, req.upstream.branch)) ? req.upstream : null;
@@ -213,8 +217,14 @@ export async function checkoutPlan(repo: Repo, body: any): Promise<CheckoutPlan>
   if (!base) throw new GitError(`No remote here is ${pr.base}, where #${pr.number} is: add one to check it out.`);
   const same = pr.repo?.toLowerCase() === pr.base.toLowerCase();
   const remote = same ? base : pr.repo ? await remoteFor(repo.git, pr.repo) : null;
+  await sweepPrRefs(repo);
   const sha = await fetchPrHead(repo.git, base, pr.number, same && pr.live ? pr.head : null);
-  return planCheckout(repo, pr, sha, remote);
+  try {
+    return await planCheckout(repo, pr, sha, remote);
+  } finally {
+    // Its commits stay until git's garbage collection, long after the checkout that follows.
+    if (!prHeld(repo, pr.number)) await dropPrRefs(repo, pr.number);
+  }
 }
 
 export const checkoutPost: Record<string, PostRoute> = {

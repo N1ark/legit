@@ -12,7 +12,7 @@ import { stackGet, stackPost } from './stack.ts';
 import { issuesGet, issuesPost } from './issues.ts';
 import { prfilesGet, prfilesPost } from './prfiles.ts';
 import { prviewGet, prviewPost } from './prview.ts';
-import { prdiffGet, prdiffPost } from './prdiff.ts';
+import { prdiffGet, prdiffPost, sweepPrRefs } from './prdiff.ts';
 import { reviewGet, reviewPost } from './review.ts';
 import { inboxGet } from './inbox.ts';
 import { checkoutPost } from './checkout.ts';
@@ -118,6 +118,7 @@ function warmAround(repo: Repo, branch: string, pr: PullRequest | null): Promise
 export async function warmGithub(repo?: Repo) {
   try {
     if (repo && !(await ghRepos(repo))) return;
+    if (repo) void sweepPrRefs(repo);
     if (MOCK && repo) await mockTips(repo);
     if (!MOCK && !(await githubToken())) return;
     const viewer = viewerLogin();

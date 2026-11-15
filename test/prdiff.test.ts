@@ -90,3 +90,38 @@ test('a pull request is read without checking it out: fetched into hidden refs, 
   assert.deepEqual(paths(await repo.diff(`r${ownGot.head}-${ownGot.mergeBase}`)), ['src/errors.ts', 'src/parser.ts']);
   assert.deepEqual(refs(), before.refs);
 });
+
+test("a pull request's hidden refs go once nothing shows it, and any left go as the server starts", async () => {
+  const demo = join(dir, 'demo2');
+  execFileSync('node', ['scripts/gh-demo.ts', demo], { stdio: 'ignore' });
+  await import('../src/server/gh/mock/index.ts');
+  const { githubRoute } = await import('../src/server/gh/routes.ts');
+  const { sweepPrRefs } = await import('../src/server/gh/prdiff.ts');
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: demo, encoding: 'utf8' }).trim();
+  const hidden = () => git('for-each-ref', '--format=%(refname)', 'refs/legit/pull/');
+  // Left over from a server that stopped while showing #14.
+  git('update-ref', 'refs/legit/pull/14/head', 'HEAD');
+  const repo = await Repo.open(demo);
+  await sweepPrRefs(repo);
+  assert.equal(hidden(), '');
+  const get = (name: string, q: Record<string, string>) => githubRoute(repo, 'GET', name, new URLSearchParams(q)) as Promise<any>;
+  const post = (name: string, b: object) => githubRoute(repo, 'POST', name, b) as Promise<any>;
+  const pr = await get('prview', { number: '18' });
+  // Two pages show #18: its refs stay until both have left it.
+  await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
+  await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
+  assert.deepEqual(hidden().split('\n'), ['refs/legit/pull/18/base', 'refs/legit/pull/18/head']);
+  await post('prRelease', { number: 18 });
+  assert.notEqual(hidden(), '');
+  await post('prRelease', { number: 18 });
+  assert.equal(hidden(), '');
+  // Its commits are still here for a diff still open; showing it again fetches it again.
+  assert.equal(git('cat-file', '-t', pr.headSha), 'commit');
+  const again = await post('prFetch', { number: 18, head: pr.headSha, base: pr.base, hold: true });
+  assert.equal(git('rev-parse', 'refs/legit/pull/18/head'), again.head);
+  await post('prRelease', { number: 18 });
+  // Checking one out from the list (nothing showing it) keeps no ref.
+  const plan = await post('prCheckoutPlan', { number: 16 });
+  assert.equal(git('cat-file', '-t', plan.sha), 'commit');
+  assert.equal(hidden(), '');
+});

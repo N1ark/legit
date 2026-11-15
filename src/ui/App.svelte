@@ -38,6 +38,7 @@
   import { gh } from './lib/github.svelte.ts';
   import { tracking } from './lib/gh-files.svelte.ts';
   import { inbox } from './lib/gh-inbox.svelte.ts';
+  import { prDiffs } from './lib/gh-prdiff.svelte.ts';
   import { invoke, remember } from './lib/desktop.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { formatPerson } from './lib/people.ts';
@@ -120,7 +121,10 @@
       gh.refreshIfOlder(30_000);
     };
     const poll = setInterval(() => document.hidden || gh.refreshIfOlder(60_000), 60_000);
-    const leave = () => remember(app.snapshot());
+    const leave = () => {
+      remember(app.snapshot());
+      prDiffs.leave();
+    };
     window.addEventListener('focus', focus);
     window.addEventListener('pagehide', leave);
     return () => {
@@ -130,6 +134,9 @@
       window.removeEventListener('pagehide', leave);
     };
   });
+
+  // A pull request's hidden refs go once it's no longer shown.
+  $effect(() => prDiffs.showing(app.ghView?.number ?? null));
 
   // The branch's pull request follows the branch, its tip and what was last fetched of it.
   $effect(() => {
