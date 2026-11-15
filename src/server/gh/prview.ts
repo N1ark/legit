@@ -39,7 +39,7 @@ const ITEM_TYPES = `[ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HE
 export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
-    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod viewerPermission
     squashMergeCommitTitle squashMergeCommitMessage
     pullRequest(number: $number) {
       id number title body url state isDraft isInMergeQueue mergeQueueEntry { position } createdAt mergedAt mergedBy { ${ACTOR} } author { ${ACTOR} }
@@ -48,7 +48,7 @@ export const OVERVIEW_QUERY = `query PrViewOverview($owner: String!, $name: Stri
       labels(first: 50) { nodes { name color } }
       assignees(first: 20) { nodes { ${ACTOR} } }
       reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { ${ACTOR} } ... on Team { combinedSlug avatarUrl } } } }
-      latestOpinionatedReviews(first: 50) { nodes { author { ${ACTOR} } state } }
+      latestOpinionatedReviews(first: 50) { nodes { databaseId author { ${ACTOR} } state } }
       latestReviews(first: 50) { nodes { author { ${ACTOR} } state } }
       suggestedReviewers { reviewer { ${ACTOR} } }
       reviews(states: PENDING, first: 5) { nodes { id author { login } comments { totalCount } } }
@@ -77,7 +77,9 @@ export function reviewers(pr: any): PrReviewer[] {
   for (const r of [...(pr.latestOpinionatedReviews?.nodes ?? []), ...(pr.latestReviews?.nodes ?? [])]) {
     const login = r.author?.login;
     if (!login || login === author || out.has(login) || r.state === 'PENDING') continue;
-    out.set(login, { login, avatar: r.author.avatarUrl ?? null, team: false, state: reviewState(r.state) });
+    const state = reviewState(r.state);
+    const dismissable = (state === 'approved' || state === 'changes') && Number.isInteger(r.databaseId);
+    out.set(login, { login, avatar: r.author.avatarUrl ?? null, team: false, state, ...(dismissable ? { reviewId: r.databaseId } : {}) });
   }
   for (const { requestedReviewer: r } of pr.reviewRequests?.nodes ?? []) {
     const login = r?.login ?? r?.combinedSlug;
@@ -209,6 +211,7 @@ export function toOverview(d: any): PrOverview {
     viewer,
     canUpdate: !!pr.viewerCanUpdate,
     mine: !!pr.viewerDidAuthor,
+    canDismiss: ['ADMIN', 'MAINTAIN', 'WRITE'].includes(repo.viewerPermission),
     labels: (pr.labels?.nodes ?? []).map((l: any): PrLabel => ({ name: l.name, color: l.color })),
     assignees: (pr.assignees?.nodes ?? []).map(user).filter(Boolean),
     reviewers: reviewers(pr),
@@ -326,6 +329,11 @@ export const prviewPost: Record<string, PostRoute> = {
     const remove = list(b.remove);
     if (add.length) await rest('POST', `${r.path}/pulls/${r.number}/requested_reviewers`, split(add));
     if (remove.length) await rest('DELETE', `${r.path}/pulls/${r.number}/requested_reviewers`, split(remove));
+  }),
+  prviewDismiss: change((r, b) => {
+    const id = Number(b.reviewId);
+    if (!Number.isInteger(id) || id <= 0) throw new GithubError('Which review?', 400);
+    return rest('PUT', `${r.path}/pulls/${r.number}/reviews/${id}/dismissals`, { message: text(b.message, 'why it is dismissed'), event: 'DISMISS' });
   }),
   prviewLabels: change(async (r, b) => {
     const add = list(b.add);

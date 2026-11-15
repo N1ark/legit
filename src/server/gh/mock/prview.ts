@@ -27,7 +27,7 @@ const comment = (login: string, hours: number, body: string) => ({
   __typename: 'IssueComment', id: nextId('IC'), databaseId: ++ids, author: actor(login), body, createdAt: ago(hours), lastEditedAt: null,
 });
 const review = (login: string, hours: number, state: string, body: string, comments = 0) => ({
-  __typename: 'PullRequestReview', id: nextId('PRR'), author: actor(login), state, body, createdAt: ago(hours), submittedAt: ago(hours),
+  __typename: 'PullRequestReview', id: nextId('PRR'), databaseId: ++ids, author: actor(login), state, body, createdAt: ago(hours), submittedAt: ago(hours),
   comments: { totalCount: comments },
 });
 const event = (type: string, login: string, hours: number, more: Record<string, unknown> = {}) => ({
@@ -161,7 +161,7 @@ function latest(e: Extra, opinionated: boolean) {
   const by = new Map<string, any>();
   for (const r of reviewsOf(e)) {
     if (opinionated && r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
-    by.set(r.author.login, { author: r.author, state: r.state });
+    by.set(r.author.login, { databaseId: r.databaseId, author: r.author, state: r.state });
   }
   return [...by.values()];
 }
@@ -191,7 +191,7 @@ onGraphql('PrViewOverview', (v) => {
     viewer: { login: db.viewer },
     repository: {
       mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true, autoMergeAllowed: true, deleteBranchOnMerge: false,
-      viewerDefaultMergeMethod: 'SQUASH', squashMergeCommitTitle: 'PR_TITLE', squashMergeCommitMessage: 'COMMIT_MESSAGES',
+      viewerDefaultMergeMethod: 'SQUASH', squashMergeCommitTitle: 'PR_TITLE', squashMergeCommitMessage: 'COMMIT_MESSAGES', viewerPermission: 'ADMIN',
       pullRequest: {
         ...node,
         id: `PR_kwDO${p.number}`,
@@ -348,6 +348,15 @@ onRest('POST /repos/:owner/:repo/pulls/:number/requested_reviewers', (params, _,
   e.requested.push(...add);
   for (const r of add) e.timeline.push(event('ReviewRequestedEvent', db.viewer, 0, { requestedReviewer: reviewer(r) }));
   return { number: Number(params.number) };
+});
+
+onRest('PUT /repos/:owner/:repo/pulls/:number/reviews/:id/dismissals', (params, _, body) => {
+  const r = reviewsOf(extra(+params.number)).find((x) => x.databaseId === +params.id);
+  if (!r) throw new GithubError('GitHub: Not Found', 404);
+  if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') throw new GithubError('GitHub: Validation Failed: Can not dismiss a commented pull request review', 422);
+  if (!body?.message) throw new GithubError('GitHub: Validation Failed: message is missing', 422);
+  r.state = 'DISMISSED';
+  return { id: r.databaseId, state: 'DISMISSED' };
 });
 
 onRest('DELETE /repos/:owner/:repo/pulls/:number/requested_reviewers', (params, _, body) => {
