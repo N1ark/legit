@@ -5,6 +5,7 @@
 - A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
 - Uncommitted changes asked for again while they're still being read (files changing quickly, a slow machine) are read once more for all who asked, instead of once each at the same time.
 - On a busy machine, the commit you select shows sooner: git runs a few at a time, the most recent request first, instead of every prefetched diff at once.
+- Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
 - A pull request's diff since your last review, after a force-push, shows files with non-ASCII names too.
 
 ## 0.26.0 — 2026-11-15
