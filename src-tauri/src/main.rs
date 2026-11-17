@@ -65,12 +65,19 @@ struct Views {
     origins: Mutex<HashMap<String, PathBuf>>,
 }
 
-/// What the window shows.
+/// Switches the window was asked to make, numbered as they're asked: only the last one asked for
+/// (that the page agreed to) goes ahead, however long each one's server takes to get ready.
 #[derive(Default)]
 struct Switches {
+    /// The last switch asked for that can go ahead.
+    wanted: AtomicU64,
+    /// Held while the window is pointed at a server, so `Current` always names the one it shows.
+    showing: Mutex<()>,
     /// The origin of the page the window may show (see `may_navigate`).
     origin: Mutex<Option<String>>,
 }
+
+static NEXT_SWITCH: AtomicU64 = AtomicU64::new(1);
 
 /// Questions to the page about leaving its repository, waiting for its `answer_leave`.
 #[derive(Default)]
@@ -380,11 +387,14 @@ fn focus_any(app: &AppHandle) {
 /// page is asked, so a switch waits for the slower of the two, not both.
 fn open_repo(app: &AppHandle, path: PathBuf) {
     let path = path.canonicalize().unwrap_or(path);
+    let ticket = NEXT_SWITCH.fetch_add(1, Ordering::SeqCst);
     let window = app.get_webview_window(WINDOW);
     if let Some(window) = &window {
         let _ = window.unminimize();
         let _ = window.set_focus();
         if app.state::<Current>().repo().as_ref() == Some(&path) {
+            // Staying on the repository shown: a switch away still on its way is called off.
+            app.state::<Switches>().wanted.fetch_max(ticket, Ordering::SeqCst);
             return;
         }
     }
@@ -396,6 +406,9 @@ fn open_repo(app: &AppHandle, path: PathBuf) {
             thread::spawn(move || server_for(&app, &path))
         };
         let allowed = window.is_none_or(|w| page_allows_leaving(&app, &w));
+        if allowed {
+            app.state::<Switches>().wanted.fetch_max(ticket, Ordering::SeqCst);
+        }
         let server = ready.join().unwrap_or_else(|_| Err("The legit server failed to start.".into()));
         if !allowed {
             // Staying: a server kept from before is kept again, one started for this stops.
@@ -408,7 +421,7 @@ fn open_repo(app: &AppHandle, path: PathBuf) {
             }
             return;
         }
-        if let Err(err) = server.and_then(|(server, _)| show(&app, &path, server)) {
+        if let Err(err) = server.and_then(|(server, _)| show(&app, &path, server, ticket)) {
             eprintln!("legit: couldn't open {}: {err}", path.display());
             app.dialog()
                 .message(err)
@@ -547,10 +560,17 @@ fn take_warm(app: &AppHandle, repo: &Path) -> Option<Server> {
     None
 }
 
-/// Keep the server the window just left running, stopping the least recently shown past `WARM_MAX`.
+/// Keep the server the window just left running, stopping the least recently shown past `WARM_MAX`
+/// (and this one if another serves its repository already: two switches to it raced).
 fn keep_warm(app: &AppHandle, server: Server) {
+    let shown = app.state::<Current>().repo();
     let state = app.state::<Warm>();
     let mut warm = state.0.lock().unwrap();
+    if shown.as_ref() == Some(&server.repo) || warm.iter().any(|s| s.repo == server.repo) {
+        drop(warm);
+        thread::spawn(move || stop(vec![server.child]));
+        return;
+    }
     warm.insert(0, server);
     let keep = warm.len().min(WARM_MAX);
     let extra: Vec<Child> = warm.split_off(keep).into_iter().map(|s| s.child).collect();
@@ -576,22 +596,31 @@ fn server_for(app: &AppHandle, repo: &Path) -> Result<(Server, bool), String> {
     Ok((Server { repo: repo.to_path_buf(), child, url }, false))
 }
 
-/// Point the window at `server` (opening it the first time), keeping the one it leaves running.
-fn show(app: &AppHandle, repo: &Path, server: Server) -> Result<(), String> {
+/// Point the window at `server` (opening it the first time), keeping the one it leaves running;
+/// unless a later switch (`ticket` is this one's) was asked for meanwhile, which goes ahead instead.
+fn show(app: &AppHandle, repo: &Path, server: Server, ticket: u64) -> Result<(), String> {
     let switches = app.state::<Switches>();
+    let _showing = switches.showing.lock().unwrap();
+    if switches.wanted.load(Ordering::SeqCst) > ticket {
+        keep_warm(app, server);
+        return Ok(());
+    }
     app.state::<Views>().origins.lock().unwrap().insert(server.origin(), repo.to_path_buf());
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
     let before = switches.origin.lock().unwrap().replace(server.origin());
     if let Some(window) = app.get_webview_window(WINDOW) {
         // The page loads afresh from the new server, so nothing of the old repository carries over.
-        if let Err(e) = window.navigate(server.url.clone()) {
+        // Named current first: the new page asks which one is (`recent_repos`, `open_worktree`).
+        let url = server.url.clone();
+        let old = app.state::<Current>().0.lock().unwrap().replace(server);
+        if let Err(e) = window.navigate(url) {
             *switches.origin.lock().unwrap() = before;
-            stop(vec![server.child]);
+            let failed = std::mem::replace(&mut *app.state::<Current>().0.lock().unwrap(), old);
+            stop(failed.into_iter().map(|s| s.child).collect());
             return Err(e.to_string());
         }
         let _ = window.set_title(&name);
-        let old = app.state::<Current>().0.lock().unwrap().replace(server);
         if let Some(old) = old {
             keep_warm(app, old);
         }

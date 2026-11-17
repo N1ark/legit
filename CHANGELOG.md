@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Pressing <kbd>⌫</kbd> outside a field (or swiping back) no longer takes the window back to the repository shown before; a web link that would open in the window opens in the browser.
+- Picking another repository or worktree while a switch is still on its way ends on the one picked last, not whichever was quicker to load; the repository picker's tick then always marks the repository shown.
 
 ## 0.26.0 — 2026-11-15
 
