@@ -7,6 +7,7 @@
 - Holding <kbd>⌫</kbd> on picked changes removes them once, rather than trying again with every key repeat.
 - A view kept for coming back to a repository is only restored in that repository: a page that finds another's (its port used again by another server) starts afresh instead of taking its selection and drafts.
 - When the window's connection to its server drops and comes back (a busy or sleeping Mac), it loads the state again, so changes made in between (a commit from a terminal) show without having to focus the window.
+- Publishing a branch says *Published to …* again, not *Pushed to …*.
 
 ## 0.26.0 — 2026-11-15
 

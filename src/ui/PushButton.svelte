@@ -75,8 +75,10 @@
     if (!info) return;
     const body = force === 'overwrite' ? { force, expect: info.tip } : { force };
     const forced = !!force;
+    // As they were: the state the push brings back has nothing left to publish.
+    const [was, to] = [mode, where];
     if (await app.op('push', body, undefined, undefined, refused)) {
-      toast(forced ? `Force pushed to ${where}` : mode === 'publish' ? `Published to ${where}` : `Pushed to ${where}`);
+      toast(forced ? `Force pushed to ${to}` : was === 'publish' ? `Published to ${to}` : `Pushed to ${to}`);
     }
   }
 
