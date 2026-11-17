@@ -24,7 +24,7 @@ import { type Git, GitError } from './git.ts';
 import { log, logText } from './log.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
-import { watchTree } from './watch.ts';
+import { type TreeWatch, watchTree } from './watch.ts';
 import {
   abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
@@ -110,16 +110,27 @@ const MAX_SUMMARY_BYTES = 16 * 1024 * 1024;
 /** Most changed paths checked for being ignored at once; past that, a change is just assumed to count. */
 const MAX_CHECKED = 2000;
 
-/** Every path (relative to the root) is ignored by git, and isn't tracked. Asks a fresh git, so it knows the current rules. */
+/** Reads that never take the index lock, so they never get in the way of the user's git. */
+const NO_LOCKS = { GIT_OPTIONAL_LOCKS: '0' };
+
+/** Which of `paths` (relative to the root) git ignores; a folder holding a tracked file isn't. Asks a fresh git, so it knows the current rules. */
+async function ignored(git: Git, paths: string[]): Promise<Set<string> | null> {
+  const r = await git.run(['check-ignore', '-z', '--stdin'], { input: paths.join('\0') + '\0', env: NO_LOCKS, allowFail: true }).catch(() => null);
+  // 1: none is.
+  return r?.code === 0 || r?.code === 1 ? new Set(r.out.toString('utf8').split('\0')) : null;
+}
+
+/** Every path (relative to the root) is ignored by git, and isn't tracked. */
 async function allIgnored(git: Git, paths: string[]): Promise<boolean> {
   if (!paths.length) return true;
-  const r = await git
-    .run(['check-ignore', '-z', '--stdin'], { input: paths.join('\0') + '\0', env: { GIT_OPTIONAL_LOCKS: '0' }, allowFail: true })
-    .catch(() => null);
-  if (r?.code !== 0) return false;
-  const ignored = new Set(r.out.toString('utf8').split('\0'));
-  return paths.every((p) => ignored.has(p));
+  const set = await ignored(git, paths);
+  return !!set && paths.every((p) => set.has(p));
 }
+
+/** Changes in a folder a .gitignore (or info/exclude) governs may count, or not count, from now on. */
+const IGNORE_RULES = /(^|\/)\.gitignore$/;
+/** A nested repository's own git dir: nothing in it is a change to this one. */
+const NESTED_GIT = /(^|[\\/])\.git([\\/]|$)/;
 
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   warmGithub(repo);
@@ -134,8 +145,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   // The worktree went (deleted or moved): nothing more runs for it. Requests get `RepoGone` (410), and
   // pages are told where to go instead. Checked as files change, as requests come and fail, and now and then.
   let gone: Promise<RepoGone> | null = null;
-  const watchers: (() => void)[] = [];
-  const stopWatching = () => watchers.splice(0).forEach((stop) => stop());
+  const watchers: TreeWatch[] = [];
+  const stopWatching = () => watchers.splice(0).forEach((w) => w.stop());
   const isGone = (): boolean => {
     if (gone) return true;
     if (!repo.gone()) return false;
@@ -178,21 +189,27 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       for (const c of clients) c.write('data: change\n\n');
     }, 60);
   };
-  // Throttled rather than debounced, so a file that keeps changing still shows up. Changes only
-  // to ignored files (build output, node_modules) can't change what's uncommitted, so they don't count.
+  // Throttled rather than debounced, so a file that keeps changing still shows up; while changes keep
+  // coming straight after each look (a build, an install), less and less often, down to every 2 s.
+  // Changes only to ignored files (build output, node_modules) can't change what's uncommitted, so they don't count.
   let workTimer: NodeJS.Timeout | undefined;
+  let workDelay = 250;
+  let workAt = 0;
   let changed = new Set<string>();
   let anyChange = false;
   const notifyWork = (path?: string) => {
     if (path === undefined || changed.size >= MAX_CHECKED) anyChange = true;
     else changed.add(path);
-    workTimer ??= setTimeout(async () => {
+    if (workTimer) return;
+    workDelay = Date.now() - workAt < 100 ? Math.min(workDelay * 2, 2000) : 250;
+    workTimer = setTimeout(async () => {
       workTimer = undefined;
+      workAt = Date.now();
       const [paths, any] = [[...changed], anyChange];
       [changed, anyChange] = [new Set(), false];
       if (!clients.size || isGone()) return;
       if ((any || !(await allIgnored(repo.git, paths))) && !gone) for (const c of clients) c.write('data: work\n\n');
-    }, 250);
+    }, workDelay);
   };
   // Fetches and pushes say how far they've got, as a `progress` event.
   const stopProgress = onProgress((root, p) => {
@@ -207,32 +224,43 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     blind = true;
     for (const c of clients) c.write('data: blind\n\n');
   };
+  // Folders newly ignored, or no longer, are watched or not from then on.
+  let rescanTimer: NodeJS.Timeout | undefined;
+  const rescan = () => {
+    clearTimeout(rescanTimer);
+    rescanTimer = setTimeout(() => tree.rescan(), 500);
+  };
+  const tree = watchTree(
+    repo.git.root,
+    (rel) => !NESTED_GIT.test(rel),
+    (name) => {
+      if (name !== undefined && NESTED_GIT.test(name)) return;
+      notifyWork(name && sep === '/' ? name : undefined);
+      if (name && IGNORE_RULES.test(name)) rescan();
+    },
+    lost,
+    // Ignored folders (node_modules, build output) aren't watched: nothing in them counts, and they can be huge and busy.
+    async (rels) => (await ignored(repo.git, rels)) ?? new Set(),
+  );
+  watchers.push(tree);
   const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG|legit-stash$)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
-  watchers.push(...dirs.map((d) =>
-    watchTree(
-      d,
-      (rel) => /^(refs|rebase-merge|rebase-apply)(\/|$)/.test(rel),
-      (name = '') => {
-        // A pull request fetched to be read (gh/prdiff.ts) changes nothing shown.
-        if (name.endsWith('.lock') || /^refs[\\/]worktree[\\/]legit[\\/]pull[\\/]/.test(name)) return;
-        if (relevant.test(name)) notify();
-        else if (name === 'index') notifyWork(undefined);
-      },
-      lost,
-    ),
-  ));
-  watchers.push(
-    watchTree(
-      repo.git.root,
-      (rel) => rel !== '.git',
-      (name) => {
-        if (name === '.git' || name?.startsWith('.git/') || name?.startsWith('.git\\')) return;
-        notifyWork(name && sep === '/' ? name : undefined);
-      },
-      lost,
-    ),
-  );
+  for (const d of dirs) {
+    watchers.push(
+      watchTree(
+        d,
+        (rel) => /^(refs|rebase-merge|rebase-apply|info)(\/|$)/.test(rel),
+        (name = '') => {
+          // A pull request fetched to be read (gh/prdiff.ts) changes nothing shown.
+          if (name.endsWith('.lock') || /^refs[\\/]worktree[\\/]legit[\\/]pull[\\/]/.test(name)) return;
+          if (relevant.test(name)) notify();
+          else if (name === 'index') notifyWork(undefined);
+          else if (/^info([\\/]exclude)?$/.test(name)) rescan();
+        },
+        lost,
+      ),
+    );
+  }
 
   const ops: Record<string, (body: any) => Promise<unknown>> = {
     edit: (b) => repo.edit(b),
@@ -556,6 +584,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
         url: `http://${origin}/`,
         close: () => {
           stopWatching();
+          clearTimeout(rescanTimer);
           clearInterval(checking);
           clearTimeout(goneTimer);
           stopProgress();
