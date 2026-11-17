@@ -135,9 +135,10 @@ class App {
       this.kept = kept.views;
       this.selected = kept.selected;
       this.anchor = kept.anchor;
+      this.keptFor = kept.root ?? null;
     }
     await this.refresh();
-    if (!kept || !this.repo) return;
+    if (!kept || !this.repo || this.keptFor === undefined) return;
     // Commits listed under a merge only exist once it's expanded again.
     const merges = kept.expanded.filter((s) => this.bySha.get(s)?.merge);
     await Promise.all(merges.map((s) => this.toggleMerge(s, true)));
@@ -152,6 +153,8 @@ class App {
   /** What views asked to keep (see `keep`) and what they left (see `restore`). */
   private keepers = new Map<string, () => unknown>();
   private kept: Record<string, unknown> = {};
+  /** The repository what was kept is of; undefined once it turned out to be another's. */
+  private keptFor: string | null | undefined = null;
 
   /** Have `get()` kept under `key` when the window switches repo. Returns the cleanup, for an $effect. */
   keep(key: string, get: () => unknown) {
@@ -172,6 +175,7 @@ class App {
   /** The view to come back to (see lib/desktop.ts). */
   snapshot(): View {
     return {
+      root: this.repo?.root,
       selected: this.selected,
       anchor: this.anchor,
       stash: this.stash,
@@ -231,6 +235,10 @@ class App {
 
   private setRepo(repo: RepoState, focus?: string[]) {
     const first = !this.repo;
+    // Kept by another repository's page on this origin (its port used again): none of it applies here.
+    if (first && this.keptFor && this.keptFor !== repo.root) {
+      [this.kept, this.selected, this.anchor, this.keptFor] = [{}, [], null, undefined];
+    }
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     repo.commits = keepCommits(this.repo?.commits, repo.commits);
@@ -981,6 +989,8 @@ export interface ShownStash {
 
 /** What a window remembers of a repo while it shows another. */
 interface View {
+  /** Missing when kept by an older version. */
+  root?: string;
   selected: string[];
   anchor: string | null;
   stash: ShownStash | null;
