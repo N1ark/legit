@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
+
 ## 0.26.0 — 2026-11-15
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.

@@ -119,30 +119,41 @@ export function parseDiff(data: string, sha: string): CommitDiff {
 /** Files in the order the file tree lists them (folders first, as in Zed). */
 export const sortFiles = (files: FileDiff[]) => files.sort((a, b) => comparePaths(a.path, b.path));
 
+/** A file's rows and widths as `summarize` counts them, by its hunks (a snapshot shares an unchanged file's with the last one). */
+const counted = new WeakMap<Hunk[], { rows: number; width: number; ws: number; paired: number; pairedWs: number }>();
+
+function counts(hunks: Hunk[]) {
+  let c = counted.get(hunks);
+  if (c) return c;
+  c = { rows: 0, width: 0, ws: 0, paired: 0, pairedWs: 0 };
+  for (const h of hunks) {
+    c.rows += h.lines.length + 1;
+    let types = '';
+    const text: string[] = [];
+    for (const l of h.lines) {
+      types += l.t;
+      text.push(l.s);
+      let w = l.s.length;
+      for (let k = l.s.indexOf('\t'); k >= 0; k = l.s.indexOf('\t', k + 1)) w += 3;
+      if (w > c.width) c.width = w;
+    }
+    const pairs = whitespacePairs(types, text, (k) => !!h.lines[k].eof);
+    const paired = pairedRows(types, text);
+    c.ws += pairs.size;
+    c.paired += paired;
+    c.pairedWs += pairs.size ? pairedRows(types, text, pairs) : paired;
+  }
+  counted.set(hunks, c);
+  return c;
+}
+
 /** File list with exact row counts and widths, but no content (utf8 for display). `syntax`: grammars by path. */
 export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Map<string, string>()): DiffSummary {
   return {
     sha: d.sha,
     files: d.files.map(({ hunks, ...f }) => {
-      let rows = 0;
-      let width = 0;
-      let ws = 0;
-      let paired = 0;
-      let pairedWs = 0;
-      for (const h of hunks) {
-        rows += h.lines.length + 1;
-        const types = h.lines.map((l) => l.t).join('');
-        const text = h.lines.map((l) => l.s);
-        const pairs = whitespacePairs(types, text, (k) => !!h.lines[k].eof);
-        ws += pairs.size;
-        paired += pairedRows(types, text);
-        pairedWs += pairedRows(types, text, pairs);
-        for (const l of h.lines) {
-          let w = l.s.length;
-          for (let k = l.s.indexOf('\t'); k >= 0; k = l.s.indexOf('\t', k + 1)) w += 3;
-          if (w > width) width = w;
-        }
-      }
+      const { width, ws, paired, pairedWs, ...c } = counts(hunks);
+      let rows = c.rows;
       if (hunks.length && expandable(f)) {
         const last = hunks[hunks.length - 1].lines;
         if (moreAfter(last.map((l) => l.t).join(''), !!last[last.length - 1]?.eof)) rows++;
