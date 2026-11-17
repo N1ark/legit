@@ -208,6 +208,17 @@ function rawRecords(out: Buffer): Map<string, string[]> {
   return map;
 }
 
+/** Paths whose working-tree file differs from the index (`status --porcelain=v2 -z --no-renames`), conflicted ones included. */
+export function unstagedPaths(out: Buffer): Set<string> {
+  const paths = new Set<string>();
+  for (const entry of out.toString('latin1').split('\0')) {
+    // `1 XY sub mH mI mW hH hI path`; `u XY sub m1 m2 m3 mW h1 h2 h3 path`.
+    if (entry.startsWith('1 ') && entry[3] !== '.') paths.add(entry.split(' ').slice(8).join(' '));
+    else if (entry.startsWith('u ')) paths.add(entry.split(' ').slice(10).join(' '));
+  }
+  return paths;
+}
+
 const changedLines = (f: FileDiff) => f.added + f.removed;
 const allLines = (f: FileDiff) => Array.from({ length: Math.max(1, changedLines(f)) }, (_, k) => k);
 const isZero = (sha: string) => /^0+$/.test(sha);
@@ -218,13 +229,12 @@ const isZero = (sha: string) => /^0+$/.test(sha);
  * index, so a snapshot of these changes is a new one when only what's staged changed.
  */
 export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDiff; index: string }> {
-  // Refresh stat info first so files that were only touched don't show up as changed.
-  await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const last = listed.get(git);
-  const [raw, cached, files, others] = await Promise.all([
+  const [raw, cached, files, status, others] = await Promise.all([
     git.run(['diff-index', '-r', '-z', '-M', '--full-index', '--raw', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-files', '-r', '-z', '--no-renames', '--raw'], { env: NO_LOCKS }),
+    git.run(['status', '--porcelain=v2', '-z', '--untracked-files=no', '--no-renames'], { env: NO_LOCKS }),
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
   ]);
   const untrackedPaths = new Set(others.out.toString('latin1').split('\0').filter(Boolean));
@@ -243,7 +253,10 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
     // A staged rename's old path is a staged deletion.
     if (status[0] === 'R') staged.set(from, { mode: '000000', sha: '0'.repeat(sha.length), gone: true });
   }
-  const unstaged = new Set(rawRecords(files.out).keys());
+  // What differs from the index by content, not just by stat (a touched file), without taking the index's lock.
+  const unstaged = unstagedPaths(status.out);
+  // Only files that were merely touched are refreshed, the one time: the lock would fail a git the user runs meanwhile.
+  if ([...rawRecords(files.out).keys()].some((p) => !unstaged.has(p))) await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const shown = new Set(d.files.map((f) => f.path));
   const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
 

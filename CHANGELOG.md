@@ -19,6 +19,7 @@
 - On a busy machine, the commit you select shows sooner: git runs a few at a time, the most recent request first, instead of every prefetched diff at once.
 - Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
 - A pull request's diff since your last review, after a force-push, shows files with non-ASCII names too.
+- Looking for uncommitted changes no longer takes git's index lock each time (only once after files were merely touched), so a `git add` or `git commit` in a terminal no longer fails now and then with *index.lock: File exists* while legit is open.
 
 ## 0.26.0 — 2026-11-15
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { utimesSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommitDiff } from '../src/shared/types.ts';
 import { Git, type RunOpts } from '../src/server/git.ts';
@@ -66,4 +67,27 @@ test("listing again asks git only for the patches of files that changed, and lis
   assert.deepEqual(split, await fresh());
   assert.deepEqual(split.filter((f) => f.path === 'c' || f.path === 'd').map((f) => f.status), ['D', 'A']);
   assert.deepEqual(patches.splice(0), [['--', 'c', 'd']]);
+});
+
+test("listing uncommitted changes takes the index's lock only to refresh files that were merely touched", async () => {
+  const { write, commit } = t;
+  commit('base', { a: 'a\n', b: 'b\n', c: 'c\n' });
+  write('a', 'A\n');
+  const repo = await Git.open(t.dir);
+  const refreshes: string[][] = [];
+  const run = repo.run.bind(repo);
+  repo.run = (args: string[], opts?: RunOpts) => {
+    if (args[0] === 'update-index') refreshes.push(args);
+    return run(args, opts);
+  };
+  await sleep(1100);
+  const paths = async () => (await workDiff(repo, '')).diff.files.map((f) => [f.path, f.stage]);
+  assert.deepEqual(await paths(), [['a', 'none']]);
+  assert.equal(refreshes.length, 0);
+  // Same content, new stat: not a change, and refreshed once.
+  utimesSync(`${t.dir}/b`, new Date(), new Date(Date.now() + 5000));
+  assert.deepEqual(await paths(), [['a', 'none']]);
+  assert.equal(refreshes.length, 1);
+  assert.deepEqual(await paths(), [['a', 'none']]);
+  assert.equal(refreshes.length, 1);
 });
