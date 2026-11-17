@@ -494,8 +494,10 @@ export interface RepoGone {
   code: 'repo-gone';
   /** The folder that was shown. */
   root: string;
-  /** The worktree to go to instead (the main one, else another), if any is left. */
+  /** The worktree to go to instead (where it was moved, else the main one, else another), if any is left. */
   to: string | null;
+  /** The others to try, in turn, if going to `to` is refused. */
+  or: string[];
   /** Where the browser version serves `to`. */
   url?: string;
 }

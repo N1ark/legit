@@ -28,7 +28,7 @@ import { type TreeWatch, watchTree } from './watch.ts';
 import {
   abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
-import { addWorktree, fallbackWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
+import { addWorktree, fallbackWorktrees, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import { cloneInfo, cloneRepo, cloned } from './clone.ts';
 import { checkoutPr } from './gh/checkout.ts';
 import type { CommitDiff, FileContents, RepoGone, SettingsInfo } from '../shared/types.ts';
@@ -155,9 +155,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     stopWatching();
     clearInterval(checking);
     gone = (async (): Promise<RepoGone> => {
-      const to = await fallbackWorktree(repo).catch(() => null);
+      const [to = null, ...or] = await fallbackWorktrees(repo).catch(() => []);
       const url = to && opts.open ? await opts.open(to).catch(() => undefined) : undefined;
-      return { error: `${basename(root)} is gone: ${root} was deleted or moved.`, code: 'repo-gone', root, to, ...(url ? { url } : {}) };
+      return { error: `${basename(root)} is gone: ${root} was deleted or moved.`, code: 'repo-gone', root, to, or, ...(url ? { url } : {}) };
     })();
     void gone.then((g) => {
       for (const c of clients) c.write(`event: gone\ndata: ${JSON.stringify(g)}\n\n`);

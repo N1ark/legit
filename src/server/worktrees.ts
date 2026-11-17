@@ -5,7 +5,7 @@
 // you're in moves the window to the main worktree.
 
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -207,22 +207,28 @@ export function removeWorktree(
 }
 
 /**
- * Where to go once this worktree is gone (see `Repo.gone`): the main worktree, else another that's
- * still there; null when there's none, or the repository is gone too. Asked of its git dir, as the folder's gone.
+ * Where to go once this worktree is gone (see `Repo.gone`), best first: where `git worktree move` took
+ * it, the main worktree, then the others still there; none when the repository is gone too. Asked of
+ * its git dir, as the folder's gone.
  */
-export async function fallbackWorktree(repo: Repo): Promise<string | null> {
-  const { commonDir, root } = repo.git;
-  if (!existsSync(commonDir)) return null;
+export async function fallbackWorktrees(repo: Repo): Promise<string[]> {
+  const { commonDir, gitDir, root } = repo.git;
+  if (!existsSync(commonDir)) return [];
   const r = await run(commonDir, ['worktree', 'list', '--porcelain', '-z'], { allowFail: true }).catch(() => null);
-  if (r?.code !== 0) return null;
+  if (r?.code !== 0) return [];
   const gone = real(root);
+  const out: string[] = [];
   for (const block of r.out.toString('utf8').split('\0\0')) {
     const lines = block.split('\0');
     const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
     if (!path || lines.includes('bare') || lines.some((l) => l.startsWith('prunable'))) continue;
-    if (real(path) !== gone && existsSync(join(path, '.git'))) return path;
+    if (real(path) !== gone && existsSync(join(path, '.git'))) out.push(path);
   }
-  return null;
+  // A linked worktree's git dir names its folder: moved, that's where it went.
+  const moved = gitDir === commonDir ? null : await readFile(join(gitDir, 'gitdir'), 'utf8').then((f) => real(dirname(f.trim())), () => null);
+  const at = moved ? out.findIndex((p) => real(p) === moved) : -1;
+  if (at > 0) out.unshift(...out.splice(at, 1));
+  return out;
 }
 
 /** The worktree at `path`, if it's one of this repository's (to switch to it). */

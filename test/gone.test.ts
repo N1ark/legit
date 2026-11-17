@@ -132,6 +132,23 @@ test("a worktree whose git dir is pruned while its folder stays is gone too; the
   }
 });
 
+test('a worktree moved with git worktree move: the page follows it, with the main worktree to fall back on', async () => {
+  const wt = join(t.dir, '..', 'wt');
+  t.git('worktree', 'add', '-q', '-b', 'b', wt);
+  t.git('worktree', 'add', '-q', '-b', 'c', join(t.dir, '..', 'other'));
+  const s = await serveAt(wt);
+  const p = await page(s.url);
+  try {
+    await sleep(200);
+    t.git('worktree', 'move', wt, join(t.dir, '..', 'moved'));
+    const g = await p.gone();
+    assert.deepEqual([g.to, ...g.or], [join(t.dir, '..', 'moved'), t.dir, join(t.dir, '..', 'other')].map((x) => realpathSync(x)));
+  } finally {
+    await p.close();
+    s.close();
+  }
+});
+
 test('the whole repository deleted: gone, with nowhere to go', async () => {
   const s = await serveAt(t.dir);
   const p = await page(s.url);

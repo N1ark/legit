@@ -835,14 +835,15 @@ class App {
     if (this.gone || this.leaving) return;
     this.gone = g;
     if (!g.to) return;
-    try {
-      if (IS_TAURI) await invoke('open_worktree', { path: g.to });
-      // Replaced, so going back doesn't come back to it.
-      else if (g.url) location.replace(g.url);
-      else this.gone = { ...g, to: null };
-    } catch (e) {
-      this.gone = { ...g, to: null, error: `${g.error} ${e instanceof Error ? e.message : String(e)}` };
+    // Replaced, so going back doesn't come back to it.
+    if (!IS_TAURI) return g.url ? location.replace(g.url) : void (this.gone = { ...g, to: null });
+    for (const path of [g.to, ...g.or]) {
+      try {
+        this.gone = { ...g, to: path };
+        return await invoke('open_worktree', { path });
+      } catch {}
     }
+    this.gone = { ...g, to: null };
   }
 
   /** The stash shown in place of the selected commit, if any (from the stashes panel). */
