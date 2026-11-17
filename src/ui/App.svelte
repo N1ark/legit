@@ -117,6 +117,12 @@
       else app.refresh();
     };
     events.addEventListener('progress', (e) => app.gotProgress(JSON.parse(e.data)));
+    // Connected again after the connection dropped (a busy or sleeping machine): what changed meanwhile wasn't said.
+    let connected = false;
+    events.onopen = () => {
+      if (connected) app.workChanged();
+      connected = true;
+    };
     const focus = () => {
       if (blind) app.workChanged();
       else app.refresh();
