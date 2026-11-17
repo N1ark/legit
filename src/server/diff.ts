@@ -195,15 +195,17 @@ export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { 
       if (/^\d+$/.test(n ?? '')) sizes.set(sha, +n);
     }
   }
-  for (const k of want) {
-    const f = d.files[k];
-    const s: { oldSize?: number; newSize?: number } = {};
-    if (f.status !== 'A' && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
-    if (f.status !== 'D') {
-      s.newSize = absent(f.newSha) ? await lstat(onDisk(git, f.path)).then((st) => st.size, () => undefined) : sizes.get(f.newSha);
-    }
-    out.set(k, s);
-  }
+  await Promise.all(
+    want.map(async (k) => {
+      const f = d.files[k];
+      const s: { oldSize?: number; newSize?: number } = {};
+      if (f.status !== 'A' && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
+      if (f.status !== 'D') {
+        s.newSize = absent(f.newSha) ? await lstat(onDisk(git, f.path)).then((st) => st.size, () => undefined) : sizes.get(f.newSha);
+      }
+      out.set(k, s);
+    }),
+  );
   return out;
 }
 
