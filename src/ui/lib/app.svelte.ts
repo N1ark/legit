@@ -5,16 +5,17 @@ import { highlight, prepare } from './highlighter.ts';
 import { type Expansion, type RowPlace, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
+import { type Older, carryOlder } from './older.ts';
 import type { CsvIndex } from './csv.ts';
 import { DocDiff } from './md-diff.ts';
 import { renderSide, renderedDiff, renderedPaths } from './rendered.ts';
 import { readTable } from './tables.ts';
-import { recall } from './desktop.ts';
+import { invoke, recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
 import type {
   CommitInfo, DiffSummary, DisplaySettings, LocatedCommit, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
-  Stashes, SyncResult,
+  RepoGone, Stashes, SyncResult,
 } from '../../shared/types.ts';
 
 /** GETs index.html sent before the bundle loaded, by path. */
@@ -31,8 +32,18 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
         : { method: 'POST', headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify(body) },
     ));
   const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(data.error ?? res.statusText), { code: data.code as string | undefined });
+  if (!res.ok) return refuse(data, res.statusText);
   return data;
+}
+
+/**
+ * A failed response's error. When it's that the worktree is gone (`RepoGone`), the page goes elsewhere
+ * (see `App.lost`) and the caller never hears back: nothing it would do or say then matters.
+ */
+export function refuse(data: { error?: string; code?: string }, status: string): Promise<never> {
+  if (data.code !== 'repo-gone') return Promise.reject(Object.assign(new Error(data.error ?? status), { code: data.code }));
+  app.lost(data as RepoGone);
+  return new Promise(() => {});
 }
 
 class App {
@@ -56,7 +67,7 @@ class App {
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
-  private older = $state.raw<({ from: string } & OlderCommits) | null>(null);
+  private older = $state.raw<Older | null>(null);
   loadingOlder = $state(false);
   /** Merges whose commits are listed under them, by SHA (null while loading). */
   expanded = $state.raw<Record<string, MergedCommits | null>>({});
@@ -135,9 +146,10 @@ class App {
       this.kept = kept.views;
       this.selected = kept.selected;
       this.anchor = kept.anchor;
+      this.keptFor = kept.root ?? null;
     }
     await this.refresh();
-    if (!kept || !this.repo) return;
+    if (!kept || !this.repo || this.keptFor === undefined) return;
     // Commits listed under a merge only exist once it's expanded again.
     const merges = kept.expanded.filter((s) => this.bySha.get(s)?.merge);
     await Promise.all(merges.map((s) => this.toggleMerge(s, true)));
@@ -152,6 +164,8 @@ class App {
   /** What views asked to keep (see `keep`) and what they left (see `restore`). */
   private keepers = new Map<string, () => unknown>();
   private kept: Record<string, unknown> = {};
+  /** The repository what was kept is of; undefined once it turned out to be another's. */
+  private keptFor: string | null | undefined = null;
 
   /** Have `get()` kept under `key` when the window switches repo. Returns the cleanup, for an $effect. */
   keep(key: string, get: () => unknown) {
@@ -172,6 +186,7 @@ class App {
   /** The view to come back to (see lib/desktop.ts). */
   snapshot(): View {
     return {
+      root: this.repo?.root,
       selected: this.selected,
       anchor: this.anchor,
       stash: this.stash,
@@ -185,6 +200,7 @@ class App {
    * asked meanwhile; asked during an operation, it waits for it to end (it may still be changing things).
    */
   refresh(): Promise<void> {
+    if (this.gone) return Promise.resolve();
     if (this.busy) {
       this.stale = true;
       return Promise.resolve();
@@ -209,7 +225,7 @@ class App {
     try {
       const res = await (sent ?? fetch('/api/state'));
       const text = await res.text();
-      if (!res.ok) throw new Error((JSON.parse(text) as { error?: string }).error ?? res.statusText);
+      if (!res.ok) return void (await refuse(JSON.parse(text), res.statusText));
       // Window focus and file events refresh far more often than anything changes.
       if (gen !== this.gen || (text === this.fetched?.text && this.repo === this.fetched.repo)) return;
       this.setRepo(JSON.parse(text));
@@ -231,9 +247,15 @@ class App {
 
   private setRepo(repo: RepoState, focus?: string[]) {
     const first = !this.repo;
+    // Kept by another repository's page on this origin (its port used again): none of it applies here.
+    if (first && this.keptFor && this.keptFor !== repo.root) {
+      [this.kept, this.selected, this.anchor, this.keptFor] = [{}, [], null, undefined];
+    }
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     repo.commits = keepCommits(this.repo?.commits, repo.commits);
+    const older = carryOlder(this.repo?.commits ?? NONE, this.older, repo.commits);
+    if (older) this.older = older;
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(this.commits.map((c) => c.sha));
@@ -748,12 +770,25 @@ class App {
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
   );
   /** Avatar URL by lowercased email, set once the picture is loaded; null when there's none (initials are shown instead). */
-  avatars = $state<Record<string, string | null>>({});
+  avatars = $state.raw<Record<string, string | null>>({});
   private avatarsPending = new Set<string>();
+  /** Pictures in since the last update: shown together, so the rows showing them redraw once, not once each. */
+  private avatarsIn: Record<string, string | null> | null = null;
+
+  private gotAvatar(email: string, src: string | null) {
+    if (!this.avatarsIn) {
+      this.avatarsIn = {};
+      setTimeout(() => {
+        this.avatars = { ...this.avatars, ...this.avatarsIn };
+        this.avatarsIn = null;
+      }, 50);
+    }
+    this.avatarsIn[email] = src;
+  }
 
   loadAvatars(emails: string[]) {
     const need = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
-      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e),
+      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e) && !(this.avatarsIn && e in this.avatarsIn),
     );
     if (!need.length) return;
     for (const e of need) this.avatarsPending.add(e);
@@ -761,8 +796,7 @@ class App {
       .then((r) =>
         Promise.all(
           Object.entries(r).map(async ([email, url]) => {
-            const src = url && (await preloadAvatar(url));
-            this.avatars = { ...this.avatars, [email]: src || null };
+            this.gotAvatar(email, (url && (await preloadAvatar(url))) || null);
           }),
         ),
       )
@@ -799,8 +833,13 @@ class App {
   display = $state.raw<DisplaySettings>({ wrap: 'none', wrapColumn: 100, guides: [] });
 
   async loadDisplay() {
-    this.display = await request<DisplaySettings>('/api/display').catch(() => this.display);
+    // Settings changed twice quickly: the answer to the first may come last.
+    const n = ++this.displayAsked;
+    const d = await request<DisplaySettings>('/api/display').catch(() => null);
+    if (d && n === this.displayAsked) this.display = d;
   }
+
+  private displayAsked = 0;
 
   /** Diffs' summaries say which files are collapsed and how they're highlighted: drop them, and tell open diffs. */
   settingsChanged() {
@@ -812,6 +851,27 @@ class App {
   workChanged() {
     this.workTick++;
     this.refresh();
+  }
+
+  /** The worktree shown is gone (deleted or moved outside legit); set once. The page shows that in place of everything else. */
+  gone = $state.raw<RepoGone | null>(null);
+  /** The worktree is being left on purpose (removing it), so its going isn't news. */
+  leaving = false;
+
+  /** Go to the worktree the server says to instead (the main one, else another), if there's one; else just say it's gone. */
+  async lost(g: RepoGone) {
+    if (this.gone || this.leaving) return;
+    this.gone = g;
+    if (!g.to) return;
+    // Replaced, so going back doesn't come back to it.
+    if (!IS_TAURI) return g.url ? location.replace(g.url) : void (this.gone = { ...g, to: null });
+    for (const path of [g.to, ...g.or]) {
+      try {
+        this.gone = { ...g, to: path };
+        return await invoke('open_worktree', { path });
+      } catch {}
+    }
+    this.gone = { ...g, to: null };
   }
 
   /** The stash shown in place of the selected commit, if any (from the stashes panel). */
@@ -909,7 +969,7 @@ class App {
    * for (a background fetch is just dropped).
    */
   switchBlocker = $derived(
-    this.busy ? switchRefusal(this.running) : this.userFetching || this.fetchingBase ? switchRefusal('fetch') : null,
+    this.gone ? null : this.busy ? switchRefusal(this.running) : this.userFetching || this.fetchingBase ? switchRefusal('fetch') : null,
   );
 
   /**
@@ -981,6 +1041,8 @@ export interface ShownStash {
 
 /** What a window remembers of a repo while it shows another. */
 interface View {
+  /** Missing when kept by an older version. */
+  root?: string;
   selected: string[];
   anchor: string | null;
   stash: ShownStash | null;

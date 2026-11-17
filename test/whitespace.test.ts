@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { commitDiff, fileContent, summarize } from '../src/server/diff.ts';
 import { Git } from '../src/server/git.ts';
-import { matchKeys, whitespacePairs } from '../src/shared/whitespace.ts';
+import { bare, matchKeys, whitespacePairs } from '../src/shared/whitespace.ts';
 import { ADDED, CONTEXT, SPACED, buildRows, changesIn, isHead, rowOfChange } from '../src/ui/lib/rows.ts';
 import { setup } from './util.ts';
 
@@ -54,6 +54,34 @@ test('whitespace pairs: only within a run of changes, never across a missing new
   assert.equal(whitespacePairs('-+', ['a + b', '\ta+b'], () => false).size, 1);
   // A UTF-8 byte that reads as a no-break space in latin1 isn't whitespace.
   assert.equal(whitespacePairs('-+', [' x', 'x'], () => false).size, 0);
+});
+
+test('whitespace pairs: the same as matching every line by its text without whitespace', () => {
+  const reference = (types: string, text: string[], noNewline: (k: number) => boolean) => {
+    const out = new Map<number, number>();
+    for (let k = 0; k < types.length; ) {
+      if (types[k] === ' ') {
+        k++;
+        continue;
+      }
+      const removed: number[] = [];
+      const added: number[] = [];
+      for (; k < types.length && types[k] !== ' '; k++) (types[k] === '-' ? removed : added).push(k);
+      const key = (j: number) => bare(text[j]) + (noNewline(j) ? '\n' : '');
+      for (const [a, b] of matchKeys(removed.map(key), added.map(key))) out.set(removed[a], added[b]);
+    }
+    return out;
+  };
+  let s = 11;
+  const r = (n: number) => Math.floor(((s = (s * 1103515245 + 12345) % 2 ** 31) / 2 ** 31) * n);
+  const word = () => ['a', 'b', 'x y', '\tb', 'a ', ' \xa0', ''][r(7)];
+  for (let round = 0; round < 500; round++) {
+    const n = 1 + r(14);
+    const types = Array.from({ length: n }, () => ' -+'[r(3)]).join('');
+    const text = Array.from({ length: n }, () => word() + word());
+    const eof = r(n + 3);
+    assert.deepEqual([...whitespacePairs(types, text, (k) => k === eof)], [...reference(types, text, (k) => k === eof)], JSON.stringify([types, text, eof]));
+  }
 });
 
 test('hiding whitespace shows each pair as one row carrying both changes', () => {

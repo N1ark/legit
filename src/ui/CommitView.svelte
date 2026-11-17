@@ -220,7 +220,8 @@
     if (e.key === 'Escape') clear();
     else if ((e.key === 'Backspace' || e.key === 'Delete') && !readonly) {
       e.preventDefault();
-      remove(selection());
+      // Once per press, not again and again while it's held: each is a rewrite.
+      if (!e.repeat) remove(selection());
     }
   }
 

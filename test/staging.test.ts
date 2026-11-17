@@ -154,6 +154,42 @@ test("listing again shares what hasn't changed (untracked files once settled) an
   assert.equal(git('show', ':f'), 'a\nb\nB\nc\nd\ne\nf\ng\nh\nnew');
 });
 
+test('asked for while being read, the changes are read once more for all who asked, seeing what changed meanwhile', async () => {
+  const { write, commit } = t;
+  commit('base', { f: 'one\n' });
+  write('f', 'two\n');
+  const repo = await Repo.open(t.dir);
+  const first = repo.work();
+  write('f', 'three\n');
+  const [second, third] = [repo.work(), repo.work()];
+  assert.equal(second, third);
+  const lines = (d: CommitDiff) => d.files[0].hunks[0].lines.map((l) => l.t + l.s);
+  await first;
+  assert.deepEqual(lines(await second), ['-one', '+three']);
+  const fourth = repo.work();
+  assert.notEqual(fourth, second);
+  await fourth;
+});
+
+test('snapshots: the newest are kept, one used again counts as new, and big ones are fewer', async () => {
+  t.commit('base', { f: 'f\n' });
+  const repo = await Repo.open(t.dir);
+  const diff = (path: string, line = 'x'): CommitDiff => ({
+    sha: '',
+    files: [{ path, status: 'M', oldMode: '100644', newMode: '100644', oldSha: '', newSha: '', binary: false, partial: true, hunks: [{ header: '@@', oldStart: 1, oldCount: 1, newStart: 1, lines: [{ t: '+', s: line, i: 0, n: 1 }] }], added: 1, removed: 0, token: path }],
+  });
+  const conflict = repo.snapshot('conflict', diff('c')).sha;
+  for (let k = 0; k < 25; k++) {
+    if (k === 10) assert.equal(repo.snapshot('conflict', diff('c')).sha, conflict);
+    repo.snapshot('work', diff(`w${k}`));
+  }
+  assert.equal(repo.snapshots.size, 20);
+  assert.ok(repo.snapshots.has(conflict));
+  const big = 'x'.repeat(10 * 1024 * 1024);
+  const keys = Array.from({ length: 10 }, (_, k) => repo.snapshot('work', diff(`big${k}`, big)).sha);
+  assert.deepEqual([...repo.snapshots.keys()], keys.slice(-6));
+});
+
 test('lines of a long file with many changes align without running out of memory', () => {
   const a = Array.from({ length: 20000 }, (_, i) => `line ${i}`);
   const b = a.filter((_, i) => i % 10).map((s, i) => (i % 10 === 1 ? `${s} changed` : s));

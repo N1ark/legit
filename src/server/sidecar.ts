@@ -3,12 +3,16 @@
 //
 // Without a repo it's a spare, started ahead of need: it loads, then waits for the repo's path
 // as the first line on stdin. Prints the URL once listening. Exits when stdin closes (the app
-// closed the window, quit, or crashed), after letting any running operation finish.
+// closed the window, quit, or crashed), after letting any running operation finish, or once its repo
+// is gone and the window has left it (the app then starts a fresh server if the folder comes back).
 
 import { parseArgs } from 'node:util';
 import { warmGithub } from './gh/routes.ts';
+import { survive } from './log.ts';
 import { Repo } from './repo.ts';
 import { serve } from './server.ts';
+
+survive();
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -42,13 +46,14 @@ try {
   process.exit(1);
 }
 
-const { url } = await serve(repo, { port: 0, dist: values.dist! });
+const leave = async () => {
+  await repo.idle();
+  process.exit(0);
+};
+const { url } = await serve(repo, { port: 0, dist: values.dist!, onGone: leave });
 console.log(url);
 // The app keeps stderr in a log: this says which run what follows is from.
 console.error(`${new Date().toISOString()} serving ${repo.git.root}`);
 
-process.stdin.on('end', async () => {
-  await repo.idle();
-  process.exit(0);
-});
+process.stdin.on('end', leave);
 process.stdin.resume();

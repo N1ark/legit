@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { unlink, writeFile } from 'node:fs/promises';
+import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
@@ -37,6 +37,16 @@ const BACKUPS = 'refs/legit/backups';
 /** Parsed diffs kept, and about how much memory they may take together. */
 const MAX_DIFFS = 200;
 const MAX_DIFF_BYTES = 128 * 1024 * 1024;
+/** A file changed this recently (ms) may change again within its time's resolution (a second, on some file systems). */
+const RACY = 2000;
+
+/**
+ * Working-tree snapshots kept, and about how much memory they may take (counting the files they share
+ * for each), past the newest few, which a page may still be showing or staging from.
+ */
+const MAX_SNAPSHOTS = 20;
+const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const MIN_SNAPSHOTS = 4;
 
 /** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
 const diffBytes = (d: CommitDiff) => {
@@ -119,10 +129,25 @@ export class Repo {
   /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
   snapshots = new Map<string, CommitDiff>();
   snapshotIds = new Map<string, string>();
+  private snapshotBytes = new Map<string, number>();
+  private snapshotsBytes = 0;
   private nextSnapshot = 1;
+
+  /** The worktree had a `.git` (a folder, or a file naming its git dir) when opened. */
+  private dotGit: boolean;
 
   constructor(git: Git) {
     this.git = git;
+    this.dotGit = existsSync(join(git.root, '.git'));
+  }
+
+  /**
+   * The worktree is gone: its folder deleted or moved (`git worktree remove`, `rm -rf`), or its git
+   * dir (a removed or pruned worktree's, or the whole repository's). Checked often, so only `stat`s.
+   */
+  gone(): boolean {
+    const { root, gitDir, commonDir } = this.git;
+    return !existsSync(root) || (this.dotGit && !existsSync(join(root, '.git'))) || !existsSync(join(gitDir, 'HEAD')) || !existsSync(commonDir);
   }
 
   static async open(path: string) {
@@ -216,25 +241,78 @@ export class Repo {
     return state;
   }
 
-  /** The branch's upstream, and every remote-tracking ref, in one `for-each-ref`. */
+  /** The branch's upstream, and every remote-tracking ref (read again only once they may have changed: see `remotesStamp`). */
   private async refView(branch: string | null): Promise<RefView> {
-    const out = await this.git.text([
-      'for-each-ref',
-      '--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)',
-      ...(branch ? [`refs/heads/${branch}`] : []),
-      'refs/remotes/',
+    const [own, remotes] = await Promise.all([
+      branch
+        ? this.git.text(['for-each-ref', '--format=%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)', `refs/heads/${branch}`])
+        : '',
+      this.remoteRefs(),
     ]);
-    const view: RefView = { sha: null, upstream: '', remote: '', remoteRef: '', remotes: new Map(), fingerprint: '' };
+    const [sha, upstream = '', remote = '', remoteRef = ''] = own ? own.split('\0') : [];
+    return { sha: sha || null, upstream, remote, remoteRef, ...remotes };
+  }
+
+  private remotesSeen: { stamp: string; refs: Pick<RefView, 'remotes' | 'fingerprint'> } | null = null;
+
+  /** Every remote-tracking ref (refname → SHA), and a fingerprint that changes whenever one does. */
+  private async remoteRefs(): Promise<Pick<RefView, 'remotes' | 'fingerprint'>> {
+    const stamp = await this.remotesStamp().catch(() => null);
+    if (stamp && this.remotesSeen?.stamp === stamp) return this.remotesSeen.refs;
+    const out = await this.git.text(['for-each-ref', '--format=%(refname)%00%(objectname)', 'refs/remotes/']);
+    const remotes = new Map<string, string>();
     const hash = createHash('sha1');
     for (const line of out.split('\n')) {
-      const [ref, sha, upstream, remote, remoteRef] = line.split('\0');
-      if (ref.startsWith('refs/remotes/')) {
-        view.remotes.set(ref, sha);
-        hash.update(`${ref} ${sha}\n`);
-      } else if (ref === `refs/heads/${branch}`) Object.assign(view, { sha, upstream, remote, remoteRef });
+      const [ref, sha] = line.split('\0');
+      if (!sha) continue;
+      remotes.set(ref, sha);
+      hash.update(`${ref} ${sha}\n`);
     }
-    view.fingerprint = hash.digest('hex');
-    return view;
+    const refs = { remotes, fingerprint: hash.digest('hex') };
+    if (stamp) this.remotesSeen = { stamp, refs };
+    return refs;
+  }
+
+  /** Directories under refs/remotes as last listed, by path: listed again only when one's changed. */
+  private remoteDirs = new Map<string, { mtime: number; dirs: string[] }>();
+
+  /**
+   * Changes whenever a remote-tracking ref may have: git writes a ref by renaming a file into its
+   * directory, so packed-refs and those directories' times say. Null when they can't (a reftable,
+   * or something changed too recently for its time to be trusted).
+   */
+  private async remotesStamp(): Promise<string | null> {
+    const common = this.git.commonDir;
+    if (existsSync(join(common, 'reftable'))) return null;
+    const now = Date.now();
+    const parts: string[] = [];
+    const time = async (path: string) => {
+      const st = await stat(path).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      });
+      if (st && now - st.mtimeMs < RACY) throw new Error('racy');
+      parts.push(st ? `${path} ${st.ino} ${st.size} ${st.mtimeMs}` : `${path} none`);
+      return st;
+    };
+    const walk = async (dir: string): Promise<void> => {
+      const st = await time(dir);
+      if (!st) return void this.remoteDirs.delete(dir);
+      let seen = this.remoteDirs.get(dir);
+      if (seen?.mtime !== st.mtimeMs) {
+        const dirs = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => join(dir, e.name));
+        this.remoteDirs.set(dir, (seen = { mtime: st.mtimeMs, dirs }));
+      }
+      await Promise.all(seen.dirs.map(walk));
+    };
+    try {
+      await time(join(common, 'packed-refs'));
+      await walk(join(common, 'refs', 'remotes'));
+    } catch (e) {
+      if ((e as Error).message === 'racy') return null;
+      throw e;
+    }
+    return parts.sort().join('\n');
   }
 
   /**
@@ -286,10 +364,15 @@ export class Repo {
     const [first, ...others] = (await this.git.commit(sha)).parents;
     if (!others.length) return { commits: [], total: 0 };
     const range = [...others, '--not', first];
-    const [list, unpushed, total] = await Promise.all([
-      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range]),
-      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range, '--remotes']),
-      this.git.text(['rev-list', '--count', ...range]),
+    // Each walks all the merge brought in (thousands of commits, from a long-lived branch): kept, as only the remotes change them.
+    const { fingerprint } = await this.remoteRefs();
+    const [[list, total], unpushed] = await Promise.all([
+      this.git.memo(
+        `merged ${sha}`,
+        () => Promise.all([this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range]), this.git.text(['rev-list', '--count', ...range])]),
+        true,
+      ),
+      this.git.memo(`merged-unpushed ${sha} ${fingerprint}`, () => this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range, '--remotes']), true),
     ]);
     const local = new Set(unpushed.split('\n'));
     const commits = list ? await this.git.loadCommits(list.split('\n')) : [];
@@ -459,8 +542,8 @@ export class Repo {
       paths = [...new Set([...(await changed(fromBase, from)), ...(await changed(toBase, to))])];
       if (!paths.length) return parseDiff('', key);
     }
-    // Many paths are filtered from the whole diff rather than passed to git.
-    const few = paths && paths.length <= 1000 ? paths : null;
+    // Many paths are filtered from the whole diff rather than passed to git, as are paths that aren't UTF-8 (arguments are).
+    const few = paths && paths.length <= 1000 && paths.every((p) => fromUtf8(toUtf8(p)) === p) ? paths.map(toUtf8) : null;
     const { out } = await this.git.run(
       [...(few ? ['--literal-pathspecs'] : []), 'diff-tree', ...RENAME_ARGS, from, to, ...(few ? ['--', ...few] : [])],
     );
@@ -1033,8 +1116,27 @@ export class Repo {
     h.redo = [];
   }
 
-  /** Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of. */
-  async work(): Promise<CommitDiff> {
+  private working: Promise<CommitDiff> | null = null;
+  private workNext: Promise<CommitDiff> | null = null;
+
+  /**
+   * Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of.
+   * Asked for while they're being read, they're read once more after, for all who asked meanwhile.
+   */
+  work(): Promise<CommitDiff> {
+    if (this.workNext) return this.workNext;
+    const start = () => {
+      const p = this.readWork().finally(() => this.working === p && (this.working = null));
+      return (this.working = p);
+    };
+    if (!this.working) return start();
+    return (this.workNext = this.working.catch(() => {}).then(() => {
+      this.workNext = null;
+      return start();
+    }));
+  }
+
+  private async readWork(): Promise<CommitDiff> {
     // Never read a half-applied stage/unstage/commit.
     await this.idle();
     const head = await this.head();
@@ -1047,11 +1149,24 @@ export class Repo {
   snapshot(kind: string, d: CommitDiff): CommitDiff {
     const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token + (f.conflicted ? '\0!' : '')).join('\0');
     let key = this.snapshotIds.get(content);
-    if (!key || !this.snapshots.has(key)) {
+    const had = key && this.snapshots.get(key);
+    if (key && had) {
+      // Used last, so a view still on it outlives the snapshots made since for another (conflicts, say).
+      this.snapshots.delete(key);
+      this.snapshots.set(key, had);
+    } else {
       key = `w${this.nextSnapshot++}`;
       this.snapshotIds.set(content, key);
       this.snapshots.set(key, d);
-      while (this.snapshots.size > 20) this.snapshots.delete(this.snapshots.keys().next().value!);
+      const bytes = diffBytes(d);
+      this.snapshotBytes.set(key, bytes);
+      this.snapshotsBytes += bytes;
+      for (const k of this.snapshots.keys()) {
+        if (this.snapshots.size <= MIN_SNAPSHOTS || (this.snapshots.size <= MAX_SNAPSHOTS && this.snapshotsBytes <= MAX_SNAPSHOT_BYTES)) break;
+        this.snapshots.delete(k);
+        this.snapshotsBytes -= this.snapshotBytes.get(k)!;
+        this.snapshotBytes.delete(k);
+      }
       while (this.snapshotIds.size > 40) this.snapshotIds.delete(this.snapshotIds.keys().next().value!);
     }
     d.sha = key;

@@ -21,10 +21,11 @@ test('the diff between two commits, and between two versions only in the files e
   t.git('switch', '-q', 'main');
   const base = t.commit('on main', { m: 'm\n' });
   t.git('switch', '-q', '-c', 'rebased');
-  const b2 = t.commit('one again', { a: 'a\n', b: 'b\n' });
+  const b2 = t.commit('one again', { a: 'a\n', b: 'b\n', 'é': 'é\n' });
   const repo = await Repo.open(t.dir);
-  assert.deepEqual(paths(await repo.diff(`r${b2}-${b1}`)), ['b', 'm']);
-  assert.deepEqual(paths(await repo.diff(`r${b2}-${b1}-${base}-${first}`)), ['b']);
+  const e = Buffer.from('é').toString('latin1');
+  assert.deepEqual(paths(await repo.diff(`r${b2}-${b1}`)), ['b', 'm', e]);
+  assert.deepEqual(paths(await repo.diff(`r${b2}-${b1}-${base}-${first}`)), ['b', e]);
   assert.deepEqual(paths(await repo.diff(`r${b1}-${b1}-${first}-${first}`)), []);
 });
 

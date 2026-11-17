@@ -33,15 +33,20 @@
   let now = $state(Date.now());
   let started = false;
   onMount(() => {
-    const tick = setInterval(() => {
+    // A hidden window (minimized, say) neither fetches nor redraws; it catches up as it shows again.
+    const tick = () => {
+      if (document.hidden) return;
       now = Date.now();
       app.fetchIfOlder(5 * 60_000);
-    }, 30_000);
+    };
+    const timer = setInterval(tick, 30_000);
     const focus = () => app.fetchIfOlder(60_000);
     window.addEventListener('focus', focus);
+    document.addEventListener('visibilitychange', tick);
     return () => {
-      clearInterval(tick);
+      clearInterval(timer);
       window.removeEventListener('focus', focus);
+      document.removeEventListener('visibilitychange', tick);
     };
   });
   // Once the repo has loaded, fetch unless that happened a minute ago.
@@ -75,8 +80,10 @@
     if (!info) return;
     const body = force === 'overwrite' ? { force, expect: info.tip } : { force };
     const forced = !!force;
+    // As they were: the state the push brings back has nothing left to publish.
+    const [was, to] = [mode, where];
     if (await app.op('push', body, undefined, undefined, refused)) {
-      toast(forced ? `Force pushed to ${where}` : mode === 'publish' ? `Published to ${where}` : `Pushed to ${where}`);
+      toast(forced ? `Force pushed to ${to}` : was === 'publish' ? `Published to ${to}` : `Pushed to ${to}`);
     }
   }
 

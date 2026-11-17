@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Pressing <kbd>⌫</kbd> outside a field (or swiping back) no longer takes the window back to the repository shown before; a web link that would open in the window opens in the browser.
+- Picking another repository or worktree while a switch is still on its way ends on the one picked last, not whichever was quicker to load; the repository picker's tick then always marks the repository shown.
+- Holding <kbd>⌫</kbd> on picked changes removes them once, rather than trying again with every key repeat.
+- A view kept for coming back to a repository is only restored in that repository: a page that finds another's (its port used again by another server) starts afresh instead of taking its selection and drafts.
+- When the window's connection to its server drops and comes back (a busy or sleeping Mac), it loads the state again, so changes made in between (a commit from a terminal) show without having to focus the window.
+- Publishing a branch says *Published to …* again, not *Pushed to …*.
+- Changing a setting twice in quick succession can no longer leave open diffs wrapped or highlighted by the first change.
+- A worktree deleted, moved or removed outside legit while it's shown (`rm -rf`, `git worktree remove`, its repository moved) no longer fills the window with errors: within a moment it goes to where `git worktree move` took it, else the main worktree (else another that's still there), or, when the whole repository is gone, says so and offers another.
+- On Linux, ignored folders (node_modules, build output, target) aren't watched for changes any more: a big one no longer uses up the system's file watches (leaving legit blind to changes) or keeps the server busy while a build writes into it. A folder deleted and made again (by a build, a stash, a branch switch) is watched again; before, changes in it went unseen.
+- While files keep changing (a build, an install), the window looks for uncommitted changes less and less often, down to every 2 seconds, instead of four times a second.
+- An operation that meets another git process's lock (a `git commit` waiting on its editor in a terminal) says *Another git process is running in this repository* instead of git's long message.
+- A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
+- Big uncommitted changes refresh several times faster: only the files that changed since the last look are diffed again.
+- Uncommitted changes asked for again while they're still being read (files changing quickly, a slow machine) are read once more for all who asked, instead of once each at the same time.
+- On a busy machine, the commit you select shows sooner: git runs a few at a time, the most recent request first, instead of every prefetched diff at once.
+- Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
+- A pull request's diff since your last review, after a force-push, shows files with non-ASCII names too.
+- Looking for uncommitted changes no longer takes git's index lock each time (only once after files were merely touched), so a `git add` or `git commit` in a terminal no longer fails now and then with *index.lock: File exists* while legit is open.
+- Showing a big merge's commits again (after hiding them, or coming back to the repo) is instant: what it brought in is worked out once.
+- A repository with tens of thousands of remote branches no longer lists them all again on every refresh (each focus, each file saved): only once they may have changed, so the window keeps up while you edit (about 120 ms of work down to 20 with 30,000).
+- The fetch every five minutes waits while the window is minimized or hidden, instead of running git in the background; it catches up when the window shows again.
+- On a long history, a commit made (or dropped) while you're looking far down the list no longer sends the list back to its first thousand commits and the selection to the top.
 - Stepping through commits (holding <kbd>↓</kbd>) no longer lays the page out as each commit's view opens, only once it's drawn; and the file tree no longer throws when the diff is closed as it scrolls.
 - Dragging the scrollbar through a big diff (or jumping far in it) keeps up better: while it moves, only the lines in view are drawn, and the ones around them fill in once it stops.
 - Typing in ⌘F over a big diff is quicker: each letter typed only looks again at the lines the text so far matched, and only redraws the lines whose matches changed.

@@ -7,6 +7,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
@@ -39,7 +40,35 @@ export interface RunOpts {
   onErr?: (chunk: string) => void;
 }
 
+/** A failed git's error, saying plainly when another git holds a lock, or the folder it ran in is gone. */
+export function gitFailure(cwd: string, args: string[], err: string, code: number | string): GitError {
+  if (!existsSync(cwd)) return new GitError(`${cwd} is gone: it was deleted or moved.`, 'repo-gone');
+  const lock = /Unable to create '([^']+\.lock)': File exists/.exec(err)?.[1];
+  if (lock) return new GitError(`Another git process is running in this repository (it holds ${lock}). Try again once it's done.`, 'locked');
+  return new GitError(`git ${args[0]} failed: ${err.trim() || `exit ${code}`}`);
+}
+
+/** Git processes at once (one with a `timeout` aside: it may wait on the network or a hook); past it, they queue. */
+export const MAX_RUNNING = Math.max(2, Math.min(8, availableParallelism()));
+let running = 0;
+const queued: (() => void)[] = [];
+
+/**
+ * Run git. A burst (diffs prefetched, a slow machine) takes turns, the newest first: it's what's
+ * on screen, rather than waiting behind every request before it as dozens of processes share the CPU.
+ */
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
+  if (opts.timeout) return spawnGit(cwd, args, opts);
+  return new Promise<void>((go) => (running < MAX_RUNNING ? (running++, go()) : queued.push(go)))
+    .then(() => spawnGit(cwd, args, opts))
+    .finally(() => {
+      const next = queued.pop();
+      if (next) next();
+      else running--;
+    });
+}
+
+function spawnGit(cwd: string, args: string[], opts: RunOpts): Promise<RunResult> {
   return new Promise((done, fail) => {
     const p = spawn('git', args, {
       cwd,
@@ -54,12 +83,13 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
     });
     p.stdin.on('error', () => {});
     const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
-    p.on('error', fail);
+    // Spawning in a folder that's gone fails as if git weren't installed.
+    p.on('error', (e) => fail(existsSync(cwd) ? e : gitFailure(cwd, args, '', 'ENOENT')));
     p.on('close', (code) => {
       clearTimeout(timer);
       const res = { code: code ?? -1, out: Buffer.concat(out), err: Buffer.concat(err).toString('utf8') };
       if (res.code !== 0 && !opts.allowFail) {
-        fail(new GitError(`git ${args[0]} failed: ${res.err.trim() || `exit ${res.code}`}`));
+        fail(gitFailure(cwd, args, res.err, res.code));
       } else done(res);
     });
     p.stdin.end(opts.input);

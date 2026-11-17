@@ -4,6 +4,17 @@
 /** A line's text without whitespace (ASCII only, as git's: a byte of a UTF-8 character is never one). */
 export const bare = (s: string) => s.replace(/[ \t\n\v\f\r]+/g, '');
 
+/** FNV-1a of `bare(s)` (and whether it lacks its newline), without making it. */
+function bareHash(s: string, noNewline: boolean): number {
+  let h = noNewline ? 0x811c9dc5 ^ 1 : 0x811c9dc5;
+  for (let k = 0; k < s.length; k++) {
+    const c = s.charCodeAt(k);
+    if (c === 32 || (c >= 9 && c <= 13)) continue;
+    h = Math.imul(h ^ c, 0x01000193);
+  }
+  return h;
+}
+
 /** Above this many cells, matching is greedy instead of a longest common subsequence. */
 const LCS_CELLS = 1 << 20;
 
@@ -13,6 +24,9 @@ export function matchKeys(a: string[], b: string[]): [number, number][] {
   const n = b.length;
   const out: [number, number][] = [];
   if (!m || !n) return out;
+  // Most runs have no line in common (an edit, not a reindent): no table to fill.
+  const keys = new Set(a);
+  if (!b.some((k) => keys.has(k))) return out;
   if (m * n > LCS_CELLS) {
     const at = new Map<string, number[]>();
     for (let j = n - 1; j >= 0; j--) (at.get(b[j]) ?? at.set(b[j], []).get(b[j])!).push(j);
@@ -61,8 +75,16 @@ export function whitespacePairs(types: string, text: string[], noNewline: (k: nu
     const added: number[] = [];
     for (; k < types.length && types[k] !== ' '; k++) (types[k] === '-' ? removed : added).push(k);
     if (!removed.length || !added.length) continue;
-    const key = (j: number) => bare(text[j]) + (noNewline(j) ? '\n' : '');
-    for (const [a, b] of matchKeys(removed.map(key), added.map(key))) out.set(removed[a], added[b]);
+    // A line whose hash nothing on the other side shares can't match: it gets a key of its own, not its text.
+    const ra = removed.map((j) => bareHash(text[j], noNewline(j)));
+    const ad = added.map((j) => bareHash(text[j], noNewline(j)));
+    const inA = new Set(ra);
+    const inB = new Set(ad.filter((h) => inA.has(h)));
+    if (!inB.size) continue;
+    const key = (j: number, h: number, own: string) => (inB.has(h) ? bare(text[j]) + (noNewline(j) ? '\n' : '') : own + j);
+    const a = removed.map((j, x) => key(j, ra[x], '\n-'));
+    const b = added.map((j, x) => key(j, ad[x], '\n+'));
+    for (const [x, y] of matchKeys(a, b)) out.set(removed[x], added[y]);
   }
   return out;
 }
