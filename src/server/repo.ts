@@ -1033,8 +1033,27 @@ export class Repo {
     h.redo = [];
   }
 
-  /** Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of. */
-  async work(): Promise<CommitDiff> {
+  private working: Promise<CommitDiff> | null = null;
+  private workNext: Promise<CommitDiff> | null = null;
+
+  /**
+   * Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of.
+   * Asked for while they're being read, they're read once more after, for all who asked meanwhile.
+   */
+  work(): Promise<CommitDiff> {
+    if (this.workNext) return this.workNext;
+    const start = () => {
+      const p = this.readWork().finally(() => this.working === p && (this.working = null));
+      return (this.working = p);
+    };
+    if (!this.working) return start();
+    return (this.workNext = this.working.catch(() => {}).then(() => {
+      this.workNext = null;
+      return start();
+    }));
+  }
+
+  private async readWork(): Promise<CommitDiff> {
     // Never read a half-applied stage/unstage/commit.
     await this.idle();
     const head = await this.head();

@@ -154,6 +154,23 @@ test("listing again shares what hasn't changed (untracked files once settled) an
   assert.equal(git('show', ':f'), 'a\nb\nB\nc\nd\ne\nf\ng\nh\nnew');
 });
 
+test('asked for while being read, the changes are read once more for all who asked, seeing what changed meanwhile', async () => {
+  const { write, commit } = t;
+  commit('base', { f: 'one\n' });
+  write('f', 'two\n');
+  const repo = await Repo.open(t.dir);
+  const first = repo.work();
+  write('f', 'three\n');
+  const [second, third] = [repo.work(), repo.work()];
+  assert.equal(second, third);
+  const lines = (d: CommitDiff) => d.files[0].hunks[0].lines.map((l) => l.t + l.s);
+  await first;
+  assert.deepEqual(lines(await second), ['-one', '+three']);
+  const fourth = repo.work();
+  assert.notEqual(fourth, second);
+  await fourth;
+});
+
 test('lines of a long file with many changes align without running out of memory', () => {
   const a = Array.from({ length: 20000 }, (_, i) => `line ${i}`);
   const b = a.filter((_, i) => i % 10).map((s, i) => (i % 10 === 1 ? `${s} changed` : s));

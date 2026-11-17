@@ -3,6 +3,7 @@
 ## Unreleased
 
 - A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
+- Uncommitted changes asked for again while they're still being read (files changing quickly, a slow machine) are read once more for all who asked, instead of once each at the same time.
 
 ## 0.26.0 — 2026-11-15
 
