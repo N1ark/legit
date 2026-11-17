@@ -3,6 +3,7 @@
 ## Unreleased
 
 - A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
+- Big uncommitted changes refresh several times faster: only the files that changed since the last look are diffed again.
 - Uncommitted changes asked for again while they're still being read (files changing quickly, a slow machine) are read once more for all who asked, instead of once each at the same time.
 - On a busy machine, the commit you select shows sooner: git runs a few at a time, the most recent request first, instead of every prefetched diff at once.
 - Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
