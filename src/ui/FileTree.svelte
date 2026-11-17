@@ -1,3 +1,7 @@
+<script module lang="ts">
+  let knownPad = 0;
+</script>
+
 <script lang="ts">
   // The diff's files by folder. Clicking one scrolls the diff to it; the file being read is
   // highlighted, and kept in sight as the diff scrolls. Double-clicking one opens it in Zed;
@@ -10,6 +14,7 @@
   import { tick, untrack } from 'svelte';
   import type { FileSummary } from '../shared/types.ts';
   import { type TreeRow, fileTree, treeRows } from './lib/tree.ts';
+  import { sized } from './lib/size.ts';
 
   let {
     files,
@@ -69,17 +74,23 @@
   let height = $state(0);
   const shown = $derived(fixedRange(rows.length, ROW, scrollTop - OVERSCAN, height + 2 * OVERSCAN));
 
-  // The list's padding above the rows, read again only when it's resized: reading layout as the
-  // current file changes (each frame of a fast scroll) would force a layout every time.
-  let pad = 0;
+  // The list's padding above the rows, read again only as it's resized, once laid out: reading layout as the
+  // current file changes (each frame of a fast scroll), or as the tree mounts, would force a layout then.
+  let pad = knownPad;
+  const measure = (el: HTMLElement) => {
+    pad = knownPad = above.offsetTop;
+    return el.clientHeight;
+  };
   $effect(() => {
     void height;
-    pad = above.offsetTop;
     natural = rows.length * ROW + 2 * pad;
   });
 
+  /** Its height is in, once laid out: until then, whether the current file is in sight can't be told. */
+  const laidOut = $derived(height > 0);
   $effect(() => {
     const at = current;
+    if (!laidOut) return;
     const k = untrack(() => rows.findIndex((r) => r.kind === 'file' && r.index === at));
     if (k < 0 || !list) return;
     const top = pad + k * ROW;
@@ -129,12 +140,12 @@
 <div
   class="tree"
   bind:this={list}
-  bind:clientHeight={height}
+  {@attach sized(measure, (h) => (height = h))}
   role="tree"
   tabindex="-1"
   aria-label="Changed files"
   {onkeydown}
-  onscroll={() => (scrollTop = list.scrollTop)}
+  onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
 >
   <div bind:this={above} style:height="{shown[0] * ROW}px"></div>
   {#each rows.slice(shown[0], shown[1]) as r, j (r.kind === 'label' ? `l:${r.group}` : r.kind === 'dir' ? `d:${r.group}${r.path}` : r.index)}

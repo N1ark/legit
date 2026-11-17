@@ -11,6 +11,8 @@
   const knownHeights = new Map<string, number>();
   /** The diff's width, as the last view measured it: a new one looks those heights up at it until it's measured. */
   let knownPaneWidth = 0;
+  /** The height of the counts and switches above the file tree, as the last view measured it. */
+  let knownSummary = 0;
 </script>
 
 <script lang="ts">
@@ -69,6 +71,7 @@
   import { lineEntries } from './lib/gh-issues.svelte.ts';
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
   import { tip } from './lib/tip.ts';
+  import { sized } from './lib/size.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
   import { type Match, findAll, markSegments } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
@@ -1331,7 +1334,7 @@
   const savedTreeWidth = persisted('legit:tree-width', TREE_WIDTH);
   let treeWidth = $state(savedTreeWidth.value);
 
-  let summaryHeight = $state(0);
+  let summaryHeight = $state(knownSummary);
   let treeNatural = $state(0);
   /**
    * The side pane's height: the part of the view the diff is in, so both ends of the file list can
@@ -2040,7 +2043,7 @@
     <!-- Never taller than what's on screen of the diff (see sideHeight), so its ends can always be reached. Its own
          height, not a variable the whole diff inherits: that changes as the view scrolls, and would restyle every line. -->
     <div class="side" style:height={showTree ? `${sideHeight}px` : undefined}>
-      <div class="summary muted" bind:clientHeight={summaryHeight}>
+      <div class="summary muted" {@attach sized((el) => el.clientHeight, (h) => (summaryHeight = knownSummary = h))}>
         <div class="stats">
           <div class="stat">
             <span>{ownedOnly ? `${files.filter((_, i) => shown(i)).length} of ` : ''}{files.length} {files.length === 1 ? 'file' : 'files'}</span>

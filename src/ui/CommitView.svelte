@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** The top bar's height as the last view had it: the next starts with it, so nothing moves once it's measured. */
+  let knownBar = 0;
+</script>
+
 <script lang="ts">
   import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast, tooltip } from 'purr';
   import { ArrowCounterClockwiseRegular, ArrowUUpLeftRegular, ChatCircleTextRegular, CheckBold, CloudCheckRegular, EraserRegular, GitMergeRegular, PencilSimpleLineRegular, ScissorsRegular, TrashRegular, XRegular } from 'purr/glyphs';
@@ -15,6 +20,7 @@
   import { type DiffPosition, app, shortSha } from './lib/app.svelte.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
   import { tip } from './lib/tip.ts';
+  import { sized } from './lib/size.ts';
 
   let { commit }: { commit: CommitInfo } = $props();
 
@@ -85,16 +91,21 @@
   const position = app.takeDiffPosition(init.sha) ?? back?.position ?? null;
   let diffView = $state<DiffView>();
   /** The top bar stays in view as the commit scrolls; the diff's own view starts below it. */
-  let barHeight = $state(0);
+  let barHeight = $state(knownBar);
   let scrolled = $state(false);
   let bar = $state<HTMLElement>();
   $effect(() => {
     const scroller = bar?.closest('[data-scroller]');
     if (!scroller) return;
     const onscroll = () => (scrolled = scroller.scrollTop > 0);
-    onscroll();
+    // First read once laid out (the observer's first call), not as the view mounts, which would lay it out at once.
+    const ro = new ResizeObserver(onscroll);
+    ro.observe(scroller);
     scroller.addEventListener('scroll', onscroll, { passive: true });
-    return () => scroller.removeEventListener('scroll', onscroll);
+    return () => {
+      ro.disconnect();
+      scroller.removeEventListener('scroll', onscroll);
+    };
   });
   const review = new DiffReview(init.sha, [init.sha]);
   onMount(() => {
@@ -226,7 +237,7 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="view">
-  <div class="top" class:scrolled bind:this={bar} bind:offsetHeight={barHeight}>
+  <div class="top" class:scrolled bind:this={bar} {@attach sized((el) => el.offsetHeight, (h) => (barHeight = knownBar = h))}>
     <button class="btn btn--ghost sha mono" onclick={copySha} use:tooltip={'Copy full SHA'}>{shortSha(commit)}</button>
     <span class="muted">{date}</span>
     {#if commit.pushed}
