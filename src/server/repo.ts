@@ -341,10 +341,15 @@ export class Repo {
     const [first, ...others] = (await this.git.commit(sha)).parents;
     if (!others.length) return { commits: [], total: 0 };
     const range = [...others, '--not', first];
-    const [list, unpushed, total] = await Promise.all([
-      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range]),
-      this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range, '--remotes']),
-      this.git.text(['rev-list', '--count', ...range]),
+    // Each walks all the merge brought in (thousands of commits, from a long-lived branch): kept, as only the remotes change them.
+    const { fingerprint } = await this.remoteRefs();
+    const [[list, total], unpushed] = await Promise.all([
+      this.git.memo(
+        `merged ${sha}`,
+        () => Promise.all([this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range]), this.git.text(['rev-list', '--count', ...range])]),
+        true,
+      ),
+      this.git.memo(`merged-unpushed ${sha} ${fingerprint}`, () => this.git.text(['rev-list', '--topo-order', `--max-count=${MERGED}`, ...range, '--remotes']), true),
     ]);
     const local = new Set(unpushed.split('\n'));
     const commits = list ? await this.git.loadCommits(list.split('\n')) : [];

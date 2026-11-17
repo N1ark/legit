@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Showing a big merge's commits again (after hiding them, or coming back to the repo) is instant: what it brought in is worked out once.
 - A repository with tens of thousands of remote branches no longer lists them all again on every refresh (each focus, each file saved): only once they may have changed, so the window keeps up while you edit (about 120 ms of work down to 20 with 30,000).
 - The fetch every five minutes waits while the window is minimized or hidden, instead of running git in the background; it catches up when the window shows again.
 - On a long history, a commit made (or dropped) while you're looking far down the list no longer sends the list back to its first thousand commits and the selection to the top.
