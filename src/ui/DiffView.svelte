@@ -184,7 +184,7 @@
     settingsSeen = tick;
     app.diff(summary.sha).then(
       (d) => {
-        if (!alive) return;
+        if (!alive || tick !== app.settingsTick) return;
         const before = untrack(() => files);
         fresh = new Map(d.files.map((f) => [f.path, f]));
         untrack(() => {

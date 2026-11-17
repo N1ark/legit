@@ -807,8 +807,13 @@ class App {
   display = $state.raw<DisplaySettings>({ wrap: 'none', wrapColumn: 100, guides: [] });
 
   async loadDisplay() {
-    this.display = await request<DisplaySettings>('/api/display').catch(() => this.display);
+    // Settings changed twice quickly: the answer to the first may come last.
+    const n = ++this.displayAsked;
+    const d = await request<DisplaySettings>('/api/display').catch(() => null);
+    if (d && n === this.displayAsked) this.display = d;
   }
+
+  private displayAsked = 0;
 
   /** Diffs' summaries say which files are collapsed and how they're highlighted: drop them, and tell open diffs. */
   settingsChanged() {
