@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Typing in ⌘F over a big diff is quicker: each letter typed only looks again at the lines the text so far matched, and only redraws the lines whose matches changed.
 - Scrolling a big diff near its top (with the commit's message above it) or its end no longer restyles every line on screen each frame, so it stays smooth on a busy machine.
 
 ## 0.26.0 — 2026-11-15

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { markSegments, matchesIn } from '../src/ui/lib/find.ts';
+import { findAll, markSegments, matchesIn } from '../src/ui/lib/find.ts';
 
 test('find: smart case, no overlaps', () => {
   assert.deepEqual(matchesIn('Foo foo FOO', 'foo'), [0, 4, 8]);
@@ -20,4 +20,20 @@ test('find: segments cut at matches, across highlighting', () => {
   ]);
   const two = markSegments([{ t: 'foo = foo', c: '' }], [0, 6], 3);
   assert.deepEqual(two.map((s) => [s.t, s.m]), [['foo', 1], [' = ', 0], ['foo', 1]]);
+});
+
+test('find: every file, rows skipped, and a longer query only where the shorter one matched', () => {
+  const files = [['@@ head foo', 'Foo bar', 'baz'], null, ['food foo', 'nothing']];
+  const lines = (i: number) => files[i];
+  const skip = (i: number, r: number) => r === 0 && i === 0;
+  const all = findAll('foo', 3, lines, skip);
+  assert.deepEqual(all, [
+    { i: 0, r: 1, start: 0 },
+    { i: 2, r: 0, start: 0 },
+    { i: 2, r: 0, start: 5 },
+  ]);
+  assert.deepEqual(findAll('food', 3, lines, skip, all), [{ i: 2, r: 0, start: 0 }]);
+  assert.deepEqual(findAll('foo', 3, lines, skip, findAll('fo', 3, lines, skip)), all);
+  assert.deepEqual(findAll('Foo', 3, lines, skip, findAll('f', 3, lines, skip)), [{ i: 0, r: 1, start: 0 }]);
+  assert.deepEqual(findAll('', 3, lines, skip), []);
 });

@@ -70,7 +70,7 @@
   import { type Tokens, highlight, prepare, segments } from './lib/highlighter.ts';
   import { tip } from './lib/tip.ts';
   import { wrappedOffsets, wrappedRows } from './lib/wrap.ts';
-  import { caseSensitive, markSegments, matchesIn } from './lib/find.ts';
+  import { type Match, findAll, markSegments } from './lib/find.ts';
   import { finder } from './lib/finder.svelte.ts';
   import { cutWords, wordDiff } from './lib/worddiff.ts';
   import { conflictRoles } from './lib/conflicts.ts';
@@ -1170,18 +1170,16 @@
   // ⌘F: matches of the find bar's query in every file's lines, collapsed files included (all
   // contents are loaded for it), in order. The bar is App's; this view is one of its sources.
   const query = $derived(finder.open ? finder.query : '');
+  /** The last search, over what: typing on only looks again at the rows it matched. */
+  let lastFind: { query: string; contents: Record<number, FileRows>; shown: string; out: Match[] } | null = null;
   const found = $derived.by(() => {
-    const out: { i: number; r: number; start: number }[] = [];
-    if (!query) return out;
-    const sensitive = caseSensitive(query);
-    files.forEach((_, i) => {
-      const rows = contents[i];
-      if (!rows || rendered[i]) return;
-      for (let r = 0; r < rows.kind.length; r++) {
-        if (isHead(rows.kind[r])) continue;
-        for (const start of matchesIn(rows.text[r], query, sensitive)) out.push({ i, r, start });
-      }
-    });
+    if (!query) return (lastFind = null), [];
+    const lines = (i: number) => (contents[i] && !rendered[i] ? contents[i].text : null);
+    const shown = files.map((_, i) => (lines(i) ? 1 : 0)).join('');
+    const last = lastFind;
+    const within = last && last.contents === contents && last.shown === shown && query.startsWith(last.query) ? last.out : undefined;
+    const out = findAll(query, files.length, lines, (i, r) => isHead(contents[i].kind[r]), within);
+    lastFind = { query, contents, shown, out };
     return out;
   });
   /** Match starts by file, then row. */
@@ -1210,9 +1208,8 @@
   const sideWordsOf = new WeakMap<FileRows, (r: number) => number[] | null>();
 
   /** Row r of file i in runs: highlighted (`c`), changed words (`w`), find's matches (`m`, at `at`); null when it's plain text. */
-  function lineSegments(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
+  function lineSegments(r: number, rows: FileRows, s: SideBySide | null, tok: Tokens | undefined, at: number[] | undefined, len: number, now: number) {
     const text = rows.text[r];
-    const s = sbs(i);
     const cache = s ? sideWordsOf : words;
     let diff = cache.get(rows);
     if (!diff) cache.set(rows, (diff = s ? sideWords(rows, s) : wordDiff(rows)));
@@ -1220,8 +1217,11 @@
     if (!tok && !changed && !at) return null;
     const segs: { t: string; c: string; w?: boolean; m?: number }[] = tok ? segments(tok, r, text) : [{ t: text, c: '' }];
     const cut = changed ? cutWords(segs, changed) : segs;
-    return at ? markSegments(cut, at, finder.query.length, hitNow?.i === i && hitNow.r === r ? hitNow.start : -1) : cut;
+    return at ? markSegments(cut, at, len, now) : cut;
   }
+
+  /** What each line's code was last built from: built again only when that changed (typing in ⌘F changes every file's matches, but few lines'). */
+  const built = new WeakMap<HTMLElement, { rows: FileRows; r: number; s: SideBySide | null; tok: Tokens | undefined; at: string; len: number; now: number }>();
 
   /**
    * Row r's code, built directly rather than as a block per run (rows mount by the hundred while
@@ -1229,7 +1229,14 @@
    */
   function code(i: number, r: number, rows: FileRows, tok: Tokens | undefined, at: number[] | undefined) {
     return (el: HTMLElement) => {
-      const segs = lineSegments(i, r, rows, tok, at);
+      const s = sbs(i);
+      const len = at ? finder.query.length : 0;
+      const now = at && hitNow?.i === i && hitNow.r === r ? hitNow.start : -1;
+      const key = { rows, r, s, tok, at: at?.join() ?? '', len, now };
+      const was = built.get(el);
+      built.set(el, key);
+      if (was && was.rows === rows && was.r === r && was.s === s && was.tok === tok && was.at === key.at && was.len === len && was.now === now) return;
+      const segs = lineSegments(r, rows, s, tok, at, len, now);
       el.textContent = '';
       if (!segs) el.append(rows.text[r]);
       for (const seg of segs ?? []) {

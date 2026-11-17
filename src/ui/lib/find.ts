@@ -40,3 +40,56 @@ export function markSegments<S extends Segment>(segs: S[], starts: number[], len
   }
   return out;
 }
+
+/** A match: file i, row r, from character `start`. */
+export interface Match {
+  i: number;
+  r: number;
+  start: number;
+}
+
+/** Lines lowercased, once per array of them: typing a query searches them again at every key. */
+const lowered = new WeakMap<readonly string[], string[]>();
+function lower(lines: readonly string[]): string[] {
+  let l = lowered.get(lines);
+  if (!l) lowered.set(lines, (l = lines.map((t) => t.toLowerCase())));
+  return l;
+}
+
+/**
+ * Every match of `query` in files 0..n-1's lines, in order: `lines(i)` gives file i's (null to leave it out), `skip(i, r)`
+ * leaves out a row. `within`: an earlier search's matches for a query this one starts with, over the same lines; only
+ * their rows can match, so only those are looked at.
+ */
+export function findAll(
+  query: string,
+  n: number,
+  lines: (i: number) => readonly string[] | null,
+  skip: (i: number, r: number) => boolean,
+  within?: readonly Match[],
+): Match[] {
+  const out: Match[] = [];
+  if (!query) return out;
+  const sensitive = caseSensitive(query);
+  const needle = sensitive ? query : query.toLowerCase();
+  const scan = (i: number, r: number, hay: string) => {
+    for (let k = hay.indexOf(needle); k >= 0; k = hay.indexOf(needle, k + needle.length)) out.push({ i, r, start: k });
+  };
+  if (within) {
+    let last: Match | null = null;
+    for (const m of within) {
+      if (last && last.i === m.i && last.r === m.r) continue;
+      last = m;
+      const text = lines(m.i);
+      if (text) scan(m.i, m.r, sensitive ? text[m.r] : lower(text)[m.r]);
+    }
+    return out;
+  }
+  for (let i = 0; i < n; i++) {
+    const text = lines(i);
+    if (!text) continue;
+    const hay = sensitive ? text : lower(text);
+    for (let r = 0; r < hay.length; r++) if (!skip(i, r) && hay[r].includes(needle)) scan(i, r, hay[r]);
+  }
+  return out;
+}
