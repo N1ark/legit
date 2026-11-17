@@ -861,10 +861,11 @@
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
     // Rows of varying height are searched for, not listed: this runs for every frame of scrolling.
+    const over = leap ? LEAP_OVERSCAN : OVERSCAN;
     const [a, b] =
       blocksOf(i) || wrapped(i)
-        ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - OVERSCAN - y, view.bottom + OVERSCAN - y)
-        : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+        ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - over - y, view.bottom + over - y)
+        : fixedRange(rowCount(i), ROW, view.top - over - y, view.bottom - view.top + 2 * over);
     const last = shownRows.get(i);
     if (last && last.length === b - a && (a === b || last[0] === a)) return last;
     const out: number[] = [];
@@ -877,10 +878,20 @@
   // are in the DOM before the frame paints.
   /** The view's been measured: until then (the first layout, unless it opens at a place) it's only a guess, not worth loading. */
   let measured = $state(false);
+  /** The view moved further than the overscan at once (the scrollbar dragged, a jump): until it settles, only the rows
+   *  in view are drawn, a third as many, so each frame of it is quick; the rest then fill in. */
+  let leap = $state(false);
+  let leapTimer: ReturnType<typeof setTimeout> | undefined;
+  const LEAP_OVERSCAN = 100;
   function measure() {
     if (!filesEl || !scroller) return;
     const top = scroller.getBoundingClientRect().top + inset - filesEl.getBoundingClientRect().top;
     const height = scroller.clientHeight - inset;
+    if (measured && Math.abs(top - view.top) > OVERSCAN) {
+      leap = true;
+      clearTimeout(leapTimer);
+      leapTimer = setTimeout(() => (leap = false), 150);
+    }
     if (top !== view.top || view.bottom - view.top !== height) view = { top, bottom: top + height };
     measured = true;
     if (paneWidth !== filesEl.clientWidth) paneWidth = knownPaneWidth = filesEl.clientWidth;
@@ -953,6 +964,7 @@
     prepare(files.slice(near[0], near[1]).map((f) => f.path));
     return () => {
       alive = false;
+      clearTimeout(leapTimer);
       scroller.removeEventListener('scroll', measure);
       ro.disconnect();
     };
