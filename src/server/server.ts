@@ -124,6 +124,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   const clients = new Set<ServerResponse>();
   /** Summaries' JSON by settings and key, least recently used first. */
   const summaries = new Map<string, string>();
+  const summarizing = new Map<string, Promise<string>>();
   let summaryBytes = 0;
   // Tags what never changes on this server (its diffs, under the same settings), so a page reloaded on it, as
   // the app's is on coming back to its repo, keeps what it loaded. Another server, or version, has another.
@@ -278,12 +279,22 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   async function summary(d: CommitDiff, current?: Awaited<ReturnType<typeof summarySettings>>): Promise<string> {
     const { settings, tag } = current ?? (await summarySettings());
     const key = `${tag}:${d.sha}`;
-    let json = summaries.get(key);
+    const json = summaries.get(key);
     if (json) {
       summaries.delete(key);
       summaries.set(key, json);
       return json;
     }
+    // Asked for again while it's worked out (a page reloaded meanwhile): worked out once.
+    let p = summarizing.get(key);
+    if (!p) {
+      p = summaryOf(d, key, settings).finally(() => summarizing.delete(key));
+      summarizing.set(key, p);
+    }
+    return p;
+  }
+
+  async function summaryOf(d: CommitDiff, key: string, settings: Awaited<ReturnType<typeof summarySettings>>['settings']): Promise<string> {
     const work = /^w\d+$/.test(d.sha);
     const paths = d.files.map((f) => f.path);
     // A squash's attributes are its newest commit's, a range's its new side's.
@@ -293,7 +304,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     for (const [k, size] of sizes) Object.assign(s.files[k], size);
     // A snapshot's key changes with any file: the UI keeps what it loaded of the others by their tokens.
     if (work) s.files.forEach((f, k) => (f.token = d.files[k].token));
-    json = JSON.stringify(s);
+    const json = JSON.stringify(s);
     if (summaries.has(key)) return json;
     summaries.set(key, json);
     summaryBytes += json.length;
