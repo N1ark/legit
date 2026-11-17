@@ -1,12 +1,13 @@
 // Uncommitted changes: each file's diff from HEAD to the working tree, untracked files
 // included, with which of its lines are staged. Reading only; staging lives in repo.ts.
 
-import { createHash } from 'node:crypto';
-import { lstat, readFile, readlink } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { lstat, readFile, readlink, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CommitDiff, FileDiff, Hunk } from '../shared/types.ts';
 import { RENAME_ARGS, parseDiff, sortFiles } from './diff.ts';
-import type { Git } from './git.ts';
+import { type Git, fromUtf8, toUtf8 } from './git.ts';
 import { type Position, type Staging, analyse, emit, positions } from './staging.ts';
 
 /** Status without taking the index lock, so it never gets in the way of the user's git. */
@@ -73,7 +74,127 @@ interface Read {
  * The last listing's files: one that hasn't changed since isn't read or worked out again, and
  * the snapshots that have it share its lines.
  */
-const listed = new WeakMap<Git, { files: Map<string, Known>; untracked: Map<string, Read> }>();
+const listed = new WeakMap<Git, { files: Map<string, Known>; untracked: Map<string, Read>; patches: Patches }>();
+
+/** Each file's part of the HEAD-to-working-tree diff (as parsed, before a listing adds to it) by its `stamp`, and what else it depends on. */
+interface Patches {
+  context: string;
+  byStamp: Map<string, FileDiff>;
+}
+
+/** Files whose patch is asked for by name, the others' taken from the last listing; past this many, the whole diff is. */
+const MAX_REDIFFED = 1000;
+
+/** A `--raw -z` record: its metadata (modes, SHAs, status) and its path (a rename's old path, then its new one). */
+interface Raw {
+  meta: string;
+  paths: string[];
+}
+
+function rawList(out: Buffer): Raw[] {
+  const parts = out.toString('latin1').split('\0');
+  const list: Raw[] = [];
+  for (let k = 0; k + 1 < parts.length; k += 2) {
+    const meta = parts[k].slice(1);
+    const status = meta.split(' ')[4] ?? '';
+    list.push({ meta, paths: status[0] === 'R' || status[0] === 'C' ? [parts[k + 1], parts[++k + 1]] : [parts[k + 1]] });
+  }
+  return list;
+}
+
+/**
+ * What a file's patch follows from: its record, and the file's stat when that side is on disk. Null
+ * when that can't tell (a submodule, or a file changed too recently for its stat to show the next change).
+ */
+async function stampOf(root: string, r: Raw): Promise<string | null> {
+  const [oldMode, newMode, , newSha] = r.meta.split(' ');
+  if (oldMode === '160000' || newMode === '160000') return null;
+  let stat = '';
+  if (isZero(newSha)) {
+    try {
+      const at = Date.now();
+      const st = await lstat(join(root, Buffer.from(r.paths.at(-1)!, 'latin1').toString('utf8')), { bigint: true });
+      if (Number(st.mtimeMs > st.ctimeMs ? st.mtimeMs : st.ctimeMs) > at - SETTLED_MS) return null;
+      stat = `${st.ino} ${st.mode} ${st.size} ${st.mtimeNs} ${st.ctimeNs}`;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+      stat = 'gone';
+    }
+  }
+  return `${r.meta}\0${r.paths.join('\0')}\0${stat}`;
+}
+
+const statOf = (file: string) => stat(file, { bigint: true }).then((st) => `${st.ino} ${st.size} ${st.mtimeNs} ${st.ctimeNs}`, () => '-');
+
+/**
+ * What every file's patch also follows from: HEAD, git's config and attributes files, and the
+ * working tree's .gitattributes that differ from HEAD's. Any change and the whole diff is asked for again.
+ */
+async function contextOf(git: Git, stamps: (string | null)[], records: Raw[], untracked: string[]): Promise<string> {
+  const xdg = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  const files = [
+    join(git.commonDir, 'config'), join(git.gitDir, 'config.worktree'), join(git.commonDir, 'info', 'attributes'),
+    process.env.GIT_CONFIG_GLOBAL || join(homedir(), '.gitconfig'), join(xdg, 'git', 'config'), join(xdg, 'git', 'attributes'),
+  ];
+  const attrs = (p: string) => p === '.gitattributes' || p.endsWith('/.gitattributes');
+  const [head, ...stats] = await Promise.all([
+    git.headState().then((h) => h.head ?? ''),
+    ...files.map(statOf),
+    ...untracked.filter(attrs).map((p) => statOf(join(git.root, Buffer.from(p, 'latin1').toString('utf8'))).then((st) => `${p} ${st}`)),
+  ]);
+  const changed = records.flatMap((r, k) => (r.paths.some(attrs) ? [stamps[k] ?? randomBytes(8).toString('hex')] : []));
+  return [head, ...stats, ...changed].join('\0');
+}
+
+/** `f` is the file record `r` lists, as `r` lists it. */
+const sameFile = (f: FileDiff, r: Raw) => {
+  const [oldMode, newMode, oldSha, , status] = r.meta.split(' ');
+  return f.path === r.paths.at(-1) && f.oldPath === (r.paths.length > 1 ? r.paths[0] : undefined) && f.status === status[0] && f.oldMode === oldMode && f.newMode === newMode && f.oldSha === oldSha;
+};
+
+/**
+ * The diff from HEAD to the working tree (`diff-index` with patches), asking git only for the
+ * patches of files that changed since the last listing (`last`). What it was made from, for the next.
+ */
+async function headToFiles(git: Git, key: string, records: Raw[], untracked: string[], last?: Patches): Promise<{ d: CommitDiff; patches: Patches }> {
+  const stamps = await Promise.all(records.map((r) => stampOf(git.root, r)));
+  const context = await contextOf(git, stamps, records, untracked);
+  const byStamp = new Map<string, FileDiff>();
+  const kept: FileDiff[] = [];
+  const want: number[] = [];
+  records.forEach((r, k) => {
+    const had = last?.context === context && stamps[k] !== null ? last.byStamp.get(stamps[k]) : undefined;
+    if (had) {
+      byStamp.set(stamps[k]!, had);
+      kept.push({ ...had });
+    } else want.push(k);
+  });
+  const paths = want.flatMap((k) => records[k].paths);
+  // Arguments reach git as UTF-8: a path that isn't can't be named.
+  const whole = want.length > MAX_REDIFFED || kept.length === 0 || paths.some((p) => fromUtf8(toUtf8(p)) !== p);
+  // Unquoted paths, so each patch's header names its file (see parseDiff).
+  const diff = async (paths: string[] | null) =>
+    parseDiff(
+      (await git.run(['-c', 'core.quotePath=false', ...(paths ? ['--literal-pathspecs'] : []), 'diff-index', ...RENAME_ARGS, 'HEAD', ...(paths ? ['--', ...paths] : [])], { env: NO_LOCKS })).out.toString('latin1'),
+      key,
+    );
+  if (!whole && !want.length) return { d: { sha: key, files: sortFiles(kept) }, patches: { context, byStamp } };
+  let d = await diff(whole ? null : paths.map(toUtf8));
+  // Asked for by name, a file must come as it was listed (a rename paired the same way, say), or the whole diff is.
+  if (!whole && (d.files.length !== want.length || !want.every((k) => d.files.some((f) => sameFile(f, records[k]))))) {
+    d = await diff(null);
+    byStamp.clear();
+    kept.length = 0;
+  }
+  const at = new Map(records.map((r, k) => [r.paths.at(-1)!, k]));
+  // Each kept as parsed: a listing adds to the copy it shows.
+  for (const f of d.files) {
+    const k = at.get(f.path);
+    if (k !== undefined && stamps[k] !== null && sameFile(f, records[k])) byStamp.set(stamps[k]!, { ...f });
+  }
+  return { d: { sha: key, files: sortFiles([...kept, ...d.files]) }, patches: { context, byStamp } };
+}
 
 /** Paths in a `--raw -z` listing, with their records; a rename's under its new path, with its old one last. */
 function rawRecords(out: Buffer): Map<string, string[]> {
@@ -99,16 +220,16 @@ const isZero = (sha: string) => /^0+$/.test(sha);
 export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDiff; index: string }> {
   // Refresh stat info first so files that were only touched don't show up as changed.
   await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
-  const [tree, cached, files, others] = await Promise.all([
-    // Unquoted paths, so each patch's header names its file (see parseDiff).
-    git.run(['-c', 'core.quotePath=false', 'diff-index', ...RENAME_ARGS, 'HEAD'], { env: NO_LOCKS }),
+  const last = listed.get(git);
+  const [raw, cached, files, others] = await Promise.all([
+    git.run(['diff-index', '-r', '-z', '-M', '--full-index', '--raw', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-files', '-r', '-z', '--no-renames', '--raw'], { env: NO_LOCKS }),
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
   ]);
-  const d = parseDiff(tree.out.toString('latin1'), key);
+  const untrackedPaths = new Set(others.out.toString('latin1').split('\0').filter(Boolean));
+  const { d, patches } = await headToFiles(git, key, rawList(raw.out), [...untrackedPaths], last?.patches);
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
-  const last = listed.get(git);
   const known = new Map<string, Known>();
   for (const f of d.files) {
     const k = last?.files.get(f.token!) ?? { hunks: f.hunks };
@@ -123,7 +244,6 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
     if (status[0] === 'R') staged.set(from, { mode: '000000', sha: '0'.repeat(sha.length), gone: true });
   }
   const unstaged = new Set(rawRecords(files.out).keys());
-  const untrackedPaths = new Set(others.out.toString('latin1').split('\0').filter(Boolean));
   const shown = new Set(d.files.map((f) => f.path));
   const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
 
@@ -200,7 +320,7 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   const reads = await Promise.all(paths.map((p, k) => untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS, last?.untracked.get(p))));
   const untracked = new Map<string, Read>();
   reads.forEach((r, k) => r.stat && untracked.set(paths[k], r));
-  listed.set(git, { files: known, untracked });
+  listed.set(git, { files: known, untracked, patches });
   for (const { f } of reads) {
     f.stage = 'none';
     d.files.push(f);
