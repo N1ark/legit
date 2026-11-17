@@ -34,7 +34,9 @@ export function pairedRows(types: string, text: string[], pairs?: Map<number, nu
     return out;
   };
   const apart = (removed: string[], added: string[]) => {
-    if (removed.length && added.length) saved += removed.length + added.length - sideRows(removed, added).length;
+    // One line beside one takes one row, paired or not (most edits): no need to compare them.
+    if (removed.length === 1 && added.length === 1) saved++;
+    else if (removed.length && added.length) saved += removed.length + added.length - sideRows(removed, added).length;
   };
   for (let j = 0; j < types.length; ) {
     if (types[j] === ' ') {
