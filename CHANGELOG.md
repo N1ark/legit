@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- On a long history, a commit made (or dropped) while you're looking far down the list no longer sends the list back to its first thousand commits and the selection to the top.
+
 ## 0.26.0 — 2026-11-15
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.

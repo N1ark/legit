@@ -5,6 +5,7 @@ import { highlight, prepare } from './highlighter.ts';
 import { type Expansion, type RowPlace, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
+import { type Older, carryOlder } from './older.ts';
 import type { CsvIndex } from './csv.ts';
 import { DocDiff } from './md-diff.ts';
 import { renderSide, renderedDiff, renderedPaths } from './rendered.ts';
@@ -56,7 +57,7 @@ class App {
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
-  private older = $state.raw<({ from: string } & OlderCommits) | null>(null);
+  private older = $state.raw<Older | null>(null);
   loadingOlder = $state(false);
   /** Merges whose commits are listed under them, by SHA (null while loading). */
   expanded = $state.raw<Record<string, MergedCommits | null>>({});
@@ -234,6 +235,8 @@ class App {
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     repo.commits = keepCommits(this.repo?.commits, repo.commits);
+    const older = carryOlder(this.repo?.commits ?? NONE, this.older, repo.commits);
+    if (older) this.older = older;
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(this.commits.map((c) => c.sha));
