@@ -86,7 +86,7 @@ export async function removeWorktree(w: WorktreeInfo, force = false): Promise<bo
       return false;
     }
     done(r.note);
-    if (IS_TAURI) await invoke('open_worktree', { path: r.moved }).catch((e) => toast.error(e));
+    if (IS_TAURI) await invoke('open_worktree', { path: r.moved }).catch((e) => ((app.leaving = false), toast.error(e)));
     else if (r.url) location.href = r.url;
     return true;
   }
