@@ -5,6 +5,7 @@
 - A worktree deleted, moved or removed outside legit while it's shown (`rm -rf`, `git worktree remove`, its repository moved) no longer fills the window with errors: within a moment it goes to the main worktree (else another that's still there), or, when the whole repository is gone, says so and offers another.
 - On Linux, ignored folders (node_modules, build output, target) aren't watched for changes any more: a big one no longer uses up the system's file watches (leaving legit blind to changes) or keeps the server busy while a build writes into it. A folder deleted and made again (by a build, a stash, a branch switch) is watched again; before, changes in it went unseen.
 - While files keep changing (a build, an install), the window looks for uncommitted changes less and less often, down to every 2 seconds, instead of four times a second.
+- An operation that meets another git process's lock (a `git commit` waiting on its editor in a terminal) says *Another git process is running in this repository* instead of git's long message.
 
 ## 0.26.0 — 2026-11-15
 

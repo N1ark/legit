@@ -185,6 +185,10 @@ Losing work is the one failure that matters, so every operation is built to be r
   `BatchMode=yes` unless you set your own SSH command), fetches time out after two minutes, and they only update
   remote-tracking refs, so they run alongside other operations. Nothing is pruned.
 - **No rewriting mid-merge.** History rewriting refuses to run during a rebase, merge, cherry-pick, revert or bisect.
+- **Changes from outside show up.** The repository's refs and in-progress operations, its index and its files are
+  watched (on Linux, a watch per folder, leaving out folders git ignores: node_modules, build output); a burst of changes
+  (a build) is looked at every 2 seconds at most. A worktree deleted or moved while it's shown sends the window to
+  another (see Worktrees). When another git process holds a lock an operation needs, the error says so; reading goes ahead without it.
 
 Rewritten commits get you as committer (like `git rebase`); authors and dates are kept. Signatures are dropped from
 rewritten commits, since they would no longer be valid.
