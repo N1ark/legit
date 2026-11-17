@@ -7,6 +7,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
@@ -39,7 +40,27 @@ export interface RunOpts {
   onErr?: (chunk: string) => void;
 }
 
+/** Git processes at once (one with a `timeout` aside: it may wait on the network or a hook); past it, they queue. */
+export const MAX_RUNNING = Math.max(2, Math.min(8, availableParallelism()));
+let running = 0;
+const queued: (() => void)[] = [];
+
+/**
+ * Run git. A burst (diffs prefetched, a slow machine) takes turns, the newest first: it's what's
+ * on screen, rather than waiting behind every request before it as dozens of processes share the CPU.
+ */
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
+  if (opts.timeout) return spawnGit(cwd, args, opts);
+  return new Promise<void>((go) => (running < MAX_RUNNING ? (running++, go()) : queued.push(go)))
+    .then(() => spawnGit(cwd, args, opts))
+    .finally(() => {
+      const next = queued.pop();
+      if (next) next();
+      else running--;
+    });
+}
+
+function spawnGit(cwd: string, args: string[], opts: RunOpts): Promise<RunResult> {
   return new Promise((done, fail) => {
     const p = spawn('git', args, {
       cwd,
