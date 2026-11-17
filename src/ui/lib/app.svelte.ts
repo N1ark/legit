@@ -751,12 +751,25 @@ class App {
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
   );
   /** Avatar URL by lowercased email, set once the picture is loaded; null when there's none (initials are shown instead). */
-  avatars = $state<Record<string, string | null>>({});
+  avatars = $state.raw<Record<string, string | null>>({});
   private avatarsPending = new Set<string>();
+  /** Pictures in since the last update: shown together, so the rows showing them redraw once, not once each. */
+  private avatarsIn: Record<string, string | null> | null = null;
+
+  private gotAvatar(email: string, src: string | null) {
+    if (!this.avatarsIn) {
+      this.avatarsIn = {};
+      setTimeout(() => {
+        this.avatars = { ...this.avatars, ...this.avatarsIn };
+        this.avatarsIn = null;
+      }, 50);
+    }
+    this.avatarsIn[email] = src;
+  }
 
   loadAvatars(emails: string[]) {
     const need = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
-      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e),
+      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e) && !(this.avatarsIn && e in this.avatarsIn),
     );
     if (!need.length) return;
     for (const e of need) this.avatarsPending.add(e);
@@ -764,8 +777,7 @@ class App {
       .then((r) =>
         Promise.all(
           Object.entries(r).map(async ([email, url]) => {
-            const src = url && (await preloadAvatar(url));
-            this.avatars = { ...this.avatars, [email]: src || null };
+            this.gotAvatar(email, (url && (await preloadAvatar(url))) || null);
           }),
         ),
       )
