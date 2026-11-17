@@ -459,8 +459,8 @@ export class Repo {
       paths = [...new Set([...(await changed(fromBase, from)), ...(await changed(toBase, to))])];
       if (!paths.length) return parseDiff('', key);
     }
-    // Many paths are filtered from the whole diff rather than passed to git.
-    const few = paths && paths.length <= 1000 ? paths : null;
+    // Many paths are filtered from the whole diff rather than passed to git, as are paths that aren't UTF-8 (arguments are).
+    const few = paths && paths.length <= 1000 && paths.every((p) => fromUtf8(toUtf8(p)) === p) ? paths.map(toUtf8) : null;
     const { out } = await this.git.run(
       [...(few ? ['--literal-pathspecs'] : []), 'diff-tree', ...RENAME_ARGS, from, to, ...(few ? ['--', ...few] : [])],
     );
