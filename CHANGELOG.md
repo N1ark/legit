@@ -13,6 +13,12 @@
 - On Linux, ignored folders (node_modules, build output, target) aren't watched for changes any more: a big one no longer uses up the system's file watches (leaving legit blind to changes) or keeps the server busy while a build writes into it. A folder deleted and made again (by a build, a stash, a branch switch) is watched again; before, changes in it went unseen.
 - While files keep changing (a build, an install), the window looks for uncommitted changes less and less often, down to every 2 seconds, instead of four times a second.
 - An operation that meets another git process's lock (a `git commit` waiting on its editor in a terminal) says *Another git process is running in this repository* instead of git's long message.
+- A huge commit's file list opens faster: counting its whitespace-only and side-by-side rows takes a third of the time, and the uncommitted changes count only the files that changed since the last look.
+- Big uncommitted changes refresh several times faster: only the files that changed since the last look are diffed again.
+- Uncommitted changes asked for again while they're still being read (files changing quickly, a slow machine) are read once more for all who asked, instead of once each at the same time.
+- On a busy machine, the commit you select shows sooner: git runs a few at a time, the most recent request first, instead of every prefetched diff at once.
+- Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
+- A pull request's diff since your last review, after a force-push, shows files with non-ASCII names too.
 
 ## 0.26.0 — 2026-11-15
 

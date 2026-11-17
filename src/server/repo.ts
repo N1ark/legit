@@ -38,6 +38,14 @@ const BACKUPS = 'refs/legit/backups';
 const MAX_DIFFS = 200;
 const MAX_DIFF_BYTES = 128 * 1024 * 1024;
 
+/**
+ * Working-tree snapshots kept, and about how much memory they may take (counting the files they share
+ * for each), past the newest few, which a page may still be showing or staging from.
+ */
+const MAX_SNAPSHOTS = 20;
+const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const MIN_SNAPSHOTS = 4;
+
 /** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
 const diffBytes = (d: CommitDiff) => {
   let n = 0;
@@ -119,6 +127,8 @@ export class Repo {
   /** Working-tree diffs by snapshot key; a key is reused while its content is unchanged. */
   snapshots = new Map<string, CommitDiff>();
   snapshotIds = new Map<string, string>();
+  private snapshotBytes = new Map<string, number>();
+  private snapshotsBytes = 0;
   private nextSnapshot = 1;
 
   /** The worktree had a `.git` (a folder, or a file naming its git dir) when opened. */
@@ -472,8 +482,8 @@ export class Repo {
       paths = [...new Set([...(await changed(fromBase, from)), ...(await changed(toBase, to))])];
       if (!paths.length) return parseDiff('', key);
     }
-    // Many paths are filtered from the whole diff rather than passed to git.
-    const few = paths && paths.length <= 1000 ? paths : null;
+    // Many paths are filtered from the whole diff rather than passed to git, as are paths that aren't UTF-8 (arguments are).
+    const few = paths && paths.length <= 1000 && paths.every((p) => fromUtf8(toUtf8(p)) === p) ? paths.map(toUtf8) : null;
     const { out } = await this.git.run(
       [...(few ? ['--literal-pathspecs'] : []), 'diff-tree', ...RENAME_ARGS, from, to, ...(few ? ['--', ...few] : [])],
     );
@@ -1046,8 +1056,27 @@ export class Repo {
     h.redo = [];
   }
 
-  /** Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of. */
-  async work(): Promise<CommitDiff> {
+  private working: Promise<CommitDiff> | null = null;
+  private workNext: Promise<CommitDiff> | null = null;
+
+  /**
+   * Uncommitted changes (what's staged included), as a snapshot the UI can page through and stage lines of.
+   * Asked for while they're being read, they're read once more after, for all who asked meanwhile.
+   */
+  work(): Promise<CommitDiff> {
+    if (this.workNext) return this.workNext;
+    const start = () => {
+      const p = this.readWork().finally(() => this.working === p && (this.working = null));
+      return (this.working = p);
+    };
+    if (!this.working) return start();
+    return (this.workNext = this.working.catch(() => {}).then(() => {
+      this.workNext = null;
+      return start();
+    }));
+  }
+
+  private async readWork(): Promise<CommitDiff> {
     // Never read a half-applied stage/unstage/commit.
     await this.idle();
     const head = await this.head();
@@ -1060,11 +1089,24 @@ export class Repo {
   snapshot(kind: string, d: CommitDiff): CommitDiff {
     const content = kind + '\0' + d.files.map((f) => f.path + '\0' + f.token + (f.conflicted ? '\0!' : '')).join('\0');
     let key = this.snapshotIds.get(content);
-    if (!key || !this.snapshots.has(key)) {
+    const had = key && this.snapshots.get(key);
+    if (key && had) {
+      // Used last, so a view still on it outlives the snapshots made since for another (conflicts, say).
+      this.snapshots.delete(key);
+      this.snapshots.set(key, had);
+    } else {
       key = `w${this.nextSnapshot++}`;
       this.snapshotIds.set(content, key);
       this.snapshots.set(key, d);
-      while (this.snapshots.size > 20) this.snapshots.delete(this.snapshots.keys().next().value!);
+      const bytes = diffBytes(d);
+      this.snapshotBytes.set(key, bytes);
+      this.snapshotsBytes += bytes;
+      for (const k of this.snapshots.keys()) {
+        if (this.snapshots.size <= MIN_SNAPSHOTS || (this.snapshots.size <= MAX_SNAPSHOTS && this.snapshotsBytes <= MAX_SNAPSHOT_BYTES)) break;
+        this.snapshots.delete(k);
+        this.snapshotsBytes -= this.snapshotBytes.get(k)!;
+        this.snapshotBytes.delete(k);
+      }
       while (this.snapshotIds.size > 40) this.snapshotIds.delete(this.snapshotIds.keys().next().value!);
     }
     d.sha = key;

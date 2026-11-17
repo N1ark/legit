@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Git } from '../src/server/git.ts';
+import { Git, MAX_RUNNING, type RunOpts, run } from '../src/server/git.ts';
 import { setup } from './util.ts';
 
 const t = setup();
@@ -25,4 +25,16 @@ test('objects are read through one process, in order, concurrently, large or mis
   // Objects written since are found.
   const c = t.commit('three', { f: '3\n' });
   assert.equal((await git.commit(c)).parents[0], t.git('rev-parse', 'HEAD~1'));
+});
+
+test('git processes past a few at once take turns, the newest first; one with a timeout never waits', async () => {
+  const done: string[] = [];
+  const go = (name: string, args: string[], opts?: RunOpts) => run(t.dir, args, opts).then(() => done.push(name));
+  const slow = ['-c', 'alias.slow=!sleep 0.4', 'slow'];
+  const all = Array.from({ length: MAX_RUNNING }, (_, k) => go(`slow${k}`, slow));
+  all.push(go('older', ['--version']), go('newer', ['--version']), go('timed', ['--version'], { timeout: 10_000 }));
+  await Promise.all(all);
+  assert.equal(done[0], 'timed');
+  assert.ok(done.indexOf('newer') < done.indexOf('older'));
+  assert.ok(done.indexOf('newer') > done.findIndex((d) => d.startsWith('slow')));
 });
