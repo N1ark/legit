@@ -28,3 +28,6 @@ export const log = (...args: unknown[]) => console.error(...args);
 
 /** The log, oldest line first. */
 export const logText = () => lines.join('\n');
+
+/** A long-running server notes a promise nothing waited on that failed, rather than dying of it (leaving its page with nothing to talk to). */
+export const survive = () => process.on('unhandledRejection', (e) => log('Unhandled rejection:', e));

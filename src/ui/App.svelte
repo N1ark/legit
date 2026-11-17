@@ -34,6 +34,7 @@
   import CommitView from './CommitView.svelte';
   import WorkView from './WorkView.svelte';
   import Brand from './Brand.svelte';
+  import GoneView from './GoneView.svelte';
   import { WORK, app, sideBySide } from './lib/app.svelte.ts';
   import { gh } from './lib/github.svelte.ts';
   import { tracking } from './lib/gh-files.svelte.ts';
@@ -68,7 +69,7 @@
   let repoPicker = $state<RepoPicker>();
   let help = $state(false);
   // The views' scroller, and whether it's far enough down to offer going back to the top (px).
-  let scroller: HTMLElement;
+  let scroller = $state<HTMLElement>();
   let scrolled = $state(false);
   const TO_TOP = 600;
   /** The settings' section shown, while they're open. */
@@ -98,7 +99,7 @@
     leave: async (id: number) => {
       const why = app.switchBlocker;
       if (why) toast(why);
-      else await remember(app.snapshot());
+      else if (!app.gone) await remember(app.snapshot());
       invoke('answer_leave', { id, ok: !why });
     },
   };
@@ -123,6 +124,8 @@
       if (connected) app.workChanged();
       connected = true;
     };
+    // Left open: while a page is on it, its server stays (to say it's gone).
+    events.addEventListener('gone', (e) => app.lost(JSON.parse(e.data)));
     const focus = () => {
       if (blind) app.workChanged();
       else app.refresh();
@@ -130,7 +133,7 @@
     };
     const poll = setInterval(() => document.hidden || gh.refreshIfOlder(60_000), 60_000);
     const leave = () => {
-      remember(app.snapshot());
+      if (!app.gone) remember(app.snapshot());
       prDiffs.leave();
     };
     window.addEventListener('focus', focus);
@@ -242,6 +245,9 @@
 <svelte:window onkeydown={(e) => keymap.handle(e, run)} />
 
 <div class="shell">
+  {#if app.gone}
+    <GoneView gone={app.gone} />
+  {:else}
   <header class:desktop={IS_TAURI} data-tauri-drag-region>
     {#if !IS_TAURI}<Brand />{/if}
     {#if app.repo}
@@ -307,7 +313,7 @@
         <button class="btn btn--link more" onclick={() => (help = true)}><Kbd hint="?" /> shortcuts</button>
       </footer>
     </aside>
-    <section data-scroller bind:this={scroller} onscroll={() => (scrolled = scroller.scrollTop > TO_TOP)}>
+    <section data-scroller bind:this={scroller} onscroll={(e) => (scrolled = e.currentTarget.scrollTop > TO_TOP)}>
       {#if finder.open}
         <div class="find"><div class="bar"><FindBar.component /></div></div>
       {/if}
@@ -341,12 +347,13 @@
       {#if scrolled}
         <div class="to-top">
           <span class="lift"
-            ><IconButton label="Back to top" variant="default" size="lg" onclick={() => (scroller.scrollTop = 0)}><ArrowLineUpRegular /></IconButton></span
+            ><IconButton label="Back to top" variant="default" size="lg" onclick={() => scroller && (scroller.scrollTop = 0)}><ArrowLineUpRegular /></IconButton></span
           >
         </div>
       {/if}
     </section>
   </main>
+  {/if}
 </div>
 
 <!-- Suggestions for every `Name <email>` field (PersonField). -->

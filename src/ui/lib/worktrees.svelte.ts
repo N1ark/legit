@@ -77,14 +77,16 @@ export async function removeWorktree(w: WorktreeInfo, force = false): Promise<bo
   if (w.current) {
     if (app.switchBlocker) return (toast(app.switchBlocker), false);
     let r: { moved: string; url?: string; note?: string };
+    app.leaving = true;
     try {
       r = await request('/api/removeWorktree', { path: w.path, force });
     } catch (e) {
+      app.leaving = false;
       if (!(e instanceof Error && ask(e))) toast.error(e);
       return false;
     }
     done(r.note);
-    if (IS_TAURI) await invoke('open_worktree', { path: r.moved }).catch((e) => toast.error(e));
+    if (IS_TAURI) await invoke('open_worktree', { path: r.moved }).catch((e) => ((app.leaving = false), toast.error(e)));
     else if (r.url) location.href = r.url;
     return true;
   }

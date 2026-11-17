@@ -46,7 +46,12 @@ if (app && !values.browser && !values.dev) {
 }
 
 // Only for serving here: handing the repo to the app (above) needs none of the engine, so it doesn't wait for it.
-const [{ Repo }, { serve }] = await Promise.all([import('../src/server/repo.ts'), import('../src/server/server.ts')]);
+const [{ Repo }, { serve }, { survive }] = await Promise.all([
+  import('../src/server/repo.ts'),
+  import('../src/server/server.ts'),
+  import('../src/server/log.ts'),
+]);
+survive();
 const repo = await Repo.open(path).catch(fail);
 
 const root = join(here, '..');
@@ -61,21 +66,23 @@ if (values.dev) {
   dev = vite.middlewares;
 }
 
-// Another worktree gets its own server, on another port, started once.
+// Another worktree gets its own server, on another port, started once; and stopped once it's gone and its pages left.
 const servers = new Map<string, Promise<string>>();
+const start = async (r: InstanceType<typeof Repo>, port: number) => {
+  const s = await serve(r, { port, dist: join(root, 'dist'), dev, open, onGone: () => {
+    for (const [k, p] of servers) void p.then((u) => u === s.url && servers.delete(k), () => {});
+    s.close();
+  } });
+  return s.url;
+};
 const open = (path: string): Promise<string> => {
   if (!servers.has(path)) {
-    const started = Repo.open(path).then(async (r) => (await serve(r, { port: 0, dist: join(root, 'dist'), dev, open })).url);
+    const started = Repo.open(path).then((r) => start(r, 0));
     servers.set(path, started.catch((e) => (servers.delete(path), Promise.reject(e))));
   }
   return servers.get(path)!;
 };
-const { url } = await serve(repo, {
-  port: Number(values.port),
-  dist: join(root, 'dist'),
-  dev,
-  open,
-});
+const url = await start(repo, Number(values.port));
 servers.set(repo.git.root, Promise.resolve(url));
 console.log(`legit · ${repo.git.root}\n${url}`);
 

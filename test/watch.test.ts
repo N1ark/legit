@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import fs, { type FSWatcher, mkdirSync } from 'node:fs';
+import fs, { type FSWatcher, mkdirSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { mock, test } from 'node:test';
@@ -88,5 +88,73 @@ test("when watching fails (out of watches), the server keeps going and tells the
   } finally {
     mock.restoreAll();
     syncBuiltinESMExports();
+  }
+});
+
+const perFolder = process.platform !== 'darwin' && process.platform !== 'win32';
+
+test('a folder deleted and made again is watched again; a nested repository\'s git dir tells nothing', { skip: !perFolder }, async () => {
+  mkdirSync(join(t.dir, 'a'));
+  t.commit('one', { 'a/f': '1\n' });
+  mkdirSync(join(t.dir, 'vendor/x/.git'), { recursive: true });
+  const s = await serve(await Repo.open(t.dir), { port: 0, dist: t.tmp() });
+  try {
+    await sleep(300);
+    rmSync(join(t.dir, 'a'), { recursive: true });
+    mkdirSync(join(t.dir, 'a'));
+    await sleep(600);
+    assert.deepEqual(await eventsDuring(s.url, () => t.write('a/f', 'again\n')), ['work']);
+    assert.deepEqual(await eventsDuring(s.url, () => t.write('vendor/x/.git/index', 'x')), []);
+  } finally {
+    s.close();
+  }
+});
+
+test('ignored folders are not watched, until the .gitignore stops ignoring them', { skip: !perFolder }, async () => {
+  for (let i = 0; i < 50; i++) mkdirSync(join(t.dir, `node_modules/p${i}/lib`), { recursive: true });
+  t.commit('one', { '.gitignore': 'node_modules/\n', f: '1\n' });
+  const watched: string[] = [];
+  const real = fs.watch;
+  mock.method(fs, 'watch', (...args: Parameters<typeof fs.watch>) => (watched.push(String(args[0])), real(...args)));
+  syncBuiltinESMExports();
+  try {
+    const s = await serve(await Repo.open(t.dir), { port: 0, dist: t.tmp() });
+    try {
+      await sleep(300);
+      assert.ok(watched.length);
+      assert.ok(!watched.some((p) => p.includes('node_modules')));
+      assert.deepEqual(await eventsDuring(s.url, () => t.write('node_modules/p1/lib/x.js', 'x')), []);
+      t.write('.gitignore', '');
+      await sleep(1000);
+      assert.ok(watched.some((p) => p.endsWith(join('node_modules', 'p1', 'lib'))));
+      assert.deepEqual(await eventsDuring(s.url, () => t.write('node_modules/p1/lib/y.js', 'y')), ['work']);
+    } finally {
+      s.close();
+    }
+  } finally {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('files changing nonstop (a build) tell the page less and less often, not once per change', async () => {
+  t.commit('one', { f: '1\n' });
+  mkdirSync(join(t.dir, 'out'));
+  const s = await serve(await Repo.open(t.dir), { port: 0, dist: t.tmp() });
+  try {
+    await sleep(300);
+    let n = 0;
+    let timer: NodeJS.Timeout | undefined;
+    const events = await eventsDuring(s.url, () => {
+      timer = setInterval(() => {
+        if (++n === 30) clearInterval(timer);
+        for (let i = 0; i < 20; i++) t.write(`out/f${i}`, String(n));
+      }, 25);
+    });
+    clearInterval(timer);
+    // 750 ms of changes, every 25 ms: a look after 250 ms, then 500 (then 1000, past the end).
+    assert.ok(events.length >= 1 && events.length <= 3, `${events.length} events`);
+  } finally {
+    s.close();
   }
 });

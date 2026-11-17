@@ -121,8 +121,21 @@ export class Repo {
   snapshotIds = new Map<string, string>();
   private nextSnapshot = 1;
 
+  /** The worktree had a `.git` (a folder, or a file naming its git dir) when opened. */
+  private dotGit: boolean;
+
   constructor(git: Git) {
     this.git = git;
+    this.dotGit = existsSync(join(git.root, '.git'));
+  }
+
+  /**
+   * The worktree is gone: its folder deleted or moved (`git worktree remove`, `rm -rf`), or its git
+   * dir (a removed or pruned worktree's, or the whole repository's). Checked often, so only `stat`s.
+   */
+  gone(): boolean {
+    const { root, gitDir, commonDir } = this.git;
+    return !existsSync(root) || (this.dotGit && !existsSync(join(root, '.git'))) || !existsSync(join(gitDir, 'HEAD')) || !existsSync(commonDir);
   }
 
   static async open(path: string) {
