@@ -65,6 +65,13 @@ struct Views {
     origins: Mutex<HashMap<String, PathBuf>>,
 }
 
+/// What the window shows.
+#[derive(Default)]
+struct Switches {
+    /// The origin of the page the window may show (see `may_navigate`).
+    origin: Mutex<Option<String>>,
+}
+
 /// Questions to the page about leaving its repository, waiting for its `answer_leave`.
 #[derive(Default)]
 struct Leaving(Mutex<HashMap<u64, mpsc::Sender<bool>>>);
@@ -96,6 +103,7 @@ fn main() {
         .manage(Recent::default())
         .manage(Views::default())
         .manage(Leaving::default())
+        .manage(Switches::default())
         .menu(build_menu)
         .invoke_handler(tauri::generate_handler![
             commands::recent_repos,
@@ -570,12 +578,15 @@ fn server_for(app: &AppHandle, repo: &Path) -> Result<(Server, bool), String> {
 
 /// Point the window at `server` (opening it the first time), keeping the one it leaves running.
 fn show(app: &AppHandle, repo: &Path, server: Server) -> Result<(), String> {
+    let switches = app.state::<Switches>();
     app.state::<Views>().origins.lock().unwrap().insert(server.origin(), repo.to_path_buf());
     let name = repo_name(repo);
     let opened = repo.to_path_buf();
+    let before = switches.origin.lock().unwrap().replace(server.origin());
     if let Some(window) = app.get_webview_window(WINDOW) {
         // The page loads afresh from the new server, so nothing of the old repository carries over.
         if let Err(e) = window.navigate(server.url.clone()) {
+            *switches.origin.lock().unwrap() = before;
             stop(vec![server.child]);
             return Err(e.to_string());
         }
@@ -588,6 +599,7 @@ fn show(app: &AppHandle, repo: &Path, server: Server) -> Result<(), String> {
         return Ok(());
     }
 
+    let handle = app.clone();
     let window = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::External(server.url.clone()))
         .title(&name)
         .inner_size(1320.0, 860.0)
@@ -597,14 +609,34 @@ fn show(app: &AppHandle, repo: &Path, server: Server) -> Result<(), String> {
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
         .traffic_light_position(tauri::LogicalPosition::new(16.0, 26.0))
+        .on_navigation(move |url| may_navigate(&handle, url))
         .build();
     if let Err(e) = window {
+        *switches.origin.lock().unwrap() = before;
         stop(vec![server.child]);
         return Err(e.to_string());
     }
     *app.state::<Current>().0.lock().unwrap() = Some(server);
     update_recent(app, move |list| list.insert(0, opened));
     Ok(())
+}
+
+/// The window only goes where `show` points it, on the page of the server it shows. Going back
+/// (⌫ outside a field, a swipe, a mouse's back button) would show the repository shown before, from
+/// the server kept warm for it, under the app's back: a web link opens in the browser instead.
+fn may_navigate(app: &AppHandle, url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return true;
+    }
+    let origin = url.origin().ascii_serialization();
+    if app.state::<Switches>().origin.lock().unwrap().as_deref() == Some(origin.as_str()) {
+        return true;
+    }
+    let local = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+    if !local {
+        let _ = Command::new("open").arg(url.as_str()).stdin(Stdio::null()).spawn();
+    }
+    false
 }
 
 /// Close the servers' stdin so each exits once any running operation is done; kill those that

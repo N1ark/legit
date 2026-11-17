@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Pressing <kbd>⌫</kbd> outside a field (or swiping back) no longer takes the window back to the repository shown before; a web link that would open in the window opens in the browser.
+
 ## 0.26.0 — 2026-11-15
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.
