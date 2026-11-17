@@ -2,7 +2,7 @@
 // once while they're asked for again. One is only shown again in the state it was fetched in:
 // after anything changes it (a switch, a commit, a fetch, any operation), the picker waits for
 // the new one as it did the first time.
-import { app } from './app.svelte.ts';
+import { app, refuse } from './app.svelte.ts';
 
 export class Listed<T> {
   private readonly path: string;
@@ -32,7 +32,7 @@ export class Listed<T> {
     const list = (async () => {
       const res = await fetch(this.path);
       const text = await res.text();
-      if (!res.ok) throw new Error((JSON.parse(text) as { error?: string }).error ?? res.statusText);
+      if (!res.ok) return refuse(JSON.parse(text), res.statusText);
       // An answer overtaken by a later one is passed on, not kept.
       if (this.last && this.last.n > n) return text === this.last.text ? this.last.value : (JSON.parse(text) as T);
       if (text !== this.last?.text) this.last = { repo, text, value: JSON.parse(text), n };

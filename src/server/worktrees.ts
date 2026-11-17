@@ -206,6 +206,25 @@ export function removeWorktree(
   });
 }
 
+/**
+ * Where to go once this worktree is gone (see `Repo.gone`): the main worktree, else another that's
+ * still there; null when there's none, or the repository is gone too. Asked of its git dir, as the folder's gone.
+ */
+export async function fallbackWorktree(repo: Repo): Promise<string | null> {
+  const { commonDir, root } = repo.git;
+  if (!existsSync(commonDir)) return null;
+  const r = await run(commonDir, ['worktree', 'list', '--porcelain', '-z'], { allowFail: true }).catch(() => null);
+  if (r?.code !== 0) return null;
+  const gone = real(root);
+  for (const block of r.out.toString('utf8').split('\0\0')) {
+    const lines = block.split('\0');
+    const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
+    if (!path || lines.includes('bare') || lines.some((l) => l.startsWith('prunable'))) continue;
+    if (real(path) !== gone && existsSync(join(path, '.git'))) return path;
+  }
+  return null;
+}
+
 /** The worktree at `path`, if it's one of this repository's (to switch to it). */
 export async function findWorktree(repo: Repo, path: string): Promise<WorktreeInfo> {
   const w = (await worktrees(repo)).find((x) => x.path === path);

@@ -39,6 +39,14 @@ export interface RunOpts {
   onErr?: (chunk: string) => void;
 }
 
+/** A failed git's error, saying plainly when another git holds a lock, or the folder it ran in is gone. */
+export function gitFailure(cwd: string, args: string[], err: string, code: number | string): GitError {
+  if (!existsSync(cwd)) return new GitError(`${cwd} is gone: it was deleted or moved.`, 'repo-gone');
+  const lock = /Unable to create '([^']+\.lock)': File exists/.exec(err)?.[1];
+  if (lock) return new GitError(`Another git process is running in this repository (it holds ${lock}). Try again once it's done.`, 'locked');
+  return new GitError(`git ${args[0]} failed: ${err.trim() || `exit ${code}`}`);
+}
+
 export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
   return new Promise((done, fail) => {
     const p = spawn('git', args, {
@@ -54,12 +62,13 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
     });
     p.stdin.on('error', () => {});
     const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
-    p.on('error', fail);
+    // Spawning in a folder that's gone fails as if git weren't installed.
+    p.on('error', (e) => fail(existsSync(cwd) ? e : gitFailure(cwd, args, '', 'ENOENT')));
     p.on('close', (code) => {
       clearTimeout(timer);
       const res = { code: code ?? -1, out: Buffer.concat(out), err: Buffer.concat(err).toString('utf8') };
       if (res.code !== 0 && !opts.allowFail) {
-        fail(new GitError(`git ${args[0]} failed: ${res.err.trim() || `exit ${res.code}`}`));
+        fail(gitFailure(cwd, args, res.err, res.code));
       } else done(res);
     });
     p.stdin.end(opts.input);

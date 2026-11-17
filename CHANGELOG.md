@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A worktree deleted, moved or removed outside legit while it's shown (`rm -rf`, `git worktree remove`, its repository moved) no longer fills the window with errors: within a moment it goes to the main worktree (else another that's still there), or, when the whole repository is gone, says so and offers another.
+
 ## 0.26.0 — 2026-11-15
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.

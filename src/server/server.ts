@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize, sep } from 'node:path';
+import { basename, extname, join, normalize, sep } from 'node:path';
 import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
 import { imageType, renderKind } from '../shared/files.ts';
 import { avatars } from './avatars.ts';
@@ -28,10 +28,10 @@ import { watchTree } from './watch.ts';
 import {
   abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
-import { addWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
+import { addWorktree, fallbackWorktree, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import { cloneInfo, cloneRepo, cloned } from './clone.ts';
 import { checkoutPr } from './gh/checkout.ts';
-import type { CommitDiff, FileContents, SettingsInfo } from '../shared/types.ts';
+import type { CommitDiff, FileContents, RepoGone, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
 
 const MIME: Record<string, string> = {
@@ -55,6 +55,8 @@ export interface ServeOpts {
   dev?: Middleware;
   /** Serve another worktree of the repository, returning its URL (the browser version; the app switches its window itself). */
   open?: (path: string) => Promise<string>;
+  /** Called once the worktree is gone (see `Repo.gone`) and no page has been left on it for a moment. */
+  onGone?: () => void;
 }
 
 function readBody(req: IncomingMessage): Promise<any> {
@@ -129,12 +131,50 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   // the app's is on coming back to its repo, keeps what it loaded. Another server, or version, has another.
   const boot = randomBytes(8).toString('hex');
 
+  // The worktree went (deleted or moved): nothing more runs for it. Requests get `RepoGone` (410), and
+  // pages are told where to go instead. Checked as files change, as requests come and fail, and now and then.
+  let gone: Promise<RepoGone> | null = null;
+  const watchers: (() => void)[] = [];
+  const stopWatching = () => watchers.splice(0).forEach((stop) => stop());
+  const isGone = (): boolean => {
+    if (gone) return true;
+    if (!repo.gone()) return false;
+    const { root } = repo.git;
+    log(`${root} is gone: it was deleted or moved.`);
+    stopWatching();
+    clearInterval(checking);
+    gone = (async (): Promise<RepoGone> => {
+      const to = await fallbackWorktree(repo).catch(() => null);
+      const url = to && opts.open ? await opts.open(to).catch(() => undefined) : undefined;
+      return { error: `${basename(root)} is gone: ${root} was deleted or moved.`, code: 'repo-gone', root, to, ...(url ? { url } : {}) };
+    })();
+    void gone.then((g) => {
+      for (const c of clients) c.write(`event: gone\ndata: ${JSON.stringify(g)}\n\n`);
+      leaveIfUnwatched();
+    });
+    return true;
+  };
+  const checking = setInterval(isGone, 3000).unref();
+  let goneTimer: NodeJS.Timeout | undefined;
+  let left = false;
+  /** Once gone, with no page left watching for a moment (the pages went elsewhere), the server's done. */
+  const leaveIfUnwatched = () => {
+    if (!gone || clients.size || left) return;
+    clearTimeout(goneTimer);
+    goneTimer = setTimeout(() => {
+      if (clients.size || left) return;
+      left = true;
+      opts.onGone?.();
+    }, 2000);
+  };
+
   // Tell the UI when refs or in-progress operations change (commits from a terminal, etc),
   // and, separately, when files or the index change (uncommitted changes).
   let timer: NodeJS.Timeout | undefined;
   const notify = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
+      if (isGone()) return;
       for (const c of clients) c.write('data: change\n\n');
     }, 60);
   };
@@ -150,8 +190,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       workTimer = undefined;
       const [paths, any] = [[...changed], anyChange];
       [changed, anyChange] = [new Set(), false];
-      if (!clients.size) return;
-      if (any || !(await allIgnored(repo.git, paths))) for (const c of clients) c.write('data: work\n\n');
+      if (!clients.size || isGone()) return;
+      if ((any || !(await allIgnored(repo.git, paths))) && !gone) for (const c of clients) c.write('data: work\n\n');
     }, 250);
   };
   // Fetches and pushes say how far they've got, as a `progress` event.
@@ -162,13 +202,14 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   // Out of watches (too many folders for the system's limit): the page is told to look again whenever it's focused.
   let blind = false;
   const lost = (e: Error) => {
+    if (isGone()) return;
     if (!blind) log(`Changes made outside legit won't show until the window is focused: ${e.message}`);
     blind = true;
     for (const c of clients) c.write('data: blind\n\n');
   };
   const relevant = /^(HEAD|ORIG_HEAD|packed-refs|refs[\\/]|rebase-|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|BISECT_LOG|legit-stash$)/;
   const dirs = [...new Set([repo.git.gitDir, repo.git.commonDir])];
-  const watchers = dirs.map((d) =>
+  watchers.push(...dirs.map((d) =>
     watchTree(
       d,
       (rel) => /^(refs|rebase-merge|rebase-apply)(\/|$)/.test(rel),
@@ -180,7 +221,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       },
       lost,
     ),
-  );
+  ));
   watchers.push(
     watchTree(
       repo.git.root,
@@ -307,8 +348,16 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   }
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
-    if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/logs') return send(res, 200, JSON.stringify(logText()));
+    if (isGone()) {
+      if (path !== '/api/events') return send(res, 410, await gone);
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+      res.write(`event: gone\ndata: ${JSON.stringify(await gone)}\n\n`);
+      clients.add(res);
+      req.on('close', () => (clients.delete(res), leaveIfUnwatched()));
+      return;
+    }
+    if (path === '/api/state') return send(res, 200, await repo.state());
     if (path === '/api/backups') return send(res, 200, await repo.backups());
     if (path === '/api/discarded') return send(res, 200, await discarded(repo.git));
     if (path === '/api/branches') return send(res, 200, await repo.branches());
@@ -326,7 +375,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write(blind ? 'data: blind\n\n' : ': hi\n\n');
       clients.add(res);
-      req.on('close', () => clients.delete(res));
+      req.on('close', () => (clients.delete(res), leaveIfUnwatched()));
       return;
     }
     if (path === '/api/avatars' && req.method === 'POST') {
@@ -483,12 +532,14 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (req.headers.host !== origin) return send(res, 403, { error: 'Forbidden' });
     const url = new URL(req.url ?? '/', 'http://x');
     const path = url.pathname;
-    if (path === '/') warmGithub(repo);
+    if (path === '/' && !isGone()) warmGithub(repo);
     try {
       if (path.startsWith('/api/')) await api(req, res, path, url.searchParams);
       else if (opts.dev) opts.dev(req, res, () => send(res, 404, { error: 'Not found' }));
       else await staticFile(res, path);
     } catch (e) {
+      // Whatever failed, the reason is that it's gone.
+      if (path.startsWith('/api/') && isGone()) return send(res, 410, await gone);
       const known = e instanceof GitError;
       log(`${req.method} ${path}${url.search}:`, known ? e.message : e);
       send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e), ...(known && e.code ? { code: e.code } : {}) });
@@ -504,7 +555,9 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       done({
         url: `http://${origin}/`,
         close: () => {
-          watchers.forEach((stop) => stop());
+          stopWatching();
+          clearInterval(checking);
+          clearTimeout(goneTimer);
           stopProgress();
           for (const c of clients) c.end();
           server.close();

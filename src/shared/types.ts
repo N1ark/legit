@@ -488,6 +488,18 @@ export interface WorktreeInfo {
   missing: boolean;
 }
 
+/** What every request gets (status 410), and the pages are told (`gone` event), once the worktree served is gone. */
+export interface RepoGone {
+  error: string;
+  code: 'repo-gone';
+  /** The folder that was shown. */
+  root: string;
+  /** The worktree to go to instead (the main one, else another), if any is left. */
+  to: string | null;
+  /** Where the browser version serves `to`. */
+  url?: string;
+}
+
 export interface WorktreeRequest {
   /** An existing local branch to check out, or the new branch to create. */
   branch: string;

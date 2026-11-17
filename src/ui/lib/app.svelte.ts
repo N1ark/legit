@@ -9,12 +9,12 @@ import type { CsvIndex } from './csv.ts';
 import { DocDiff } from './md-diff.ts';
 import { renderSide, renderedDiff, renderedPaths } from './rendered.ts';
 import { readTable } from './tables.ts';
-import { recall } from './desktop.ts';
+import { invoke, recall } from './desktop.ts';
 import { type SquashFields, squashFields } from './squash.ts';
 import type { GhView } from './github.svelte.ts';
 import type {
   CommitInfo, DiffSummary, DisplaySettings, LocatedCommit, EditLineRequest, EditRequest, SplitRequest, FileContents, FileLines, HunkData, MergedCommits, OlderCommits, OpResult, Person, Progress, RemoveChangesRequest, RepoState,
-  Stashes, SyncResult,
+  RepoGone, Stashes, SyncResult,
 } from '../../shared/types.ts';
 
 /** GETs index.html sent before the bundle loaded, by path. */
@@ -31,8 +31,18 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
         : { method: 'POST', headers: { 'content-type': 'application/json', 'x-legit': '1' }, body: JSON.stringify(body) },
     ));
   const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(data.error ?? res.statusText), { code: data.code as string | undefined });
+  if (!res.ok) return refuse(data, res.statusText);
   return data;
+}
+
+/**
+ * A failed response's error. When it's that the worktree is gone (`RepoGone`), the page goes elsewhere
+ * (see `App.lost`) and the caller never hears back: nothing it would do or say then matters.
+ */
+export function refuse(data: { error?: string; code?: string }, status: string): Promise<never> {
+  if (data.code !== 'repo-gone') return Promise.reject(Object.assign(new Error(data.error ?? status), { code: data.code }));
+  app.lost(data as RepoGone);
+  return new Promise(() => {});
 }
 
 class App {
@@ -185,6 +195,7 @@ class App {
    * asked meanwhile; asked during an operation, it waits for it to end (it may still be changing things).
    */
   refresh(): Promise<void> {
+    if (this.gone) return Promise.resolve();
     if (this.busy) {
       this.stale = true;
       return Promise.resolve();
@@ -209,7 +220,7 @@ class App {
     try {
       const res = await (sent ?? fetch('/api/state'));
       const text = await res.text();
-      if (!res.ok) throw new Error((JSON.parse(text) as { error?: string }).error ?? res.statusText);
+      if (!res.ok) return void (await refuse(JSON.parse(text), res.statusText));
       // Window focus and file events refresh far more often than anything changes.
       if (gen !== this.gen || (text === this.fetched?.text && this.repo === this.fetched.repo)) return;
       this.setRepo(JSON.parse(text));
@@ -814,6 +825,26 @@ class App {
     this.refresh();
   }
 
+  /** The worktree shown is gone (deleted or moved outside legit); set once. The page shows that in place of everything else. */
+  gone = $state.raw<RepoGone | null>(null);
+  /** The worktree is being left on purpose (removing it), so its going isn't news. */
+  leaving = false;
+
+  /** Go to the worktree the server says to instead (the main one, else another), if there's one; else just say it's gone. */
+  async lost(g: RepoGone) {
+    if (this.gone || this.leaving) return;
+    this.gone = g;
+    if (!g.to) return;
+    try {
+      if (IS_TAURI) await invoke('open_worktree', { path: g.to });
+      // Replaced, so going back doesn't come back to it.
+      else if (g.url) location.replace(g.url);
+      else this.gone = { ...g, to: null };
+    } catch (e) {
+      this.gone = { ...g, to: null, error: `${g.error} ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
   /** The stash shown in place of the selected commit, if any (from the stashes panel). */
   stash = $state<ShownStash | null>(null);
   /** A GitHub view shown in place of a commit (see lib/github.svelte.ts); picking a commit leaves it. */
@@ -909,7 +940,7 @@ class App {
    * for (a background fetch is just dropped).
    */
   switchBlocker = $derived(
-    this.busy ? switchRefusal(this.running) : this.userFetching || this.fetchingBase ? switchRefusal('fetch') : null,
+    this.gone ? null : this.busy ? switchRefusal(this.running) : this.userFetching || this.fetchingBase ? switchRefusal('fetch') : null,
   );
 
   /**
