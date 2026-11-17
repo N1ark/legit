@@ -856,7 +856,8 @@
   });
   const visible = $derived(Array.from({ length: range[1] - range[0] }, (_, k) => range[0] + k));
 
-  /** File i's rows near the viewport. */
+  const shownRows = new Map<number, number[]>();
+  /** File i's rows near the viewport; the same array while they stay the same, as they do for many frames of slow scrolling. */
   function rowRange(i: number): number[] {
     const y = tops[i] + HEAD + lead(i);
     // Rows of varying height are searched for, not listed: this runs for every frame of scrolling.
@@ -864,8 +865,11 @@
       blocksOf(i) || wrapped(i)
         ? rowsIn(rowCount(i), (r) => rowY(i, r), view.top - OVERSCAN - y, view.bottom + OVERSCAN - y)
         : fixedRange(rowCount(i), ROW, view.top - OVERSCAN - y, view.bottom - view.top + 2 * OVERSCAN);
+    const last = shownRows.get(i);
+    if (last && last.length === b - a && (a === b || last[0] === a)) return last;
     const out: number[] = [];
     for (let r = a; r < b; r++) out.push(r);
+    shownRows.set(i, out);
     return out;
   }
 
@@ -2013,9 +2017,10 @@
 
 <div class="diff" style:--inset="{inset}px">
   <span class="measure mono" aria-hidden="true" {@attach measureChars}>{'0'.repeat(100)}</span>
-  <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px" style:--side-height="{sideHeight}px">
-    <!-- Never taller than what's on screen of the diff (see sideHeight), so its ends can always be reached. -->
-    <div class="side">
+  <div class="panes" class:with-tree={showTree} style:--tree-width="{treeWidth}px">
+    <!-- Never taller than what's on screen of the diff (see sideHeight), so its ends can always be reached. Its own
+         height, not a variable the whole diff inherits: that changes as the view scrolls, and would restyle every line. -->
+    <div class="side" style:height={showTree ? `${sideHeight}px` : undefined}>
       <div class="summary muted" bind:clientHeight={summaryHeight}>
         <div class="stats">
           <div class="stat">
@@ -2540,7 +2545,6 @@
   .panes.with-tree .side {
     position: sticky;
     top: var(--inset);
-    height: var(--side-height);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2560,7 +2564,7 @@
 
     .panes.with-tree .side {
       position: static;
-      height: auto;
+      height: auto !important;
     }
 
     .tree,

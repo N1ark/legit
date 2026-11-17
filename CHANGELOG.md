@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Scrolling a big diff near its top (with the commit's message above it) or its end no longer restyles every line on screen each frame, so it stays smooth on a busy machine.
+
 ## 0.26.0 — 2026-11-15
 
 - A pull request's overview is one conversation in the order things happened, as on GitHub: comments, reviews, pushes (each commit with its checks, opening its diff), force-pushes and events, interleaved, instead of a list of commits above it. **Oldest first** / **Newest first** above it picks which end comes first, and is remembered; newest first puts the comment box at the top.
