@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { unlink, writeFile } from 'node:fs/promises';
+import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
@@ -37,6 +37,8 @@ const BACKUPS = 'refs/legit/backups';
 /** Parsed diffs kept, and about how much memory they may take together. */
 const MAX_DIFFS = 200;
 const MAX_DIFF_BYTES = 128 * 1024 * 1024;
+/** A file changed this recently (ms) may change again within its time's resolution (a second, on some file systems). */
+const RACY = 2000;
 
 /** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
 const diffBytes = (d: CommitDiff) => {
@@ -216,25 +218,78 @@ export class Repo {
     return state;
   }
 
-  /** The branch's upstream, and every remote-tracking ref, in one `for-each-ref`. */
+  /** The branch's upstream, and every remote-tracking ref (read again only once they may have changed: see `remotesStamp`). */
   private async refView(branch: string | null): Promise<RefView> {
-    const out = await this.git.text([
-      'for-each-ref',
-      '--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)',
-      ...(branch ? [`refs/heads/${branch}`] : []),
-      'refs/remotes/',
+    const [own, remotes] = await Promise.all([
+      branch
+        ? this.git.text(['for-each-ref', '--format=%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)', `refs/heads/${branch}`])
+        : '',
+      this.remoteRefs(),
     ]);
-    const view: RefView = { sha: null, upstream: '', remote: '', remoteRef: '', remotes: new Map(), fingerprint: '' };
+    const [sha, upstream = '', remote = '', remoteRef = ''] = own ? own.split('\0') : [];
+    return { sha: sha || null, upstream, remote, remoteRef, ...remotes };
+  }
+
+  private remotesSeen: { stamp: string; refs: Pick<RefView, 'remotes' | 'fingerprint'> } | null = null;
+
+  /** Every remote-tracking ref (refname → SHA), and a fingerprint that changes whenever one does. */
+  private async remoteRefs(): Promise<Pick<RefView, 'remotes' | 'fingerprint'>> {
+    const stamp = await this.remotesStamp().catch(() => null);
+    if (stamp && this.remotesSeen?.stamp === stamp) return this.remotesSeen.refs;
+    const out = await this.git.text(['for-each-ref', '--format=%(refname)%00%(objectname)', 'refs/remotes/']);
+    const remotes = new Map<string, string>();
     const hash = createHash('sha1');
     for (const line of out.split('\n')) {
-      const [ref, sha, upstream, remote, remoteRef] = line.split('\0');
-      if (ref.startsWith('refs/remotes/')) {
-        view.remotes.set(ref, sha);
-        hash.update(`${ref} ${sha}\n`);
-      } else if (ref === `refs/heads/${branch}`) Object.assign(view, { sha, upstream, remote, remoteRef });
+      const [ref, sha] = line.split('\0');
+      if (!sha) continue;
+      remotes.set(ref, sha);
+      hash.update(`${ref} ${sha}\n`);
     }
-    view.fingerprint = hash.digest('hex');
-    return view;
+    const refs = { remotes, fingerprint: hash.digest('hex') };
+    if (stamp) this.remotesSeen = { stamp, refs };
+    return refs;
+  }
+
+  /** Directories under refs/remotes as last listed, by path: listed again only when one's changed. */
+  private remoteDirs = new Map<string, { mtime: number; dirs: string[] }>();
+
+  /**
+   * Changes whenever a remote-tracking ref may have: git writes a ref by renaming a file into its
+   * directory, so packed-refs and those directories' times say. Null when they can't (a reftable,
+   * or something changed too recently for its time to be trusted).
+   */
+  private async remotesStamp(): Promise<string | null> {
+    const common = this.git.commonDir;
+    if (existsSync(join(common, 'reftable'))) return null;
+    const now = Date.now();
+    const parts: string[] = [];
+    const time = async (path: string) => {
+      const st = await stat(path).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      });
+      if (st && now - st.mtimeMs < RACY) throw new Error('racy');
+      parts.push(st ? `${path} ${st.ino} ${st.size} ${st.mtimeMs}` : `${path} none`);
+      return st;
+    };
+    const walk = async (dir: string): Promise<void> => {
+      const st = await time(dir);
+      if (!st) return void this.remoteDirs.delete(dir);
+      let seen = this.remoteDirs.get(dir);
+      if (seen?.mtime !== st.mtimeMs) {
+        const dirs = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => join(dir, e.name));
+        this.remoteDirs.set(dir, (seen = { mtime: st.mtimeMs, dirs }));
+      }
+      await Promise.all(seen.dirs.map(walk));
+    };
+    try {
+      await time(join(common, 'packed-refs'));
+      await walk(join(common, 'refs', 'remotes'));
+    } catch (e) {
+      if ((e as Error).message === 'racy') return null;
+      throw e;
+    }
+    return parts.sort().join('\n');
   }
 
   /**
