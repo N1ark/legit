@@ -20,6 +20,10 @@
 - Editing a big file with uncommitted changes no longer piles up memory: past 64 MB, only the last few versions of the changes are kept.
 - A pull request's diff since your last review, after a force-push, shows files with non-ASCII names too.
 - Looking for uncommitted changes no longer takes git's index lock each time (only once after files were merely touched), so a `git add` or `git commit` in a terminal no longer fails now and then with *index.lock: File exists* while legit is open.
+- Showing a big merge's commits again (after hiding them, or coming back to the repo) is instant: what it brought in is worked out once.
+- A repository with tens of thousands of remote branches no longer lists them all again on every refresh (each focus, each file saved): only once they may have changed, so the window keeps up while you edit (about 120 ms of work down to 20 with 30,000).
+- The fetch every five minutes waits while the window is minimized or hidden, instead of running git in the background; it catches up when the window shows again.
+- On a long history, a commit made (or dropped) while you're looking far down the list no longer sends the list back to its first thousand commits and the selection to the top.
 
 ## 0.26.0 — 2026-11-15
 

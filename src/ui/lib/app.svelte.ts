@@ -5,6 +5,7 @@ import { highlight, prepare } from './highlighter.ts';
 import { type Expansion, type RowPlace, buildRows, noExpansion, rowHunks } from './rows.ts';
 import { switchRefusal } from './busy.ts';
 import { Lru } from './cache.ts';
+import { type Older, carryOlder } from './older.ts';
 import type { CsvIndex } from './csv.ts';
 import { DocDiff } from './md-diff.ts';
 import { renderSide, renderedDiff, renderedPaths } from './rendered.ts';
@@ -66,7 +67,7 @@ class App {
   private gen = 0;
 
   /** History loaded by scrolling past the state's commits; it continues from `from`, the oldest of those. */
-  private older = $state.raw<({ from: string } & OlderCommits) | null>(null);
+  private older = $state.raw<Older | null>(null);
   loadingOlder = $state(false);
   /** Merges whose commits are listed under them, by SHA (null while loading). */
   expanded = $state.raw<Record<string, MergedCommits | null>>({});
@@ -253,6 +254,8 @@ class App {
     // A merge (or rebase...) that just stopped: show its conflicts.
     const conflictStarted = !!repo.conflict && !this.repo?.conflict;
     repo.commits = keepCommits(this.repo?.commits, repo.commits);
+    const older = carryOlder(this.repo?.commits ?? NONE, this.older, repo.commits);
+    if (older) this.older = older;
     this.repo = repo;
     this.loadAvatars(this.people.map((p) => p.email));
     const shas = new Set(this.commits.map((c) => c.sha));
@@ -767,12 +770,25 @@ class App {
     !!this.repo && (this.repo.work.staged + this.repo.work.unstaged + this.repo.work.untracked > 0 || !!this.repo.conflict),
   );
   /** Avatar URL by lowercased email, set once the picture is loaded; null when there's none (initials are shown instead). */
-  avatars = $state<Record<string, string | null>>({});
+  avatars = $state.raw<Record<string, string | null>>({});
   private avatarsPending = new Set<string>();
+  /** Pictures in since the last update: shown together, so the rows showing them redraw once, not once each. */
+  private avatarsIn: Record<string, string | null> | null = null;
+
+  private gotAvatar(email: string, src: string | null) {
+    if (!this.avatarsIn) {
+      this.avatarsIn = {};
+      setTimeout(() => {
+        this.avatars = { ...this.avatars, ...this.avatarsIn };
+        this.avatarsIn = null;
+      }, 50);
+    }
+    this.avatarsIn[email] = src;
+  }
 
   loadAvatars(emails: string[]) {
     const need = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
-      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e),
+      (e) => e && !(e in this.avatars) && !this.avatarsPending.has(e) && !(this.avatarsIn && e in this.avatarsIn),
     );
     if (!need.length) return;
     for (const e of need) this.avatarsPending.add(e);
@@ -780,8 +796,7 @@ class App {
       .then((r) =>
         Promise.all(
           Object.entries(r).map(async ([email, url]) => {
-            const src = url && (await preloadAvatar(url));
-            this.avatars = { ...this.avatars, [email]: src || null };
+            this.gotAvatar(email, (url && (await preloadAvatar(url))) || null);
           }),
         ),
       )
