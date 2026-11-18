@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** Comments typed and not sent, by pull request: found again when it's shown next. */
+  const unsent = new Map<number, string>();
+</script>
+
 <script lang="ts">
   // A pull request in place of a commit, as GitHub's Conversation tab: its description and changes,
   // then the conversation with the merge box, with who reviews it and its labels beside them. One query loads it
@@ -5,7 +10,7 @@
   // Opened again within a minute, it shows the overview it had at once, while it loads again.
   import { Avatar, Button, IconButton, Kbd, Spinner, TextArea, formatFull, formatRelative, hasOverlay, isTyping, matches, menu, toast, tooltip } from 'purr';
   import { ArrowSquareOutRegular, GitPullRequestClosedRegular, XRegular } from 'purr/glyphs';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import type { PrOptions, PrOverview } from '../../shared/gh-prview.ts';
   import { isLive } from '../../shared/github.ts';
   import Markdown from '../Markdown.svelte';
@@ -76,7 +81,10 @@
     if (working) return false;
     working = true;
     try {
-      pr = await ghPost<PrOverview>(name, { number, ...body });
+      const got = await ghPost<PrOverview>(name, { number, ...body });
+      // A load on its way may have been answered before the change: this is newer.
+      gen++;
+      pr = got;
       keepPrview(pr);
       loadedAt = Date.now();
       if (done) toast(done);
@@ -164,8 +172,14 @@
     if (await act('prviewEdit', { base }, `#${number} now merges into ${base}`)) gh.refresh({ fresh: true });
   }
 
-  // The comment box at the bottom.
-  let comment = $state('');
+  // The comment box at the bottom, as it was left if another view was shown meanwhile.
+  const shownNumber = untrack(() => number);
+  let comment = $state(unsent.get(shownNumber) ?? '');
+  onDestroy(() => {
+    const n = shownNumber;
+    if (comment.trim()) unsent.set(n, comment);
+    else unsent.delete(n);
+  });
 
   async function send() {
     if (!comment.trim() || working) return;
