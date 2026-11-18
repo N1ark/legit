@@ -38,6 +38,9 @@ const BACKUPS = 'refs/legit/backups';
 /** Parsed diffs kept, and about how much memory they may take together. */
 const MAX_DIFFS = 200;
 const MAX_DIFF_BYTES = 128 * 1024 * 1024;
+/** What `trim` leaves of them: about what coming back to the repository shows first. */
+const IDLE_DIFFS = 20;
+const IDLE_DIFF_BYTES = 16 * 1024 * 1024;
 /** A file changed this recently (ms) may change again within its time's resolution (a second, on some file systems). */
 const RACY = 2000;
 
@@ -451,16 +454,29 @@ export class Repo {
         entry.bytes = diffBytes(d);
         this.diffsBytes += entry.bytes;
         // A huge commit's parsed diff takes a few times its patch: keep this one, and as many others as fit.
-        for (const [k, e] of this.diffs) {
-          if (this.diffs.size <= MAX_DIFFS && this.diffsBytes <= MAX_DIFF_BYTES) break;
-          if (e === entry) continue;
-          this.diffs.delete(k);
-          this.diffsBytes -= e.bytes;
-        }
+        this.evictDiffs(MAX_DIFFS, MAX_DIFF_BYTES, entry);
       },
       () => this.diffs.get(sha) === entry && this.diffs.delete(sha),
     );
     return diff;
+  }
+
+  /** Drop parsed diffs, least recently used first, down to `max` of them and about `budget` bytes, but never `keep`. */
+  private evictDiffs(max: number, budget: number, keep: unknown) {
+    for (const [k, e] of this.diffs) {
+      if (this.diffs.size <= max && this.diffsBytes <= budget) break;
+      if (e === keep) continue;
+      this.diffs.delete(k);
+      this.diffsBytes -= e.bytes;
+    }
+  }
+
+  /**
+   * Nothing has shown this repository for a while (the app's window went to another, and keeps this
+   * server for coming back): keep only the diffs used last, the one that was on screen among them.
+   */
+  trim() {
+    this.evictDiffs(IDLE_DIFFS, IDLE_DIFF_BYTES, [...this.diffs.values()].at(-1));
   }
 
   /**
