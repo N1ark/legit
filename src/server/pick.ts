@@ -92,7 +92,7 @@ async function replay(repo: Repo, commits: RawCommit[], onto: string) {
 /** Is local branch `name` checked out in another worktree (whose files would then be out of step)? */
 async function checkedOutElsewhere(git: Git, name: string): Promise<boolean> {
   const list = await git.text(['worktree', 'list', '--porcelain'], { allowFail: true });
-  return list.split('\n\n').some((w) => w.includes(`\nbranch refs/heads/${name}`) && !w.startsWith(`worktree ${git.root}\n`));
+  return list.split('\n\n').some((w) => w.split('\n').includes(`branch refs/heads/${name}`) && !w.startsWith(`worktree ${git.root}\n`));
 }
 
 /**

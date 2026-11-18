@@ -121,3 +121,16 @@ test('a conflicting cherry-pick stops for the conflict view, continues, and undo
   assert.equal(git('rev-parse', 'HEAD'), head);
   assert.equal(read('f'), '1\nmine\n3\n');
 });
+
+test('copying refuses only when the branch itself is checked out in another worktree, not one whose name starts the same', async () => {
+  commit('base', { f: '1\n' });
+  git('branch', 'feat');
+  git('branch', 'feat-x');
+  const c = commit('more', { g: '1\n' });
+  const elsewhere = t.tmp('legit-wt-');
+  git('worktree', 'add', '-q', elsewhere, 'feat-x');
+  const repo = await Repo.open(t.dir);
+  await copyTo(repo, { shas: [c], branch: 'feat' });
+  assert.deepEqual(log('feat'), ['more', 'base']);
+  await assert.rejects(copyTo(repo, { shas: [c], branch: 'feat-x' }), /checked out in another worktree/);
+});
