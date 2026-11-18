@@ -2,7 +2,7 @@
 // refresh and when opened, and one by number looked up as it's typed.
 
 import { persisted, toast } from 'purr';
-import { gh, ghRequest } from './github.svelte.ts';
+import { gh, ghRequest, sameData } from './github.svelte.ts';
 import type { InboxList, InboxPage, InboxPr, PrInbox } from '../../shared/gh-inbox.ts';
 import { addPage } from './gh-inbox.ts';
 
@@ -41,7 +41,8 @@ class Inbox {
     try {
       const r = await ghRequest<PrInbox>('prInbox', { fresh: fresh ? 1 : null });
       if (gen !== this.gen) return;
-      this.data = r;
+      // Polled with every refresh: the same lists again keep the ones shown, which then don't redraw.
+      if (!sameData(this.data, r)) this.data = r;
       this.error = null;
     } catch (e) {
       if (gen === this.gen) this.error = e instanceof Error ? e.message : String(e);
