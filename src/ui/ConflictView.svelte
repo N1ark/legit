@@ -47,6 +47,9 @@
           [at, diff] = [p, d];
         }
       }
+    } catch (e) {
+      // The server out of reach (stopped, or the machine asleep): said, and tried again on the next change or focus.
+      error = `Couldn't load the changes: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       loading = false;
       if (again) {

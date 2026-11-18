@@ -1,9 +1,15 @@
+<script module lang="ts">
+  /** Review text typed and not submitted, by pull request: found again when its overview is shown next. */
+  const unsent = new Map<number, string>();
+</script>
+
 <script lang="ts">
   // Review a pull request: a few words and a verdict (comment, approve, request changes). When the
   // viewer has diff comments waiting in a review of theirs, that review is the one submitted: what
   // it holds is said above the verdicts, and listed (to show, edit or delete them, or discard it).
   import { Button, Kbd, Popover, TextArea, matches, tooltip } from 'purr';
   import { CaretDownRegular, ChatCircleRegular } from 'purr/glyphs';
+  import { onDestroy, untrack } from 'svelte';
   import PendingReview from './PendingReview.svelte';
   import type { PrOverview, ReviewEvent } from '../../shared/gh-prview.ts';
   import { reviewNeeds, reviewRefusal } from '../lib/gh-prview.ts';
@@ -18,7 +24,12 @@
 
   let open = $state(false);
   let button = $state<HTMLButtonElement | null>(null);
-  let body = $state('');
+  const shownNumber = untrack(() => pr.number);
+  let body = $state(unsent.get(shownNumber) ?? '');
+  onDestroy(() => {
+    if (body.trim()) unsent.set(shownNumber, body);
+    else unsent.delete(shownNumber);
+  });
   let event = $state<ReviewEvent>('COMMENT');
 
   const CHOICES: { id: ReviewEvent; label: string; note: string }[] = [

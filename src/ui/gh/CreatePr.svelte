@@ -40,7 +40,11 @@
     else left.delete(branch);
   });
 
+  /** Why the base picked last couldn't be compared, if it couldn't. */
+  let baseError = $state<{ base: string; message: string } | null>(null);
+
   async function load(wanted?: string) {
+    baseError = null;
     try {
       const i = await ghRequest<PrCreateInfo>('prCreateInfo', { branch, base: wanted });
       if (wanted !== undefined && wanted !== base) return;
@@ -49,8 +53,10 @@
       if (!edited) ({ title, body } = prDraft(branch, i.commits));
       if (wanted === undefined) await tick().then(() => titleInput?.select());
     } catch (e) {
+      if (wanted !== undefined && wanted !== base) return;
       toast.error(e);
       if (!info) onclose();
+      else if (wanted !== undefined) baseError = { base: wanted, message: e instanceof Error ? e.message : String(e) };
     }
   }
   load();
@@ -97,7 +103,7 @@
         </select>
       </Field>
       <p class="muted note">
-        {info.base !== base ? 'Loading…'
+        {info.base !== base ? (baseError?.base === base ? `Couldn't compare with ${base}: ${baseError.message}` : 'Loading…')
         : empty ? `Nothing ${base} doesn't have yet.`
         : `${commits(info.commits.length)} ${base} doesn't have.`}
         {#if info.suggested && base !== info.suggested.base}
