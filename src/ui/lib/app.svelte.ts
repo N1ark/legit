@@ -474,7 +474,8 @@ class App {
         });
         for (let i = 0; i < d.files.length && y < 2000; i++) {
           const f = d.files[i];
-          if (f.rows && !f.generated && !rendered.has(i)) first.push(i);
+          // A submodule shows as its card, not its lines.
+          if (f.rows && !f.submodule && !f.generated && !rendered.has(i)) first.push(i);
           y += f.generated ? 44 : 40 + f.rows * 19;
         }
         const want = [...first, ...[...rendered].filter((i) => d.files[i].rows)];

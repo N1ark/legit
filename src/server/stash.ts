@@ -279,20 +279,38 @@ async function known(git: Git, sha: string, dropped = false) {
   throw new GitError('That stash is no longer there; refresh.');
 }
 
-function guarded(repo: Repo, fn: () => Promise<void>): Promise<OpResult> {
+function guarded(repo: Repo, fn: () => Promise<void>, opts?: { follow?: boolean }): Promise<OpResult> {
   return repo.exclusive(async () => {
     const why = repo.blocked();
     if (why) throw new GitError(why);
     await fn();
     return done(repo);
-  });
+  }, opts);
 }
 
-/** Stash all uncommitted changes (untracked files included). */
+/**
+ * Stash all uncommitted changes (untracked files included). Git leaves submodules as they are
+ * (what's checked out in one isn't stashed), and so does this: they don't follow the index back.
+ */
 export function stash(repo: Repo): Promise<OpResult> {
-  return guarded(repo, async () => {
-    if (!(await stashPush(repo.git, await repo.currentBranch()))) throw new GitError('There are no changes to stash.');
-  });
+  return guarded(
+    repo,
+    async () => {
+      if (await stashPush(repo.git, await repo.currentBranch())) return;
+      if (await submodulesChanged(repo.git)) {
+        throw new GitError("Only submodules have changes, and git doesn't stash those: commit or stash them in the submodule.");
+      }
+      throw new GitError('There are no changes to stash.');
+    },
+    { follow: false },
+  );
+}
+
+/** Some submodule has changes (another commit checked out, or changes inside it), as `git status` says. */
+async function submodulesChanged(git: Git): Promise<boolean> {
+  const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=no'], { allowFail: true, env: { GIT_OPTIONAL_LOCKS: '0' } });
+  // `1 XY S<c><m><u> …`: a submodule's entry.
+  return r.out.toString('latin1').split('\0').some((e) => /^[12] .. S/.test(e));
 }
 
 /** Apply a stash and keep it (also works for a dropped one). With `conflicts`, even one that conflicts. */

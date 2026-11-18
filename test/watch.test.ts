@@ -158,3 +158,21 @@ test('files changing nonstop (a build) tell the page less and less often, not on
     s.close();
   }
 });
+
+test("a commit or checkout in a submodule tells the page its changes changed", async () => {
+  const up = t.tmp();
+  t.gitIn(up, 'init', '-q', '-b', 'main');
+  t.gitIn(up, 'commit', '-q', '--allow-empty', '-m', 'one');
+  t.commit('one', { f: '1\n' });
+  t.git('-c', 'protocol.file.allow=always', 'submodule', '-q', 'add', up, 'lib');
+  t.git('commit', '-qm', 'lib');
+  const s = await serve(await Repo.open(t.dir), { port: 0, dist: t.tmp() });
+  try {
+    await sleep(300);
+    const lib = join(t.dir, 'lib');
+    assert.ok((await eventsDuring(s.url, () => t.gitIn(lib, 'commit', '-q', '--allow-empty', '-m', 'two'))).includes('work'));
+    assert.ok((await eventsDuring(s.url, () => t.gitIn(lib, 'checkout', '-q', '--detach', 'HEAD~'))).includes('work'));
+  } finally {
+    s.close();
+  }
+});

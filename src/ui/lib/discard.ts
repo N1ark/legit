@@ -4,6 +4,7 @@
 import { toast } from 'purr';
 import type { DiscardResult, RestoreDiscardedResult, Selection } from '../../shared/types.ts';
 import { app, request } from './app.svelte.ts';
+import { openSubmodule } from './submodules.svelte.ts';
 
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
@@ -13,8 +14,8 @@ export function names(list: string[], max = 3) {
   return list.length > max ? `${shown} and ${list.length - max} more` : shown;
 }
 
-/** Discard unstaged changes (a selection made on snapshot `key`). The toast offers to undo it. */
-export async function discardChanges(key: string, selection: Selection): Promise<boolean> {
+/** Discard unstaged changes (a selection made on snapshot `key`). The toast offers to undo it; refused, to open `submodule` (a path) when given. */
+export async function discardChanges(key: string, selection: Selection, submodule?: string): Promise<boolean> {
   if (app.busy || !Object.keys(selection).length) return false;
   app.busy = true;
   app.running = 'discard';
@@ -28,7 +29,9 @@ export async function discardChanges(key: string, selection: Selection): Promise
     );
     return true;
   } catch (e) {
-    toast.error(e);
+    // Changes inside a submodule are discarded in it.
+    if (submodule) toast.error(e, { action: { label: 'Open submodule', run: () => openSubmodule(submodule) } });
+    else toast.error(e);
     return false;
   } finally {
     app.busy = false;

@@ -149,9 +149,51 @@ export interface FileDiff {
   unshown?: string;
   /** The conflict view: the file is still conflicted (unmerged). */
   conflicted?: boolean;
+  /**
+   * A submodule (a gitlink, mode 160000) on either side, or an untracked nested repository: what
+   * commit it points at on each side, and what's going on inside it. Its patch ("Subproject commit
+   * …" lines) is kept in `hunks`, but it's shown, picked and staged as a whole only.
+   */
+  submodule?: SubmoduleChange;
   hunks: Hunk[];
   added: number;
   removed: number;
+}
+
+/** A submodule's side of a diff. SHAs are full; a side without a gitlink has none. */
+export interface SubmoduleChange {
+  /** The commit it pointed at before (absent when added). */
+  old?: string;
+  /** The commit it points at after (absent when deleted). For the working tree: the submodule's checked-out HEAD. */
+  new?: string;
+  /** Uncommitted changes: what `git status` says of the inside of the submodule (nothing to stage here: they're committed in it). */
+  dirty?: { modified: boolean; untracked: boolean };
+  /** Uncommitted changes: it isn't checked out (not initialized, or its folder is empty), so nothing inside it can be read. */
+  missing?: boolean;
+  /** Uncommitted changes: an untracked folder that is a git repository of its own. Staging it adds it as a submodule. */
+  nested?: boolean;
+  /** The URL it's cloned from (.gitmodules, else its `origin`), when known. */
+  url?: string;
+}
+
+/** `GET /api/submodule?path=<utf8 path>&old=<sha>&new=<sha>`: the commits between two of a submodule's commits. */
+export interface SubmoduleLog {
+  /** Commits `new` has that `old` doesn't, newest first (at most `MAX`, see `more`). */
+  added: SubmoduleCommit[];
+  /** Commits `old` has that `new` doesn't (it went back, or to another branch), newest first. */
+  removed: SubmoduleCommit[];
+  /** Commits left out past the limit, on each side. */
+  more: { added: number; removed: number };
+  /** Why the log can't be read, when it can't: not checked out here, or a commit it doesn't have (fetch it in the submodule). */
+  unavailable?: 'not-checked-out' | 'missing-commit';
+}
+
+export interface SubmoduleCommit {
+  sha: string;
+  subject: string;
+  author: string;
+  /** Seconds since the epoch. */
+  time: number;
 }
 
 export interface CommitDiff {
@@ -398,6 +440,17 @@ export interface ConflictFile {
   line: number | null;
   /** Its complete conflicts: how many, and the sides as the first one's markers name them (HEAD, feature). */
   sides: { ours: string; theirs: string; blocks: number } | null;
+  /**
+   * A submodule both sides moved: the commit each side points at (stages 1–3; absent where a side
+   * has none), and the one checked out in it now. It's resolved by picking a commit (`resolveSubmodule`), never by markers.
+   */
+  submodule?: { base?: string; ours?: string; theirs?: string; checkedOut?: string };
+}
+
+/** `POST /api/resolveSubmodule`: resolve a conflicted submodule to one side's commit (or one given), checking it out in the submodule when that's safe. */
+export interface ResolveSubmoduleRequest {
+  path: string;
+  side?: 'ours' | 'theirs' | 'checkedOut';
 }
 
 /** Cloning: the URL (or GitHub's `owner/name`), and the folder, relative to `CloneInfo.parent` or absolute. */

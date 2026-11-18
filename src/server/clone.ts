@@ -36,7 +36,7 @@ function typedPath(path: string, parent: string) {
 export const cloned = new Set<string>();
 
 /** Clone `req.url` into `req.path` (by default, a folder named after it next to this repository). */
-export async function cloneRepo(repo: Repo, req: CloneRequest): Promise<{ path: string }> {
+export async function cloneRepo(repo: Repo, req: CloneRequest): Promise<{ path: string; note?: string }> {
   const info = await cloneInfo(repo);
   const url = cloneUrl(String(req.url ?? ''), info.ssh);
   if (!url) throw new GitError('Clone what? Give a URL, or owner/name for a GitHub repository.');
@@ -46,11 +46,21 @@ export async function cloneRepo(repo: Repo, req: CloneRequest): Promise<{ path: 
   const path = typedPath(String(req.path ?? '').trim() || name, parent);
   if (!name && !req.path) throw new GitError(`Can't tell what to name the folder for ${url}; give one.`);
   if (existsSync(path) && readdirSync(path).length) throw new GitError(`${short(path)} already exists and isn't empty; pick another folder.`);
-  const r = await runWithProgress(repo.git, 'clone', basename(path), ['clone', '--', url, path], {
+  // Its submodules too: a checkout without them shows them all as changed.
+  const r = await runWithProgress(repo.git, 'clone', basename(path), ['clone', '--recurse-submodules', '--', url, path], {
     allowFail: true,
     timeout: 30 * 60_000,
     env: await networkEnv(repo.git),
   });
+  // The repository came, but not all of its submodules: it opens, saying so.
+  if (r.code > 0 && existsSync(join(path, '.git')) && /submodule/i.test(r.err)) {
+    const failed = [...new Set([...r.err.matchAll(/(?:clone of '[^']*' into submodule path '([^']+)' failed|Failed to clone '([^']+)')/g)].map((m) => basename(m[1] ?? m[2])))];
+    cloned.add(path);
+    return {
+      path,
+      note: `Cloned, but ${failed.length ? `submodule${failed.length === 1 ? '' : 's'} ${failed.join(', ')} couldn't be` : 'not every submodule could be'} cloned (git submodule update --init --recursive tries again).`,
+    };
+  }
   if (r.code !== 0) {
     const err = r.err.trim();
     const auth = /terminal prompts disabled|could not read Username|Authentication failed|Permission denied|Host key verification failed|Repository not found/i.test(err);

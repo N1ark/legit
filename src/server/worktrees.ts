@@ -14,6 +14,7 @@ import { DELETED } from './branches.ts';
 import { GitError, fromUtf8, run } from './git.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
+import { networkEnv } from './sync.ts';
 
 const real = (p: string) => {
   try {
@@ -107,7 +108,13 @@ export function addWorktree(repo: Repo, req: WorktreeRequest): Promise<OpResult 
       if (existsSync(join(path, '.git'))) throw new GitError(`Added the worktree at ${short(path)}, but git reported an error:\n${r.err.trim()}`);
       throw new GitError(`Couldn't add a worktree at ${short(path)}; nothing was changed.\n${r.err.trim()}`);
     }
-    return { ...(await done(repo)), path };
+    // Its submodules, checked out as the branch has them; without, they'd all show as changed.
+    let note: string | undefined;
+    if (existsSync(join(path, '.gitmodules'))) {
+      const sub = await run(path, ['submodule', 'update', '--init', '--recursive'], { allowFail: true, timeout: 10 * 60_000, env: await networkEnv(repo.git) });
+      if (sub.code !== 0) note = `The worktree's submodules couldn't all be checked out (\`git submodule update --init --recursive\` in it tries again): ${sub.err.trim().split('\n').at(-1)}`;
+    }
+    return { ...(await done(repo)), path, ...(note ? { note } : {}) };
   });
 }
 

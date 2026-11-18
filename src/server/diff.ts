@@ -13,6 +13,8 @@ import { type Git, GitError, toUtf8 } from './git.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const TEXT_MODES = new Set(['100644', '100755', '000000']);
+/** A gitlink: a submodule's commit, not a file. */
+export const GITLINK = '160000';
 
 /** Options shared by every diff we parse: raw records + patch, no renames, no external tools. */
 export const DIFF_ARGS = ['-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--full-index', '--patch-with-raw', `-U${CONTEXT_LINES}`];
@@ -47,13 +49,19 @@ export function parseDiff(data: string, sha: string): CommitDiff {
       path = data.slice(pathEnd + 1, end);
       pathEnd = end;
     }
-    files.push({
+    const f: FileDiff = {
       path,
       status: status[0] as FileDiff['status'],
       ...(oldPath === undefined ? {} : { oldPath }),
       oldMode, newMode, oldSha, newSha,
       binary: false, partial: false, hunks: [], added: 0, removed: 0,
-    });
+    };
+    if (oldMode === GITLINK || newMode === GITLINK) {
+      f.submodule = {};
+      if (oldMode === GITLINK && !absent(oldSha)) f.submodule.old = oldSha;
+      if (newMode === GITLINK && !absent(newSha)) f.submodule.new = newSha;
+    }
+    files.push(f);
     pos = pathEnd + 1;
   }
   if (data[pos] === '\0') pos++;
@@ -154,7 +162,7 @@ export function summarize(d: CommitDiff, generated: Set<string>, syntax = new Ma
     files: d.files.map(({ hunks, ...f }) => {
       const { width, ws, paired, pairedWs, ...c } = counts(hunks);
       let rows = c.rows;
-      if (hunks.length && expandable(f)) {
+      if (hunks.length && expandable(f) && !f.submodule) {
         const last = hunks[hunks.length - 1].lines;
         if (moreAfter(last.map((l) => l.t).join(''), !!last[last.length - 1]?.eof)) rows++;
       }
@@ -172,6 +180,8 @@ const onDisk = (git: Git, path: string) => join(git.root, Buffer.from(path, 'lat
 /** A file's bytes on one side of a diff: its blob, or the file on disk for working-tree changes; null where there's none. */
 export async function fileBytes(git: Git, f: FileDiff, side: 'old' | 'new'): Promise<Buffer | null> {
   if (side === 'old' ? f.status === 'A' || absent(f.oldSha) : f.status === 'D') return null;
+  // A submodule's side is a commit of another repository, not a file.
+  if ((side === 'old' ? f.oldMode : f.newMode) === GITLINK || f.submodule?.nested) return null;
   const sha = side === 'old' ? f.oldSha : f.newSha;
   if (absent(sha)) return readFile(onDisk(git, f.path)).catch(() => null);
   return (await git.readObjects([sha])).get(sha)?.data ?? null;
@@ -181,11 +191,14 @@ export async function fileBytes(git: Git, f: FileDiff, side: 'old' | 'new'): Pro
 export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { oldSize?: number; newSize?: number }>> {
   const out = new Map<number, { oldSize?: number; newSize?: number }>();
   const shas = new Set<string>();
-  const want = d.files.flatMap((f, k) => (f.binary || imageType(f.path) ? [k] : []));
+  // A submodule has no size (a type change between it and a file has, on the file's side).
+  const hasOld = (f: FileDiff) => f.status !== 'A' && f.oldMode !== GITLINK;
+  const hasNew = (f: FileDiff) => f.status !== 'D' && f.newMode !== GITLINK && !f.submodule?.nested;
+  const want = d.files.flatMap((f, k) => ((f.binary || imageType(f.path)) && (hasOld(f) || hasNew(f)) ? [k] : []));
   for (const k of want) {
     const f = d.files[k];
-    if (f.status !== 'A' && !absent(f.oldSha)) shas.add(f.oldSha);
-    if (f.status !== 'D' && !absent(f.newSha)) shas.add(f.newSha);
+    if (hasOld(f) && !absent(f.oldSha)) shas.add(f.oldSha);
+    if (hasNew(f) && !absent(f.newSha)) shas.add(f.newSha);
   }
   const sizes = new Map<string, number>();
   if (shas.size) {
@@ -199,8 +212,8 @@ export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { 
     want.map(async (k) => {
       const f = d.files[k];
       const s: { oldSize?: number; newSize?: number } = {};
-      if (f.status !== 'A' && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
-      if (f.status !== 'D') {
+      if (hasOld(f) && !absent(f.oldSha)) s.oldSize = sizes.get(f.oldSha);
+      if (hasNew(f)) {
         s.newSize = absent(f.newSha) ? await lstat(onDisk(git, f.path)).then((st) => st.size, () => undefined) : sizes.get(f.newSha);
       }
       out.set(k, s);
@@ -211,7 +224,7 @@ export async function fileSizes(git: Git, d: CommitDiff): Promise<Map<number, { 
 
 /** A modified file's old version (utf8 for display), for the lines between its hunks. */
 export async function oldLines(git: Git, f: FileDiff): Promise<FileLines> {
-  const blob = expandable(f) && !/^0+$/.test(f.oldSha) ? (await git.readObjects([f.oldSha])).get(f.oldSha) : undefined;
+  const blob = expandable(f) && !f.submodule && !/^0+$/.test(f.oldSha) ? (await git.readObjects([f.oldSha])).get(f.oldSha) : undefined;
   if (blob?.type !== 'blob') throw new GitError("That file's other lines can't be shown.");
   const lines = blob.data.toString('utf8').split('\n');
   const noNewline = lines[lines.length - 1] !== '';
