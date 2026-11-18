@@ -17,7 +17,8 @@ the repo name in the header (<kbd>⌘T</kbd>) to switch to another: it lists the
 (<kbd>⌘O</kbd>) and `legit <path>` while the app is running switch the window too. Switching is refused, saying
 why, while an operation you started is still running (a fetch you asked for included; a background fetch is simply
 dropped). Coming back to a repo finds it as
-you left it: the selected commits (or changes, or stash), unsaved messages, expanded merges, and where the list and
+you left it: the selected commits (or changes, or stash), unsaved messages (kept too when you look at another commit and
+come back, as are unsent pull request comments, reviews and a new pull request's title and description), expanded merges, and where the list and
 diff were scrolled. That's kept in memory only, until the app quits (in the browser, reloading the page keeps it the
 same way). Launching the app again reopens the last repo.
 
@@ -135,9 +136,12 @@ Losing work is the one failure that matters, so every operation is built to be r
   branch on a remote saves the tip you last fetched as `refs/legit/deleted/<branch>/<time>-<remote>`, and the push is
   leased on it, so commits you haven't fetched are never deleted. Both are kept for two weeks and listed under
   *Recently deleted*; restoring recreates the branch in one transaction that refuses if the name is taken.
-- **Removing a worktree loses nothing.** Only clean worktrees are removed (`git worktree remove`, never `--force`), and
-  their branch stays. A detached HEAD with commits no branch, tag or remote branch has (even one whose folder is gone) is first saved as
-  `refs/legit/deleted/<folder>/<time>`, so it's listed under *Recently deleted* branches for two weeks.
+- **Removing a worktree loses nothing.** Its uncommitted changes and untracked files are stashed first, on its branch
+  (or, when git can't stash them, mid-merge say, committed and saved as `refs/legit/deleted/<folder>-changes/<time>`);
+  only then is it removed with `git worktree remove --force --force`, so a locked or dirty one goes too, and its branch
+  stays. A detached HEAD with commits no branch, tag or remote branch has (even one whose folder is gone) is first saved as
+  `refs/legit/deleted/<folder>/<time>`, so it's listed under *Recently deleted* branches for two weeks. Submodules' own
+  uncommitted changes or unpushed commits would be lost with it, so removing one that has them asks first.
 - **Stashes apply cleanly, or only when asked.** A stash is applied only if no uncommitted change touches its files and
   none of the files it creates already exist; if its changes would conflict with HEAD (checked in memory with
   `git merge-tree`), nothing is changed unless you choose to apply it anyway, which leaves the conflicts to resolve

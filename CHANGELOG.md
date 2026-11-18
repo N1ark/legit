@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- A message being typed (a commit's, a squash's, the uncommitted changes' commit form) is kept when another commit is shown and back, not only across repositories; so are an unsent pull request comment or review, and a new pull request's title and description when its dialog is closed.
+- GitHub's background refreshes (each focus, each change, the poll) no longer redraw open diffs, their review threads and pull request conversations when nothing changed; the squash view no longer lays its threads out again as older history loads.
+- Uncommitted changes in a big working tree list two to three times faster (about 50 ms instead of 120 with 50,000 files), with fewer git runs on every refresh.
+- Filtering the branch list keeps up with tens of thousands of remote branches (a letter typed takes a few milliseconds instead of up to 100).
+- The branch list keeps its cursor on the branch you arrowed to while it reloads, so <kbd>↵</kbd> no longer switches to another one.
+- <kbd>⌘F</kbd> and <kbd>⌘G</kbd> leave an open dialog, menu or settings alone instead of opening the find bar behind it; <kbd>↵</kbd> while an input method is composing no longer picks a branch or repository or splits a commit.
+- Commits moved with <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> stay in view.
+- A commit's diff, the stash list, backups, conflicts, editing files and uncommitted changes say why when they can't be loaded, instead of *Loading…* or *None* for good; so does a new pull request whose base can't be compared.
+- A pull request overview no longer goes back to how it was before a change you just made (a comment, an edit, closing it) when an older load lands after it.
+- Repositories kept in the background trim their caches once no window has shown them for a minute (on a big repository, from about 120 MB to 20), keeping what was on screen; a kept job log no longer holds the whole downloaded log; GitHub answers, avatars, highlighted code and prefetched pull request overviews are kept within a size.
+- Author emails are only ever sent to GitHub for repositories on github.com itself: a host merely ending in it (`corp-github.com`) no longer counts.
+- An author or co-author with `<`, `>` or a line break is refused, instead of writing a commit `git fsck` rejects.
+- Applying a review suggestion to a file that isn't UTF-8 is refused instead of mangling its other characters.
+- A fetch, push or clone stuck in a credential or remote helper stops at its timeout.
+- Uncommitted changes to a file with a quote, tab or newline in its name no longer take another file's diff.
+- Opening a repository while another git holds a lock (a `gc`) no longer fails on pruning old backups; that's tried again later.
+- In a bare repository, worktrees are removed and switched to properly (none is taken for the main one).
+- Copy to branch no longer refuses `feat` because `feat-x` is checked out elsewhere; cloning `../repo` no longer goes to GitHub.
+- Case-insensitive find highlights the right characters after an `İ`.
+- Stash conflict messages show file names as they are, not git-quoted; folders that become ignored stop being watched.
+- Smaller fixes: an empty drop is refused clearly, staging the same line twice stages one line, settings saved at the same moment can't collide, an interrupted autostash restore is retried, `legit --port abc` says what's wrong, and malformed requests get a 400.
+
 ## 0.28.0 — 2026-11-18
 
 - Submodules are handled: a diff shows a submodule as the commits it moved between instead of *Subproject commit* lines, says when one has changes of its own, isn't checked out or is a nested repository (which staging adds as a submodule), and opens it in legit. Switching branch, rewriting history, pulling, merging, undoing and editing files move the submodules they change, leaving one you moved yourself; before, it stayed behind and showed as a change that, committed, put the old commit back. A submodule's new commit can be discarded (and restored), a submodule conflict is resolved by picking a side, stashing only submodule changes says git can't, clones and new worktrees get their submodules, and committing inside a submodule refreshes the window.
