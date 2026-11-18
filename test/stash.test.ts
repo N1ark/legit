@@ -104,6 +104,18 @@ test('apply refuses a stash that would conflict with the branch, leaving no conf
   assert.deepEqual(stashList(), []);
 });
 
+test('a stash conflicting in files whose names git quotes names them as they are', async () => {
+  commit('base', { 'é.txt': '1\n', 'a "b".txt': '1\n' });
+  git('branch', 'other');
+  write('é.txt', 'mine\n');
+  write('a "b".txt', 'mine\n');
+  const repo = await Repo.open(t.dir);
+  await repo.switchBranch({ branch: 'other', stash: true });
+  commit('theirs', { 'é.txt': 'theirs\n', 'a "b".txt': 'theirs\n' });
+  const entry = (await stashes(repo.git)).entries[0];
+  await assert.rejects(stashPop(repo, { sha: entry.sha }), (e: Error) => /conflicts with this branch in: a "b"\.txt, é\.txt\. Nothing/.test(e.message));
+});
+
 test("a stash's untracked file that the branch now tracks is refused", async () => {
   commit('base', { f: '1\n' });
   git('branch', 'other');
