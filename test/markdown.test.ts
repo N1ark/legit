@@ -34,6 +34,7 @@ test('titles stay inline; messages get blocks', () => {
     lexBlocks('Wrapped\nline.\n\n- a\n- b').filter((t) => t.type !== 'space').map((t) => t.type),
     ['paragraph', 'list'],
   );
+  assert.equal(lexBlocks('A\n\n- b'), lexBlocks('A\n\n- b'), 'a message seen lately is lexed once');
 });
 
 test('links', () => {

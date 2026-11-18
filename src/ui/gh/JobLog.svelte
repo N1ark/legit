@@ -51,11 +51,13 @@
   $effect(() => {
     if (scroller) lineHeight = parseFloat(getComputedStyle(scroller).lineHeight) || lineHeight;
   });
+  /** The lines in lower case, once per step rather than for each key typed in find. */
+  const lower = $derived(plain.map((t) => t.toLowerCase()));
   const matches = $derived.by(() => {
     if (!query) return [];
     // Ignores case unless the text has a capital, as the diff's find does.
-    const caseless = query === query.toLowerCase();
-    return plain.flatMap((t, i) => ((caseless ? t.toLowerCase() : t).includes(query) ? [i] : []));
+    const lines = query === query.toLowerCase() ? lower : plain;
+    return lines.flatMap((t, i) => (t.includes(query) ? [i] : []));
   });
   const matched = $derived(new Set(matches));
   const cursorLine = $derived(matches.length ? matches[Math.min(cursor, matches.length - 1)] : -1);

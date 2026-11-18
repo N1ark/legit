@@ -4,7 +4,7 @@
 
 import { toast } from 'purr';
 import { app } from './app.svelte.ts';
-import { gh, ghPost, ghRequest } from './github.svelte.ts';
+import { gh, ghPost, ghRequest, sameData } from './github.svelte.ts';
 import { DiffTrack } from './gh-files.svelte.ts';
 import { type DiffContext, type Placed, type RowsLike, belongs, commentTarget, newText, placeThreads, rowOfLine } from './gh-threads.ts';
 import type { ApplySuggestion, DiffSide, NewComment, PrLines, PrReview, Reaction, ReviewComment, ReviewThread, SuggestionsApplied } from '../../shared/gh-review.ts';
@@ -97,6 +97,8 @@ class Reviews {
   }
 
   private set(r: PrReview) {
+    // Reloaded on every refresh: the same review again keeps the one shown, so the diffs don't place their threads again.
+    if (sameData(this.byNumber[r.number], r)) return;
     this.byNumber = { ...this.byNumber, [r.number]: r };
   }
 

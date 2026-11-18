@@ -72,7 +72,13 @@
   const OVERSCAN = 600;
   let scrollTop = $state(0);
   let height = $state(0);
-  const shown = $derived(fixedRange(rows.length, ROW, scrollTop - OVERSCAN, height + 2 * OVERSCAN));
+  /** [first, end) of the rows mounted; the same array while they stay the same, as they do for most scroll events. */
+  let lastShown: [number, number] = [0, 0];
+  const shown = $derived.by(() => {
+    const [a, b] = fixedRange(rows.length, ROW, scrollTop - OVERSCAN, height + 2 * OVERSCAN);
+    return a === lastShown[0] && b === lastShown[1] ? lastShown : (lastShown = [a, b]);
+  });
+  const slice = $derived(rows.slice(shown[0], shown[1]));
 
   // The list's padding above the rows, read again only as it's resized, once laid out: reading layout as the
   // current file changes (each frame of a fast scroll), or as the tree mounts, would force a layout then.
@@ -148,7 +154,7 @@
   onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
 >
   <div bind:this={above} style:height="{shown[0] * ROW}px"></div>
-  {#each rows.slice(shown[0], shown[1]) as r, j (r.kind === 'label' ? `l:${r.group}` : r.kind === 'dir' ? `d:${r.group}${r.path}` : r.index)}
+  {#each slice as r, j (r.kind === 'label' ? `l:${r.group}` : r.kind === 'dir' ? `d:${r.group}${r.path}` : r.index)}
     {#if r.kind === 'label'}
       <div class="label" class:conflicts={r.group} class:first={r.first} role="presentation">{r.text}</div>
     {:else if r.kind === 'dir'}
