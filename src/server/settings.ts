@@ -6,6 +6,7 @@
 // first time it's read, with that scope's legit.hide values copied in. Git config isn't read
 // after that (nor changed).
 
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -52,7 +53,8 @@ export function displaySettings(s: Settings): DisplaySettings {
 
 async function save(file: string, s: ScopeSettings) {
   await mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  // Its own for each write: two at once (saves while typing, a first read creating the file) can't collide.
+  const tmp = `${file}.${process.pid}-${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(tmp, JSON.stringify(s, null, 2) + '\n');
   await rename(tmp, file);
 }
