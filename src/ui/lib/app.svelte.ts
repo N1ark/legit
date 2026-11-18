@@ -713,6 +713,8 @@ class App {
     const first = list.indexOf(picked[0]);
     const at = Math.max(0, Math.min(rest.length, first + dir));
     this.reorder([...rest.slice(0, at), ...picked, ...rest.slice(at)]);
+    // Moved one row at a time past the list's edge, they stay in view (the end they're moving towards).
+    this.reveal?.(dir > 0 ? picked[picked.length - 1] : picked[0]);
   }
 
   /** Apply a new order of the editable commits (newest first), optimistically. */
