@@ -4,15 +4,25 @@
   import { Button, ConfirmButton, IconButton, Popover, formatFull, formatRelative, toast, tooltip } from 'purr';
   import { ArchiveRegular } from 'purr/glyphs';
   import type { StashEntry, Stashes } from '../shared/types.ts';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app, request, shortSha } from './lib/app.svelte.ts';
   import { tip } from './lib/tip.ts';
 
   let open = $state(false);
   let data = $state<Stashes | null>(null);
   let button = $state<HTMLButtonElement | null>(null);
 
+  let loads = 0;
   async function load() {
-    data = await fetch('/api/stashes').then((r) => r.json());
+    // Only the last one asked for shows; a failure says why (its answer isn't a list).
+    const n = ++loads;
+    try {
+      const got = await request<Stashes>('/api/stashes');
+      if (n === loads) data = got;
+    } catch (e) {
+      if (n !== loads) return;
+      toast.error(e);
+      if (!data) open = false;
+    }
   }
 
   async function toggle(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
