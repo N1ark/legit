@@ -13,6 +13,9 @@ test("owner/name is GitHub's, over SSH when the repository reaches GitHub that w
   assert.equal(cloneUrl(' octo/legit ', false), 'https://github.com/octo/legit.git');
   assert.equal(cloneUrl('octo/legit.git', true), 'git@github.com:octo/legit.git');
   assert.equal(cloneUrl('https://example.com/a/b', true), 'https://example.com/a/b');
+  // A relative path to a folder is one, not a GitHub owner.
+  assert.equal(cloneUrl('../legit', false), '../legit');
+  assert.equal(cloneUrl('./legit', false), './legit');
   assert.equal(cloneName('git@github.com:octo/legit.git'), 'legit');
   assert.equal(cloneName('https://github.com/octo/legit/'), 'legit');
   assert.equal(cloneName('/some/path/repo'), 'repo');
