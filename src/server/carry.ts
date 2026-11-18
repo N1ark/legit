@@ -168,10 +168,16 @@ export async function restoreAutostash(repo: Repo): Promise<string | null> {
   if (inProgress(git)) return null;
   const sha = await readFile(join(git.gitDir, AUTOSTASH), 'utf8').then((s) => s.trim(), () => '');
   if (!sha) return null;
-  await unlink(join(git.gitDir, AUTOSTASH)).catch(() => {});
+  const forget = () => unlink(join(git.gitDir, AUTOSTASH)).catch(() => {});
   const listed = await git.text(['stash', 'list', '--format=%H'], { allowFail: true });
-  if (!listed.split('\n').includes(sha)) return null;
-  return reapply(repo, sha);
+  if (!listed.split('\n').includes(sha)) {
+    await forget();
+    return null;
+  }
+  // Forgotten only once they're back: if bringing them back fails, the next look tries again.
+  const back = await reapply(repo, sha);
+  await forget();
+  return back;
 }
 
 /**

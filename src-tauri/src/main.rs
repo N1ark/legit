@@ -232,7 +232,9 @@ fn git_path() -> String {
     format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default())
 }
 
-/// The worktrees of the repository at `repo` (`git worktree list`), main one first.
+/// The worktrees of the repository at `repo` (`git worktree list`), main one first. A bare
+/// repository's own entry isn't one (it has no files to show), so its first linked one comes first,
+/// as the server picks it to go to when the one shown is removed.
 fn worktrees(repo: &Path) -> Vec<PathBuf> {
     let out = Command::new("git")
         .arg("-C")
@@ -243,8 +245,9 @@ fn worktrees(repo: &Path) -> Vec<PathBuf> {
         .output();
     let Ok(out) = out.map(|o| o.stdout) else { return Vec::new() };
     String::from_utf8_lossy(&out)
-        .split('\0')
-        .filter_map(|line| line.strip_prefix("worktree "))
+        .split("\0\0")
+        .filter(|block| !block.split('\0').any(|line| line == "bare"))
+        .filter_map(|block| block.split('\0').find_map(|line| line.strip_prefix("worktree ")))
         .map(|p| PathBuf::from(p).canonicalize().unwrap_or_else(|_| PathBuf::from(p)))
         .collect()
 }

@@ -119,3 +119,11 @@ test('a commit diff is tagged for the page to keep: its summary until the settin
     }
   });
 });
+
+test('saves at once of the same settings all land, none failing on another\'s temporary file', async () => {
+  await withHome(async () => {
+    const git = await Git.open(t.dir);
+    await Promise.all(Array.from({ length: 8 }, (_, k) => saveSettings(git, { scope: 'repo', settings: { collapse: [`p${k}`], syntax: [] } })));
+    assert.match((await readSettings(git)).repo.collapse[0], /^p\d$/);
+  });
+});

@@ -36,6 +36,10 @@ const fail = (e: unknown): never => {
   process.exit(1);
 };
 
+// 0 lets the system pick a free one.
+const port = /^\d+$/.test(values.port.trim()) ? Number(values.port) : NaN;
+if (!(port >= 0 && port <= 65535)) fail(`--port takes a port number from 0 to 65535, not "${values.port}".`);
+
 const path = resolve(positionals[0] ?? '.');
 const app = ['/Applications', join(homedir(), 'Applications')].map((d) => join(d, 'Legit.app')).find(existsSync);
 if (app && !values.browser && !values.dev) {
@@ -82,7 +86,9 @@ const open = (path: string): Promise<string> => {
   }
   return servers.get(path)!;
 };
-const url = await start(repo, Number(values.port));
+const url = await start(repo, port).catch((e: NodeJS.ErrnoException) =>
+  fail(e.code === 'EADDRINUSE' ? `Port ${port} is in use; pick another with --port, or 0 for any free one.` : e),
+);
 servers.set(repo.git.root, Promise.resolve(url));
 console.log(`legit · ${repo.git.root}\n${url}`);
 
