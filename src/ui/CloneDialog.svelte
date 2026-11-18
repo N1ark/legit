@@ -58,8 +58,9 @@
     if (!typed || busy) return;
     busy = true;
     try {
-      const r = await request<{ path: string }>('/api/clone', { url: typed, path: path.trim() || undefined });
+      const r = await request<{ path: string; note?: string }>('/api/clone', { url: typed, path: path.trim() || undefined });
       cloning.open = false;
+      if (r.note) toast(r.note, { timeout: 10_000 });
       await openCloned(r.path);
     } catch (e) {
       toast.error(e);

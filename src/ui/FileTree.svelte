@@ -8,7 +8,7 @@
   // right-clicking a file or a folder opens its menu. Conflicted files have a tree of their own, above the rest.
   // Once a row has the focus (clicked), ↑/↓ go to the file above or below instead of the next commit.
   import { Twisty, fixedRange, tooltip } from 'purr';
-  import { ChatCircleCheckRegular, ChatCircleFill, CheckBold, UserFill } from 'purr/glyphs';
+  import { ChatCircleCheckRegular, ChatCircleFill, CheckBold, CubeRegular, UserFill } from 'purr/glyphs';
   import NoteIcon from './gh/NoteIcon.svelte';
   import { type NoteCounts, describeNotes } from './lib/gh-files.ts';
   import { tick, untrack } from 'svelte';
@@ -180,7 +180,7 @@
         style:--depth={r.depth}
         role="treeitem"
         aria-selected={r.index === current}
-        use:tooltip={`${f.path}\n${f.conflicted ? 'conflicted, ' : ''}${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${m ? marksTip(m) : ''}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
+        use:tooltip={`${f.path}\n${f.submodule ? (f.submodule.nested ? 'nested repository, ' : 'submodule, ') : ''}${f.conflicted ? 'conflicted, ' : ''}${f.untracked ? 'untracked' : statusTitle[f.status]}${f.oldPath ? ` from ${f.oldPath}` : ''}, +${f.added} −${f.removed}${m ? marksTip(m) : ''}${onopen && f.status !== 'D' ? '\nDouble-click to open in Zed' : ''}`}
         onclick={(e) => {
           // WebKit doesn't focus a clicked button: the arrows need it to.
           e.currentTarget.focus();
@@ -189,6 +189,7 @@
         ondblclick={onopen && (() => onopen(r.index))}
         oncontextmenu={onmenu && ((e) => onmenu(e, r.index))}
       >
+        {#if f.submodule}<span class="sub" aria-label={f.submodule.nested ? 'Nested repository' : 'Submodule'}><CubeRegular /></span>{/if}
         <span class="name" class:add={f.status === 'A' || f.untracked} class:del={f.status === 'D'} class:seen={m?.viewed}
           >{r.name}{#if f.oldPath}<span class="from">← {source(f)}</span>{/if}</span
         >
@@ -244,6 +245,14 @@
   /* Files line up with the names of the folders beside them, past the chevron. */
   .file {
     padding-left: calc(var(--gap-3) + var(--depth) * 12px + 10px + var(--gap-2));
+  }
+
+  /* A submodule's mark, before its name. */
+  .sub {
+    display: flex;
+    flex: none;
+    margin-right: calc(-1 * var(--gap-1));
+    color: var(--muted);
   }
 
   /* A tree's name: the conflicted files', then the rest's under a rule. */

@@ -6,9 +6,10 @@ import { lstat, readFile, readlink, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CommitDiff, FileDiff, Hunk } from '../shared/types.ts';
-import { RENAME_ARGS, parseDiff, sortFiles } from './diff.ts';
+import { GITLINK, RENAME_ARGS, parseDiff, sortFiles } from './diff.ts';
 import { type Git, fromUtf8, toUtf8 } from './git.ts';
 import { type Position, type Staging, analyse, emit, positions } from './staging.ts';
+import { nestedUrl, submoduleHead, submodulePaths } from './submodules.ts';
 
 /** Status without taking the index lock, so it never gets in the way of the user's git. */
 const NO_LOCKS = { GIT_OPTIONAL_LOCKS: '0' };
@@ -208,6 +209,31 @@ function rawRecords(out: Buffer): Map<string, string[]> {
   return map;
 }
 
+/** Submodules' state as `status --porcelain=v2` says it (`S<c><m><u>`: commit changed, modified content, untracked content), by path. */
+export function submoduleStates(out: Buffer): Map<string, { state: string; head: string }> {
+  const states = new Map<string, { state: string; head: string }>();
+  for (const entry of out.toString('latin1').split('\0')) {
+    if (!entry.startsWith('1 ') || entry[5] !== 'S') continue;
+    const parts = entry.split(' ');
+    states.set(parts.slice(8).join(' '), { state: entry.slice(6, 9), head: parts[6] });
+  }
+  return states;
+}
+
+/**
+ * Status of just the submodules, untracked files inside them included (status without untracked
+ * files leaves those out); null without submodules, so other repos pay nothing.
+ */
+async function submoduleStatus(git: Git): Promise<Buffer | null> {
+  const paths = [...(await submodulePaths(git)).keys()].filter((p) => fromUtf8(toUtf8(p)) === p);
+  if (!paths.length) return null;
+  const r = await git.run(['--literal-pathspecs', 'status', '--porcelain=v2', '-z', '--untracked-files=normal', '--no-renames', '--', ...paths.map(toUtf8)], {
+    env: NO_LOCKS,
+    allowFail: true,
+  });
+  return r.code === 0 ? r.out : null;
+}
+
 /** Paths whose working-tree file differs from the index (`status --porcelain=v2 -z --no-renames`), conflicted ones included. */
 export function unstagedPaths(out: Buffer): Set<string> {
   const paths = new Set<string>();
@@ -230,16 +256,35 @@ const isZero = (sha: string) => /^0+$/.test(sha);
  */
 export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDiff; index: string }> {
   const last = listed.get(git);
-  const [raw, cached, files, status, others] = await Promise.all([
+  const [raw, cached, files, status, others, subStatus] = await Promise.all([
     git.run(['diff-index', '-r', '-z', '-M', '--full-index', '--raw', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-files', '-r', '-z', '--no-renames', '--raw'], { env: NO_LOCKS }),
     git.run(['status', '--porcelain=v2', '-z', '--untracked-files=no', '--no-renames'], { env: NO_LOCKS }),
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
+    submoduleStatus(git),
   ]);
-  const untrackedPaths = new Set(others.out.toString('latin1').split('\0').filter(Boolean));
+  // A folder listed with its slash is a git repository of its own, nested here.
+  const nested = new Set<string>();
+  const untrackedPaths = new Set(
+    others.out
+      .toString('latin1')
+      .split('\0')
+      .filter(Boolean)
+      .map((p) => (p.endsWith('/') ? (nested.add(p.slice(0, -1)), p.slice(0, -1)) : p)),
+  );
   const { d, patches } = await headToFiles(git, key, rawList(raw.out), [...untrackedPaths], last?.patches);
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
+  const states = submoduleStates(subStatus ?? status.out);
+  // A submodule with only untracked files inside: no diff lists it.
+  for (const [path, { state, head }] of states) {
+    if (state[2] !== 'U' || state[0] === 'C' || state[1] === 'M' || d.files.some((f) => f.path === path)) continue;
+    d.files.push({
+      path, status: 'M', oldMode: GITLINK, newMode: GITLINK, oldSha: head, newSha: head,
+      binary: false, partial: false, hunks: [], added: 0, removed: 0, submodule: { old: head },
+      token: createHash('sha1').update(`untracked inside ${head}`).digest('hex'),
+    });
+  }
   const known = new Map<string, Known>();
   for (const f of d.files) {
     const k = last?.files.get(f.token!) ?? { hunks: f.hunks };
@@ -261,9 +306,11 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
 
   const partly: FileDiff[] = [];
+  const subs: FileDiff[] = [];
   for (const f of d.files) {
     const s = staged.get(f.path);
-    if (!s) f.stage = 'none';
+    if (f.submodule && !(s?.gone && untrackedPaths.has(f.path))) subs.push(f);
+    else if (!s) f.stage = 'none';
     else if (s.gone && untrackedPaths.has(f.path)) {
       // `git rm --cached`: HEAD and the file may agree, but the index has nothing.
       untrackedPaths.delete(f.path);
@@ -283,6 +330,8 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
     }
   }
 
+  if (subs.length) await submoduleFiles(git, subs, staged, states);
+
   // Staged changes the working tree has undone since: nothing to show but the file.
   for (const path of staged.keys()) {
     if (shown.has(path) || renamed.has(path) || untrackedPaths.has(path)) continue;
@@ -301,7 +350,9 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
       removed: 0,
       token: createHash('sha1').update(`index-only ${r.join(' ')}`).digest('hex'),
       stage: 'some',
-      unshown: 'Staged changes your file no longer has.',
+      ...(r[0] === GITLINK || r[1] === GITLINK
+        ? { submodule: { old: r[2], new: r[2] }, unshown: `Staged at commit ${r[3].slice(0, 7)}, but it has ${r[2].slice(0, 7)} checked out, as HEAD has.` }
+        : { unshown: 'Staged changes your file no longer has.' }),
     });
   }
 
@@ -330,7 +381,9 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   }
 
   const paths = [...untrackedPaths];
-  const reads = await Promise.all(paths.map((p, k) => untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS, last?.untracked.get(p))));
+  const reads = await Promise.all(
+    paths.map((p, k) => (nested.has(p) ? nestedRepo(git, p) : untrackedFile(git.root, p, k < MAX_UNTRACKED_PREVIEWS, last?.untracked.get(p)))),
+  );
   const untracked = new Map<string, Read>();
   reads.forEach((r, k) => r.stat && untracked.set(paths[k], r));
   listed.set(git, { files: known, untracked, patches });
@@ -340,6 +393,82 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   }
   sortFiles(d.files);
   return { diff: d, index: createHash('sha1').update(cached.out).digest('hex') };
+}
+
+const short = (sha: string) => sha.slice(0, 7);
+
+/**
+ * Submodules in the listing: the commit each has checked out (the working-tree side, which git
+ * leaves as zeros), what's going on inside it (`states`, from status), and what of it is staged:
+ * a submodule is staged as a whole, at the commit it has checked out.
+ */
+async function submoduleFiles(git: Git, subs: FileDiff[], staged: Map<string, Staged>, states: Map<string, { state: string }>) {
+  const known = await submodulePaths(git);
+  await Promise.all(
+    subs.map(async (f) => {
+      const sub = (f.submodule ??= {});
+      const url = known.get(f.path)?.url;
+      if (url) sub.url = url;
+      const s = staged.get(f.path);
+      // The index's commit for it (HEAD's when nothing is staged); none when its deletion is staged.
+      const index = s ? (s.gone || s.mode !== GITLINK ? null : s.sha) : f.oldMode === GITLINK ? f.oldSha : null;
+      if (f.newMode !== GITLINK || f.status === 'D') {
+        // Deleted, or turned into a file: staged as any file is.
+        f.stage = !s ? 'none' : s.gone === (f.status === 'D') && s.mode === f.newMode ? 'all' : 'some';
+        if (f.stage === 'all') f.staged = allLines(f);
+        return;
+      }
+      const head = await submoduleHead(git, f.path);
+      if (head) sub.new = head;
+      else sub.missing = true;
+      const state = states.get(f.path)?.state ?? '';
+      if (state[1] === 'M' || state[2] === 'U') sub.dirty = { modified: state[1] === 'M', untracked: state[2] === 'U' };
+      if (head && head === sub.old) {
+        // Only its own files changed: nothing of it to stage here.
+        Object.assign(f, { newSha: head, hunks: [], added: 0, removed: 0 });
+        f.stage = index && index !== head ? 'some' : 'none';
+        f.unshown =
+          f.stage === 'some'
+            ? `Staged at commit ${short(index!)}, but it has ${short(head)} checked out, as HEAD has.`
+            : 'Its changes are inside the submodule: commit them there, then stage the commit it moves to.';
+        return;
+      }
+      if (head) f.newSha = head;
+      if (index === head) {
+        f.stage = 'all';
+        f.staged = allLines(f);
+      } else if (index === (sub.old ?? null)) f.stage = 'none';
+      else {
+        f.stage = 'some';
+        f.unshown = index ? `Staged at commit ${short(index)}, which isn't the one it has checked out.` : 'Its removal is staged, but it is still checked out.';
+      }
+    }),
+  );
+}
+
+/** An untracked folder that is a repository of its own, as a submodule to add: its HEAD, and its remote's URL (what .gitmodules would say). */
+async function nestedRepo(git: Git, path: string): Promise<Read> {
+  const [head, url] = await Promise.all([submoduleHead(git, path), nestedUrl(git, path)]);
+  const f: FileDiff = {
+    path,
+    status: 'A',
+    oldMode: '000000',
+    newMode: GITLINK,
+    oldSha: '',
+    newSha: head ?? '',
+    binary: false,
+    partial: false,
+    untracked: true,
+    hunks: [],
+    added: 0,
+    removed: 0,
+    submodule: { nested: true, ...(head ? { new: head } : {}), ...(url ? { url } : {}) },
+    token: createHash('sha1').update(`nested ${head} ${url}`).digest('hex'),
+  };
+  if (!head) f.unshown = 'A git repository of its own, with no commit yet: commit in it first, then it can be added as a submodule.';
+  else if (!url) f.unshown = 'A git repository of its own, with no remote: give it one (its `origin`) so it can be added as a submodule others can clone.';
+  else f.unshown = `A git repository of its own: staging it adds it as a submodule, cloned from ${url}.`;
+  return { stat: '', f };
 }
 
 /**

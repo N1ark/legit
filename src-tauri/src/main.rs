@@ -116,6 +116,7 @@ fn main() {
             commands::recent_repos,
             commands::open_repo,
             commands::open_worktree,
+            commands::open_submodule,
             commands::pick_repo,
             commands::forget_repo,
             commands::remember_view,
@@ -324,6 +325,31 @@ mod commands {
         }
         if !is_repo(&path) {
             return Err(format!("{} isn't a git worktree anymore.", path.display()));
+        }
+        super::open_repo(&app, path);
+        Ok(())
+    }
+
+    /// Open a submodule checked out in the repository shown, nothing else.
+    #[tauri::command]
+    pub fn open_submodule(app: AppHandle, path: String) -> Result<(), String> {
+        let current = app.state::<Current>().repo().ok_or("No repository is open.")?;
+        let current = current.canonicalize().unwrap_or(current);
+        let path = PathBuf::from(path);
+        let path = path.canonicalize().unwrap_or(path);
+        // Its superproject, as git says, must be the repository shown.
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args(["rev-parse", "--show-superproject-working-tree"])
+            .env("PATH", git_path())
+            .stdin(Stdio::null())
+            .output();
+        let parent = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        let parent = parent.filter(|p| !p.is_empty()).map(PathBuf::from);
+        let parent = parent.map(|p| p.canonicalize().unwrap_or(p));
+        if path == current || !path.starts_with(&current) || parent.as_ref() != Some(&current) || !is_repo(&path) {
+            return Err(format!("{} isn't a submodule of this repository.", path.display()));
         }
         super::open_repo(&app, path);
         Ok(())

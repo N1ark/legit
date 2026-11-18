@@ -17,7 +17,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Discarded, DiscardResult, FileDiff, RestoreDiscardedRequest, RestoreDiscardedResult, StageRequest } from '../shared/types.ts';
 import { emit, restage } from './staging.ts';
-import { type Git, GitError, fromUtf8, toUtf8 } from './git.ts';
+import { GITLINK } from './diff.ts';
+import { type Git, GitError, fromUtf8, run, toUtf8 } from './git.ts';
+import { subDir, submoduleHead } from './submodules.ts';
 import type { Repo } from './repo.ts';
 import { pruneRefs } from './retention.ts';
 import { stagingOf, workDiff } from './work.ts';
@@ -253,6 +255,69 @@ async function smudge(git: Git, records: string[], paths: string[]): Promise<Map
   return out;
 }
 
+const isLink = (f: FileDiff) => f.oldMode === GITLINK || f.newMode === GITLINK;
+const short = (sha: string) => sha.slice(0, 7);
+
+/**
+ * What discarding submodules' changes does: each goes back to HEAD's commit, checked out in it
+ * (`to`), from the one checked out now (`head`, null when it isn't checked out: only the index
+ * changes). Refused, before anything changes, when that could lose work or can't be done.
+ */
+async function submoduleDiscards(git: Git, files: FileDiff[]): Promise<Map<string, { head: string | null; to: string }>> {
+  const out = new Map<string, { head: string | null; to: string }>();
+  await Promise.all(
+    files.map(async (f) => {
+      const name = toUtf8(f.path);
+      if (f.untracked || f.submodule?.nested) {
+        throw new GitError(`${name} is a git repository of its own; legit doesn't delete it. Nothing was discarded.`);
+      }
+      if (f.oldMode !== GITLINK || f.newMode !== GITLINK || /^0+$/.test(f.oldSha)) {
+        throw new GitError(`${name}: adding or removing a submodule can't be discarded here; unstage it, or use git. Nothing was discarded.`);
+      }
+      const head = await submoduleHead(git, f.path);
+      if (head) {
+        const dir = subDir(git, f.path);
+        const [status, has] = await Promise.all([
+          run(dir, ['status', '--porcelain', '--untracked-files=normal'], { allowFail: true }),
+          run(dir, ['cat-file', '-e', `${f.oldSha}^{commit}`], { allowFail: true }),
+        ]);
+        if (status.code !== 0 || status.out.length) {
+          throw new GitError(`Submodule ${name} has changes of its own: commit or discard them in it first. Nothing was discarded.`);
+        }
+        if (head !== f.oldSha && has.code !== 0) {
+          throw new GitError(`Submodule ${name} doesn't have ${short(f.oldSha)}, HEAD's commit for it (fetch it in the submodule). Nothing was discarded.`);
+        }
+      }
+      out.set(f.path, { head, to: f.oldSha });
+    }),
+  );
+  return out;
+}
+
+/**
+ * Check out `to` in each submodule, if it's still at `from`; `from` is kept first as
+ * refs/legit/discarded/<time> in the submodule, so no commit of its own is lost.
+ */
+async function moveLinks(git: Git, moves: { path: string; from: string; to: string }[], ref: string | null, verb: string) {
+  let done = 0;
+  try {
+    for (const m of moves) {
+      const name = toUtf8(m.path);
+      const dir = subDir(git, m.path);
+      if ((await submoduleHead(git, m.path)) !== m.from) throw new GitError(`Submodule ${name} changed in the meantime, so it was left as it is.`);
+      const keep = await run(dir, ['update-ref', '-m', `legit: ${verb} in ${toUtf8(git.root)}`, `${DISCARDED}/${Date.now()}-${randomBytes(3).toString('hex')}`, m.from, ''], { allowFail: true });
+      if (keep.code !== 0) throw new GitError(`Couldn't keep submodule ${name}'s commit ${short(m.from)}, so it was left as it is. ${keep.err.trim()}`);
+      const r = await run(dir, ['checkout', '-q', '--detach', m.to, '--'], { allowFail: true });
+      if (r.code !== 0) throw new GitError(`Couldn't check out ${short(m.to)} in submodule ${name}: ${r.err.trim()}`);
+      done++;
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const progress = done ? ` ${done} of ${plural(moves.length, 'submodule')} were ${verb} before that.` : '';
+    throw new GitError(`${msg}${progress}${ref ? ` What was there before is saved in ${ref} (Backups ▸ Discarded changes).` : ''}`);
+  }
+}
+
 /**
  * Discard uncommitted changes: lines or whole files of the working tree's diff, untracked files
  * included. The file loses them, and so does the index where they're staged (the rest of what's
@@ -277,12 +342,11 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
     const { whole, partial } = await repo.resolve(req, (await workDiff(git, '')).diff);
     const files = [...whole, ...partial.map(({ f }) => f)];
     if (!files.length) throw new GitError('Select some changes to discard first.');
+    // Submodules: their commit goes back to HEAD's, checked out in them (see `submoduleDiscards`).
+    const links = await submoduleDiscards(git, files.filter(isLink));
     for (const f of files) {
-      const name = toUtf8(f.path);
-      if (f.oldMode === '160000' || f.newMode === '160000') {
-        throw new GitError(`${name} is a submodule; legit can't discard changes inside it. Nothing was discarded.`);
-      }
-      if (before.get(f.path)!.kind === 'other') throw new GitError(`${name} isn't a file or a symlink; nothing was discarded.`);
+      if (isLink(f)) continue;
+      if (before.get(f.path)!.kind === 'other') throw new GitError(`${toUtf8(f.path)} isn't a file or a symlink; nothing was discarded.`);
     }
     for (const { f } of partial) {
       if (isBig(before.get(f.path)!)) throw new GitError(`${toUtf8(f.path)} is too big to discard line by line; discard the whole file. Nothing was discarded.`);
@@ -305,6 +369,10 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
     const headOf = (f: FileDiff): IndexEntry => (f.untracked || /^0+$/.test(f.oldSha) ? null : { mode: f.oldMode, sha: f.oldSha });
     for (const f of whole) {
       const h = headOf(f);
+      if (isLink(f)) {
+        indexAfter.set(f.path, h);
+        continue;
+      }
       const at = f.oldPath ?? f.path;
       if (f.oldPath !== undefined) {
         indexAfter.set(f.path, null);
@@ -328,21 +396,23 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
       for (const [p, e] of await smudge(git, records, records.map((r) => r.slice(r.indexOf('\t') + 1)))) after.set(p, e);
     }
     for (const [p, e] of indexAfter) if (sameEntry(indexBefore.get(p), e)) indexAfter.delete(p);
-    const touched = paths.filter((p) => !matches(before.get(p)!, after.get(p)!));
-    if (!touched.length && !indexAfter.size) throw new GitError('Those changes are already gone.');
+    const touched = paths.filter((p) => !links.has(p) && !matches(before.get(p)!, after.get(p)!));
+    const moving = [...links].filter(([, l]) => l.head && l.head !== l.to);
+    if (!touched.length && !indexAfter.size && !moving.length) throw new GitError('Those changes are already gone.');
 
     // Big files go first: if one can't go to the Trash, nothing else has been discarded yet.
     const big = touched.filter((p) => isBig(before.get(p)!));
     const kept = touched.filter((p) => !big.includes(p));
     const indexed = [...indexAfter.keys()];
+    const link = (sha: string): Entry => ({ mode: GITLINK, sha });
     const ref =
-      kept.length || indexed.length
+      kept.length || indexed.length || moving.length
         ? await save(
             repo,
             `discarded changes to ${plural(files.length, 'file')}`,
             paths.map((p) => (big.includes(p) ? `${p} (moved to the Trash)` : p)),
-            new Map(kept.map((p) => [p, entryOf(before.get(p)!)])),
-            new Map(kept.map((p) => [p, after.get(p)!])),
+            new Map([...kept.map((p): [string, Entry] => [p, entryOf(before.get(p)!)]), ...moving.map(([p, l]): [string, Entry] => [p, link(l.head!)])]),
+            new Map([...kept.map((p): [string, Entry] => [p, after.get(p)!]), ...moving.map(([p, l]): [string, Entry] => [p, link(l.to)])]),
             indexed.length
               ? { before: new Map(indexed.map((p) => [p, indexBefore.get(p) ?? null])), after: indexAfter }
               : undefined,
@@ -350,6 +420,7 @@ export function discard(repo: Repo, req: StageRequest): Promise<DiscardResult> {
         : null;
     const steps = [...big, ...kept].map((p) => ({ path: p, expect: before.get(p)!, write: after.get(p)!, trash: big.includes(p) }));
     await apply(git, steps, ref, 'discarded');
+    await moveLinks(git, moving.map(([p, l]) => ({ path: p, from: l.head!, to: l.to })), ref, 'discarded');
 
     // Last, the index, if nothing changed it since it was read.
     if (indexed.length) {
@@ -410,6 +481,22 @@ export function restoreDiscarded(repo: Repo, req: RestoreDiscardedRequest): Prom
       const [oldMode, newMode, oldSha, newSha] = raw[k].slice(1).split(' ');
       changes.push({ path: raw[k + 1], left: { mode: oldMode, sha: oldSha }, was: { mode: newMode, sha: newSha } });
     }
+    // Submodules go back to the commit they had, as their own step (`moveLinks`).
+    const subs = changes.filter((c) => c.left.mode === GITLINK || c.was.mode === GITLINK);
+    changes.splice(0, changes.length, ...changes.filter((c) => !subs.includes(c)));
+    const linkMoves: { path: string; from: string; to: string }[] = [];
+    const linkConflicts: string[] = [];
+    for (const c of subs) {
+      if (c.left.mode !== GITLINK || c.was.mode !== GITLINK) continue;
+      const now = await submoduleHead(git, c.path);
+      if (!now || now === c.was.sha) continue;
+      if (now !== c.left.sha) linkConflicts.push(c.path);
+      const status = await run(subDir(git, c.path), ['status', '--porcelain', '--untracked-files=normal'], { allowFail: true });
+      if (status.code !== 0 || status.out.length) {
+        throw new GitError(`Submodule ${toUtf8(c.path)} has changes of its own: commit or discard them in it first. Nothing was restored.`);
+      }
+      linkMoves.push({ path: c.path, from: now, to: c.was.sha });
+    }
     const blobs = await git.readObjects(changes.flatMap((c) => [c.left, c.was].filter((e) => e.mode !== '000000').map((e) => e.sha)));
     const entry = (e: { mode: string; sha: string }): Entry => (e.mode === '000000' ? null : { mode: e.mode, data: blobs.get(e.sha)!.data });
 
@@ -423,8 +510,8 @@ export function restoreDiscarded(repo: Repo, req: RestoreDiscardedRequest): Prom
       if (!matches(now, entry(c.left))) conflicts.push({ path: c.path, now });
       steps.push({ path: c.path, expect: now, write: was, trash: isBig(now) });
     }
-    if (conflicts.length && !req.overwrite) {
-      return { state: await repo.state(), restored: 0, conflicts: conflicts.map((c) => toUtf8(c.path)), saved: null };
+    if ((conflicts.length || linkConflicts.length) && !req.overwrite) {
+      return { state: await repo.state(), restored: 0, conflicts: [...conflicts.map((c) => c.path), ...linkConflicts].map(toUtf8), saved: null };
     }
     const staged = s.parents.length === 4 ? await indexChanges(git, s.parents[3], s.parents[2]) : [];
     const keep = conflicts.filter((c) => !isBig(c.now));
@@ -438,6 +525,7 @@ export function restoreDiscarded(repo: Repo, req: RestoreDiscardedRequest): Prom
         )
       : null;
     await apply(git, steps, saved, 'restored');
+    await moveLinks(git, linkMoves, saved, 'restored');
     // What was staged goes back where the index is still as the discard left it.
     const current = await indexEntries(git, staged.map((c) => c.path));
     const back = staged.filter((c) => sameEntry(current.get(c.path), c.left));
@@ -447,7 +535,7 @@ export function restoreDiscarded(repo: Repo, req: RestoreDiscardedRequest): Prom
         input: Buffer.from(back.map((c) => (c.was ? `${c.was.mode} ${c.was.sha}\t${c.path}` : `0 ${zero}\t${c.path}`) + '\0').join(''), 'latin1'),
       });
     }
-    const restored = new Set([...steps.map((x) => x.path), ...back.map((c) => c.path)]).size;
+    const restored = new Set([...steps.map((x) => x.path), ...linkMoves.map((m) => m.path), ...back.map((c) => c.path)]).size;
     return { state: await repo.state(), restored, conflicts: [], saved };
   });
 }

@@ -12,8 +12,9 @@ import { lstat, readFile, rmdir, stat, unlink, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { CommitDiff, Conflict, ConflictFile, EditStop, RebuildPlan, RepoState, SyncResult } from '../shared/types.ts';
-import { DIFF_ARGS, parseDiff } from './diff.ts';
+import type { CommitDiff, Conflict, ConflictFile, EditStop, RebuildPlan, RepoState, ResolveSubmoduleRequest, SyncResult } from '../shared/types.ts';
+import { DIFF_ARGS, GITLINK, parseDiff } from './diff.ts';
+import { submoduleHead } from './submodules.ts';
 import { type Git, GitError, type RawCommit, fromUtf8, toUtf8 } from './git.ts';
 import type { Repo } from './repo.ts';
 import { ASIDE, autostash, moveWork, withAutostash } from './carry.ts';
@@ -134,15 +135,27 @@ async function opBranch(repo: Repo, kind: Kind): Promise<string | null> {
 
 /** Unmerged paths (byte strings) and which index stages they have, e.g. "123". */
 export async function unmergedPaths(git: Git): Promise<Map<string, string>> {
+  return (await unmergedEntries(git)).stages;
+}
+
+/** `unmergedPaths`, and the commits of the conflicted submodules' stages (gitlinks), by path. */
+async function unmergedEntries(git: Git): Promise<{ stages: Map<string, string>; links: Map<string, { base?: string; ours?: string; theirs?: string }> }> {
   const r = await git.run(['ls-files', '-u', '-z'], { env: NO_LOCKS, allowFail: true });
-  const out = new Map<string, string>();
+  const stages = new Map<string, string>();
+  const links = new Map<string, { base?: string; ours?: string; theirs?: string }>();
   for (const e of r.out.toString('latin1').split('\0')) {
     const tab = e.indexOf('\t');
     if (tab < 0) continue;
     const path = e.slice(tab + 1);
-    out.set(path, (out.get(path) ?? '') + e.slice(0, tab).split(' ')[2]);
+    const [mode, sha, stage] = e.slice(0, tab).split(' ');
+    stages.set(path, (stages.get(path) ?? '') + stage);
+    if (mode === GITLINK) {
+      const l = links.get(path) ?? {};
+      l[stage === '1' ? 'base' : stage === '2' ? 'ours' : 'theirs'] = sha;
+      links.set(path, l);
+    }
   }
-  return out;
+  return { stages, links };
 }
 
 /**
@@ -171,7 +184,7 @@ async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exis
 }
 
 async function conflictState(git: Git): Promise<Conflict | null> {
-  const unmerged = await unmergedPaths(git);
+  const { stages: unmerged, links } = await unmergedEntries(git);
   const kind = inProgress(git) ?? (unmerged.size ? 'stash' : null);
   if (!kind) return null;
   const [title, staged, note] = await Promise.all([
@@ -180,11 +193,21 @@ async function conflictState(git: Git): Promise<Conflict | null> {
     kind === 'stash' ? readStashNote(git) : null,
   ]);
   const files: ConflictFile[] = await Promise.all(
-    [...unmerged].map(async ([path, stages]) => ({
-      path: toUtf8(path),
-      status: STATUS[stages] ?? 'conflicted',
-      ...(await inspect(git, path)),
-    })),
+    [...unmerged].map(async ([path, stages]) => {
+      const link = links.get(path);
+      if (!link) return { path: toUtf8(path), status: STATUS[stages] ?? 'conflicted', ...(await inspect(git, path)) };
+      // A submodule: resolved by picking a commit, never by markers.
+      const checkedOut = await submoduleHead(git, path);
+      return {
+        path: toUtf8(path),
+        status: STATUS[stages] ?? 'conflicted',
+        exists: !!checkedOut,
+        markers: false,
+        line: null,
+        sides: null,
+        submodule: { ...link, ...(checkedOut ? { checkedOut } : {}) },
+      };
+    }),
   );
   // A stash's: only its own files, not the other changes staged before it was applied.
   const mine = note && new Set(note.tracked);
@@ -663,6 +686,28 @@ export function markResolved(repo: Repo, req: { path?: string; paths?: string[];
   });
 }
 
+/**
+ * Resolve a conflicted submodule to a commit: one side's, or the one checked out in it. The
+ * submodule then follows (see follow.ts): checked out at the commit its conflict started from,
+ * it's checked out at the one picked. A side without the submodule takes it out of the index.
+ */
+export function resolveSubmodule(repo: Repo, req: ResolveSubmoduleRequest): Promise<SyncResult> {
+  return repo.exclusive(async () => {
+    const git = repo.git;
+    const pathU = String(req.path ?? '');
+    const path = fromUtf8(pathU);
+    const side = req.side ?? 'checkedOut';
+    if (side !== 'ours' && side !== 'theirs' && side !== 'checkedOut') throw new GitError(`Keep which side of ${pathU}?`);
+    const link = (await unmergedEntries(git)).links.get(path);
+    if (!link) throw new GitError(`${pathU} isn't a conflicted submodule (any more); nothing was changed.`);
+    const sha = side === 'checkedOut' ? await submoduleHead(git, path) : link[side];
+    if (side === 'checkedOut' && !sha) throw new GitError(`Submodule ${pathU} isn't checked out; pick a side. Nothing was changed.`);
+    if (sha) await git.run(['--literal-pathspecs', 'update-index', '--cacheinfo', `${GITLINK},${sha},${pathU}`]);
+    else await git.run(['--literal-pathspecs', 'update-index', '--force-remove', '--', pathU]);
+    return done(repo, sha ? `Resolved ${pathU} to ${sha.slice(0, 7)}.` : `Resolved ${pathU} by taking it out.`);
+  });
+}
+
 /** Which side of a conflict to keep: HEAD's (ours, above `=======`), the other one (theirs, below it), or both, ours first. */
 export type Side = 'ours' | 'theirs' | 'both';
 const OPEN = /^<{7}(?: |\r?$)/;
@@ -1048,8 +1093,16 @@ export async function conflictDiff(repo: Repo): Promise<CommitDiff> {
   const { out } = await git.run(['diff-tree', ...DIFF_ARGS, await git.treeOf(head), tree]);
   const d = parseDiff(out.toString('latin1'), '');
   // Conflicted files first, each group in the tree's order.
-  const unmerged = await unmergedPaths(git);
+  const { stages: unmerged, links } = await unmergedEntries(git);
   for (const f of d.files) if (unmerged.has(f.path)) f.conflicted = true;
+  // A conflicted submodule checked out at HEAD's commit changes nothing, but is still to resolve.
+  for (const [path, l] of links) {
+    if (!l.ours || d.files.some((f) => f.path === path)) continue;
+    d.files.push({
+      path, status: 'M', oldMode: GITLINK, newMode: GITLINK, oldSha: l.ours, newSha: l.ours,
+      binary: false, partial: false, hunks: [], added: 0, removed: 0, conflicted: true, submodule: { old: l.ours, new: l.ours },
+    });
+  }
   d.files.sort((a, b) => +!!b.conflicted - +!!a.conflicted);
   return repo.snapshot('conflict', d);
 }

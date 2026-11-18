@@ -5,12 +5,13 @@
   // A rebase also needs files changed since they were staged to be staged again. Abort saves
   // what was resolved before throwing it away.
   import { Button, ConfirmButton, Kbd, Tag, hasOverlay, matches, menu, tooltip } from 'purr';
-  import { ArrowCounterClockwiseRegular, CheckBold, CheckRegular, ChecksRegular, CopyRegular, FileArrowUpRegular } from 'purr/glyphs';
+  import { ArrowCounterClockwiseRegular, ArrowSquareOutRegular, CheckBold, CheckRegular, ChecksRegular, CopyRegular, FileArrowUpRegular } from 'purr/glyphs';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { ConflictFile, DiffSummary } from '../shared/types.ts';
+  import type { ConflictFile, DiffSummary, ResolveSubmoduleRequest } from '../shared/types.ts';
   import DiffView from './DiffView.svelte';
   import { type DiffPosition, app } from './lib/app.svelte.ts';
   import { tip } from './lib/tip.ts';
+  import { openSubmodule } from './lib/submodules.svelte.ts';
 
   const c = $derived(app.repo?.conflict ?? null);
   const NAME = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-pick', revert: 'Revert', am: 'git am', stash: 'Stash restore' };
@@ -82,6 +83,13 @@
       run: () => app.sync('unresolveBlock', { path, id }),
     });
   }
+  // A submodule both sides moved: resolved by picking the commit it points at.
+  const SUB_SIDES = [
+    ['ours', 'Use ours', 'The commit it points at on this side (HEAD)'],
+    ['theirs', 'Use theirs', 'The commit the other side points it at'],
+    ['checkedOut', 'Use checked-out', 'The commit checked out in it now'],
+  ] as const;
+  const useCommit = (path: string, side: ResolveSubmoduleRequest['side']) => app.sync('resolveSubmodule', { path, side } satisfies ResolveSubmoduleRequest);
   const each = (n: number) => (n === 1 ? 'its conflict' : `all ${n} of its conflicts`);
 
   /** A listed file's menu: open it, mark it resolved (or stage it again), copy its path. */
@@ -159,7 +167,27 @@
         <ul class="files">
           {#each c.files as f (f.path)}
             <li>
-              {#if f.markers}
+              {#if f.submodule}
+                {@const m = f.submodule}
+                <span class="keep" role="group" aria-label="Resolve submodule {f.path}">
+                  {#each SUB_SIDES as [side, label, why] (side)}
+                    {#if m[side]}
+                      <Button
+                        size="sm"
+                        variant={side === 'checkedOut' ? 'default' : 'ghost'}
+                        class={side === 'checkedOut' ? undefined : side}
+                        disabled={app.busy}
+                        onclick={() => useCommit(f.path, side)}
+                        {@attach tip(`${why}: ${m[side]!.slice(0, 7)}${side === 'checkedOut' ? '' : '. Checked out in it too, unless it has changes of its own'}`)}
+                        ><span class="side">{label} <span class="mono">{m[side]!.slice(0, 7)}</span></span></Button
+                      >
+                    {/if}
+                  {/each}
+                </span>
+                {#if f.exists}
+                  <Button size="sm" variant="ghost" onclick={() => openSubmodule(f.path)}><ArrowSquareOutRegular /> Open submodule</Button>
+                {/if}
+              {:else if f.markers}
                 <ConfirmButton
                   size="sm"
                   variant="default"
@@ -180,7 +208,7 @@
               <Button size="sm" variant="ghost" onclick={() => app.openInZed(f.path, f.line ?? undefined)} disabled={!f.exists}>
                 <FileArrowUpRegular /> Open in Zed
               </Button>
-              {#if f.sides}
+              {#if f.sides && !f.submodule}
                 {@const s = f.sides}
                 <span class="keep" role="group" aria-label="Resolve every conflict in {f.path}">
                   <Button size="sm" variant="ghost" class="ours" disabled={app.busy} onclick={() => keep(f.path, null, 'ours')} {@attach tip(`Keep what's above ======= in ${each(s.blocks)}, from ${s.ours}`)}

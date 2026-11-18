@@ -13,7 +13,7 @@ import type {
 } from '../shared/types.ts';
 import { baseBranch, upstreamBase } from './base.ts';
 import { localBranches, switchBranch } from './branches.ts';
-import { RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
+import { GITLINK, RENAME_ARGS, applyLines, commitDiff, parseDiff } from './diff.ts';
 import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, parseIdent, toUtf8 } from './git.ts';
 import { pickGithubRepo } from './github.ts';
 import { issueRepo } from './gh/context.ts';
@@ -26,6 +26,7 @@ import { stashDiff, stashFor } from './stash.ts';
 import { stagingOf, workCounts, workDiff } from './work.ts';
 import { emit, restage } from './staging.ts';
 import { ASIDE, autostash, moveWork, restoreAutostash } from './carry.ts';
+import { followSubmodules, submoduleSnapshot } from './follow.ts';
 
 /** How many commits to show, and how many past the first merge (not editable). */
 const LIMIT = 1000;
@@ -164,9 +165,32 @@ export class Repo {
     return this.queue.then(() => {});
   }
 
-  /** Serialise mutating operations. */
-  exclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const p = this.queue.then(fn);
+  /**
+   * Serialise mutating operations. Submodules then follow what the operation did to their commits
+   * in the index (follow.ts); `follow: false` for those that only change the index on purpose (staging).
+   */
+  exclusive<T>(fn: () => Promise<T>, opts: { follow?: boolean } = {}): Promise<T> {
+    const p = this.queue.then(async () => {
+      const before = opts.follow === false ? null : await submoduleSnapshot(this.git).catch(() => null);
+      if (!before) return fn();
+      let r: T;
+      try {
+        r = await fn();
+      } catch (e) {
+        const { notes } = await followSubmodules(before);
+        this.notes.push(...notes);
+        throw e;
+      }
+      const { notes, moved } = await followSubmodules(before);
+      if (!notes.length && !moved) return r;
+      // An operation's result says how things are, notes included: as they are now.
+      if (r && typeof r === 'object' && 'state' in r) {
+        const o = r as { state: unknown; note?: string };
+        if (moved) o.state = await this.state().catch(() => o.state);
+        if (notes.length) o.note = [o.note, ...notes].filter(Boolean).join(' ');
+      } else this.notes.push(...notes);
+      return r;
+    });
     this.queue = p.catch(() => {});
     return p;
   }
@@ -733,7 +757,7 @@ export class Repo {
       const k = Repo.indexOf(chain, req.sha);
       const c = chain[k];
       const diff = await this.diff(c.sha);
-      const selected = Repo.picker(req.selection, 'split out');
+      const selected = Repo.picker(req.selection, 'split out', diff);
 
       // The first of the two commits applies the changes for which `first` is true.
       const first = req.before ? selected : (path: string, i: number) => !selected(path, i);
@@ -757,8 +781,13 @@ export class Repo {
   }
 
   /** A selection (paths in UTF-8) as a test of whether change `i` of `path` is picked; refuses an empty one. */
-  private static picker(selection: Selection, what: string): (path: string, i: number) => boolean {
+  private static picker(selection: Selection, what: string, diff?: CommitDiff): (path: string, i: number) => boolean {
     const sel = new Map(Object.entries(selection).map(([p, v]) => [fromUtf8(p), v]));
+    // A submodule's change is picked whole, by any of its lines.
+    for (const f of diff?.files ?? []) {
+      const v = sel.get(f.path);
+      if (f.submodule && v && v !== 'all' && v.length) sel.set(f.path, 'all');
+    }
     if (![...sel.values()].some((v) => v === 'all' || v.length)) throw new GitError(`Select some changes to ${what} first.`);
     return (path, i) => {
       const v = sel.get(path);
@@ -777,8 +806,9 @@ export class Repo {
       const chain = await this.chain();
       const k = Repo.indexOf(chain, req.sha);
       const c = chain[k];
-      const picked = Repo.picker(req.selection, 'remove');
-      const tree = await this.buildTree(c, await this.diff(c.sha), (path, i) => !picked(path, i));
+      const diff = await this.diff(c.sha);
+      const picked = Repo.picker(req.selection, 'remove', diff);
+      const tree = await this.buildTree(c, diff, (path, i) => !picked(path, i));
       return this.retree('remove changes', chain, k, tree);
     });
   }
@@ -1191,7 +1221,7 @@ export class Repo {
         throw new GitError(`${pathU} changed since it was shown; nothing was changed. Look again and reselect.`);
       }
       const n = f.added + f.removed;
-      if (sel === 'all' || n === 0 || sel.length >= n) whole.push(f);
+      if (sel === 'all' || n === 0 || sel.length >= n || (f.submodule && sel.length)) whole.push(f);
       else if (sel.length) {
         if (!f.partial) throw new GitError(`${pathU} can only be staged as a whole file.`);
         partial.push({ f, picked: new Set(sel) });
@@ -1225,8 +1255,28 @@ export class Repo {
     return this.exclusive(async () => {
       const why = this.blocked();
       if (why) throw new GitError(why);
-      const { whole, partial } = await this.resolve(req, (await workDiff(this.git, '')).diff);
-      const add: FileDiff[] = on ? [...whole] : [];
+      const resolved = await this.resolve(req, (await workDiff(this.git, '')).diff);
+      const { partial } = resolved;
+      let { whole } = resolved;
+      if (on) {
+        // Submodules with nothing to stage are skipped among other files (staging a folder, say); alone, they refuse.
+        const refused = whole.flatMap((f) => {
+          try {
+            Repo.stageable(f);
+            return [];
+          } catch (e) {
+            return [{ f, why: (e as Error).message }];
+          }
+        });
+        if (refused.length && refused.length === whole.length && !partial.length) throw new GitError(refused[0].why);
+        if (refused.length) {
+          whole = whole.filter((f) => !refused.some((r) => r.f === f));
+          this.notes.push(`Not staged: ${refused.map((r) => toUtf8(r.f.path)).join(', ')} (${refused.length === 1 ? 'a submodule' : 'submodules'} with nothing to stage here).`);
+        }
+      }
+      // A nested repository is added as a submodule, .gitmodules and all.
+      const nested = on ? whole.filter((f) => f.submodule?.nested) : [];
+      const add: FileDiff[] = on ? whole.filter((f) => !f.submodule?.nested) : [];
       const reset: FileDiff[] = on ? [] : whole.filter((f) => !f.untracked);
       const records: string[] = [];
       const heads = await this.git.readObjects(partial.filter(({ f }) => !f.untracked && !/^0+$/.test(f.oldSha)).map(({ f }) => f.oldSha));
@@ -1261,8 +1311,28 @@ export class Repo {
         );
       }
       if (records.length) await this.updateIndex(records);
+      for (const f of nested) {
+        const r = await this.git.run(['submodule', 'add', '--quiet', '--', f.submodule!.url!, toUtf8(f.path)], { allowFail: true });
+        if (r.code !== 0) throw new GitError(`Adding ${toUtf8(f.path)} as a submodule failed: ${r.err.trim()}`);
+      }
       return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
-    });
+    }, { follow: false });
+  }
+
+  /** Refuses to stage what of a submodule can't be: changes inside it, or a nested repository that can't be added as one. */
+  private static stageable(f: FileDiff) {
+    const sub = f.submodule;
+    if (!sub) return;
+    const name = toUtf8(f.path);
+    if (sub.nested) {
+      if (!sub.new) throw new GitError(`${name} is a git repository with no commit yet: commit in it first. Nothing was staged.`);
+      if (!sub.url) throw new GitError(`${name} is a git repository with no remote, so it can't be added as a submodule others can clone: give it an \`origin\` first. Nothing was staged.`);
+      if (fromUtf8(name) !== f.path) throw new GitError(`${name}'s name isn't UTF-8, so it can't be added as a submodule here. Nothing was staged.`);
+    } else if (f.newMode === GITLINK && f.status !== 'D' && sub.new && sub.new === sub.old) {
+      throw new GitError(`${name}'s changes are inside the submodule: commit them there, then stage the commit it moves to. Nothing was staged.`);
+    } else if (sub.missing) {
+      throw new GitError(`${name} isn't checked out, so there's no commit of it to stage. Nothing was staged.`);
+    }
   }
 
   private async updateIndex(records: string[]) {
@@ -1303,7 +1373,7 @@ export class Repo {
         await this.record({ label: req.amend ? 'amend' : 'commit', before, after: head, soft: true });
       }
       return { state: await this.state(), renamed: {}, focus: head ? [head] : [] };
-    });
+    }, { follow: false });
   }
 
   /**
@@ -1322,7 +1392,7 @@ export class Repo {
       await this.moveHeadSoft(head, c.parents[0], 'uncommit');
       await this.record({ label: 'uncommit', before: head, after: c.parents[0], soft: true });
       return { state: await this.state(), renamed: {}, focus: [], note: this.takeNote() };
-    });
+    }, { follow: false });
   }
 
   /** Point HEAD at `to` without touching the index or working tree (after a backup of `from`). */

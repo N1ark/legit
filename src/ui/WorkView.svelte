@@ -11,6 +11,7 @@
   import DiffView from './DiffView.svelte';
   import { type DiffPosition, app, request, shortSha } from './lib/app.svelte.ts';
   import { discardChanges } from './lib/discard.ts';
+  import { inert } from './lib/submodule.ts';
   import { formatPerson, parsePeople } from './lib/people.ts';
   import { refComplete } from './gh/ref-complete.svelte.ts';
   import { tip } from './lib/tip.ts';
@@ -125,10 +126,10 @@
 
   // Discarding saves what it throws away first (refs/legit/discarded); the toast can undo it.
   // Staged changes go out of the index as well as the files.
-  async function discard(selection: Selection) {
+  async function discard(selection: Selection, submodule?: string) {
     if (!work || app.busy) return;
     await queue;
-    await discardChanges(work.changes.sha, selection);
+    await discardChanges(work.changes.sha, selection, submodule);
     await load();
   }
 
@@ -335,14 +336,28 @@
               'separator',
             ]}
             fileActions={(f) => [
-              {
-                label: "Discard this file's changes",
-                icon: TrashRegular,
-                danger: true,
-                confirm: 'Click again to discard',
-                note: f.untracked ? 'Deletes the file. It can be restored.' : 'Back to the last commit, index included. It can be restored.',
-                run: () => discard({ [f.path]: 'all' }),
-              },
+              f.submodule && !f.untracked
+                ? {
+                    label: 'Discard the submodule’s new commit',
+                    icon: TrashRegular,
+                    danger: true,
+                    disabled: inert(f),
+                    confirm: 'Click again to discard',
+                    note: inert(f)
+                      ? 'Its changes are inside it: discard them in the submodule'
+                      : 'Checks out the commit the last commit points it at, index included. It can be restored.',
+                    run: () => discard({ [f.path]: 'all' }, f.path),
+                  }
+                : {
+                    label: "Discard this file's changes",
+                    icon: TrashRegular,
+                    danger: true,
+                    confirm: 'Click again to discard',
+                    // A nested repository's history is its own: legit doesn't delete it.
+                    disabled: !!f.submodule,
+                    note: f.submodule ? 'A repository of its own: delete its folder yourself' : f.untracked ? 'Deletes the file. It can be restored.' : 'Back to the last commit, index included. It can be restored.',
+                    run: () => discard({ [f.path]: 'all' }),
+                  },
             ]}
             folderActions={(_, files) => [
               { label: 'Stage folder', icon: ArrowUpRegular, disabled: !files.some(isUnstaged), run: () => stageFiles(files, true) },

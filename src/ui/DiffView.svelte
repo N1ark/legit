@@ -46,11 +46,14 @@
     tooltip,
     variableRange,
   } from 'purr';
-  import { ArrowLineDownRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular, XRegular } from 'purr/glyphs';
+  import { ArrowLineDownRegular, ArrowSquareOutRegular, ArrowLineUpRegular, ArrowsOutLineVerticalRegular, ChatCircleTextRegular, CheckSquareRegular, CodeRegular, CopyRegular, EraserRegular, EyeRegular, FileArrowUpRegular, FolderOpenRegular, PencilSimpleRegular, SquareRegular, TextIndentRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { flushSync, onMount, tick, untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { expandable } from '../shared/context.ts';
   import { formatSize, imageType, renderKind } from '../shared/files.ts';
+  import SubmoduleCard from './SubmoduleCard.svelte';
+  import { asLaidOut, inert, submoduleCard, submoduleHeight } from './lib/submodule.ts';
+  import { openSubmodule } from './lib/submodules.svelte.ts';
   import type { DiffSummary, FileSummary, HunkData, Selection } from '../shared/types.ts';
   import FileTree from './FileTree.svelte';
   import ImageDiff from './ImageDiff.svelte';
@@ -173,13 +176,17 @@
   // change, the summary's fetched again and those two taken from it, in place (nothing else can change).
   let fresh = $state.raw<Map<string, FileSummary> | null>(null);
   const files = $derived(
-    fresh
-      ? summary.files.map((f) => {
-          const n = fresh!.get(f.path);
-          return n ? { ...f, generated: n.generated, syntax: n.syntax } : f;
-        })
-      : summary.files,
+    asLaidOut(
+      fresh
+        ? summary.files.map((f) => {
+            const n = fresh!.get(f.path);
+            return n ? { ...f, generated: n.generated, syntax: n.syntax } : f;
+          })
+        : summary.files,
+    ),
   );
+  /** Each submodule's card (null for other files). */
+  const cards = $derived(files.map((f) => (f.submodule ? submoduleCard(f.submodule, onstage ? f.unshown : undefined) : null)));
   let settingsSeen = app.settingsTick;
   $effect(() => {
     const tick = app.settingsTick;
@@ -833,7 +840,7 @@
   }
 
   /** Height of each file's images, and of what comes before its lines: its threads on the whole file, then those. */
-  const leads = $derived(files.map((f) => (imageType(f.path) && (f.untracked || f.oldSha !== f.newSha) ? IMG : 0)));
+  const leads = $derived(files.map((f, i) => (cards[i] ? submoduleHeight(cards[i]) : imageType(f.path) && (f.untracked || f.oldSha !== f.newSha) ? IMG : 0)));
   const lead = (i: number) => fileBlocksHeight(i) + leads[i];
   const linesHeight = (i: number) => rowY(i, rowCount(i)) + PAD;
   const bodyHeight = (i: number) =>
@@ -960,7 +967,7 @@
       if (k >= 0 && initial.row) restoring = { i: k, row: initial.row, until: performance.now() + 3000 };
       for (const [path, ranges] of Object.entries(initial.expanded ?? {})) {
         const i = files.findIndex((f) => f.path === path);
-        if (i >= 0 && expandable(files[i]) && files[i].rows) reopen(i, ranges);
+        if (i >= 0 && expandable(files[i]) && !files[i].submodule && files[i].rows) reopen(i, ranges);
       }
     }
     // Grammars load while the first contents do.
@@ -1052,7 +1059,7 @@
 
   /** File i's rows from its hunks, with the lines shown between them and whitespace as the switch has it. */
   const build = (i: number, hunks: HunkData[]) =>
-    buildRows(hunks, expandable(files[i]), expansions[i] ?? noExpansion(), hideWhitespace.value);
+    buildRows(hunks, expandable(files[i]) && !files[i].submodule, expansions[i] ?? noExpansion(), hideWhitespace.value);
 
   /** The highlighting asked for of each file's rows (its key), until it's in or dropped. */
   const asked = new WeakMap<FileRows, string>();
@@ -1447,7 +1454,7 @@
   }
 
   function toggleFile(f: FileSummary) {
-    if (readonly) return;
+    if (readonly || inert(f)) return;
     const s = sel[f.path];
     const on = fileState(f) !== 'all';
     if (!on) s.clear();
@@ -1961,6 +1968,7 @@
     const f = files[i];
     menu.show(e, [
       ...(onLine ? [...lineActions(i, r), 'separator' as const] : []),
+      !!cards[i]?.openable && { label: 'Open submodule', icon: ArrowSquareOutRegular, note: 'In legit, instead of this repository', run: () => openSubmodule(f.path) },
       {
         label: 'Open in Zed',
         icon: FileArrowUpRegular,
@@ -2123,7 +2131,7 @@
         <div class="file" style:top="{tops[i]}px" style:height="{fileHeight(i)}px">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="fhead" oncontextmenu={(e) => openMenu(e, i)}>
-            {#if !readonly}
+            {#if !readonly && !inert(f)}
               <input
                 type="checkbox"
                 class="checkbox"
@@ -2151,7 +2159,7 @@
             {#if f.conflicted}<span class="tg" use:tooltip={'Still conflicted: resolve it, then mark it resolved'}><Tag color="var(--warn)" label="conflicted" /></span>{/if}
             {#if f.untracked}<Tag color="var(--add)" label="untracked" />
             {:else if statusLabel[f.status]}<Tag color={statusColor[f.status]} label={statusLabel[f.status]} />{/if}
-            {#if onstage && (f.unshown || mixed.has(f.path))}
+            {#if onstage && !f.submodule && (f.unshown || mixed.has(f.path))}
               <span
                 class="tg"
                 use:tooltip={f.unshown ??
@@ -2220,8 +2228,10 @@
                 {#if rendered[i]}<CodeRegular />{:else}<EyeRegular />{/if}
               </IconButton>
             {/if}
-            <span class="add mono">+{f.added}</span>
-            <span class="del mono">−{f.removed}</span>
+            {#if !f.submodule}
+              <span class="add mono">+{f.added}</span>
+              <span class="del mono">−{f.removed}</span>
+            {/if}
           </div>
 
           {#if !collapsed[i] && rendered[i]}
@@ -2260,7 +2270,17 @@
                 {#each fileBlocks[i] as b (b.key)}{@render ghBlock(b, -1)}{/each}
               </div>
             {/if}
-            {#if leads[i]}
+            {#if cards[i]}
+              <SubmoduleCard
+                path={f.path}
+                sub={f.submodule!}
+                card={cards[i]}
+                height={leads[i]}
+                sel={state === 'all'}
+                last={!f.rows}
+                onpick={readonly || inert(f) ? undefined : () => toggleFile(f)}
+              />
+            {:else if leads[i]}
               {@const kind = f.path.slice(f.path.lastIndexOf('.') + 1).toUpperCase()}
               <ImageDiff
                 before={f.status === 'A' ? null : imageUrl(i, 'old')}

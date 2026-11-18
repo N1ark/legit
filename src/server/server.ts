@@ -1,7 +1,7 @@
 // Local HTTP server: JSON API, change notifications (SSE), and the UI.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, join, normalize, sep } from 'node:path';
 import { fileBytes, fileContent, fileSizes, oldLines, summarize } from './diff.ts';
@@ -20,19 +20,35 @@ import { displaySettings, globalSettingsFile, effectiveSettings, readSettings, r
 import { grammarFiles, grammarProblems, syntaxes, zedGrammars } from './syntax.ts';
 import { openInZed, openUrl } from './editor.ts';
 import { generatedPaths } from './generated.ts';
-import { type Git, GitError } from './git.ts';
+import { Git, GitError, fromUtf8 } from './git.ts';
 import { log, logText } from './log.ts';
 import { branchCommits, cherryPick, copyTo } from './pick.ts';
 import { onProgress } from './progress.ts';
 import { type TreeWatch, watchTree } from './watch.ts';
 import {
-  abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
+  abortOp, conflictDiff, continueOp, fetchRemote, markResolved, mergeBranch, resolveBlock, resolveSubmodule, unresolveBlock, pull, rebaseBranch, rebuildBranch, rebuildPlan,
 } from './sync.ts';
 import { addWorktree, fallbackWorktrees, findWorktree, removeWorktree, worktrees } from './worktrees.ts';
 import { cloneInfo, cloneRepo, cloned } from './clone.ts';
 import { checkoutPr } from './gh/checkout.ts';
 import type { CommitDiff, FileContents, RepoGone, SettingsInfo } from '../shared/types.ts';
 import type { Repo } from './repo.ts';
+import { submoduleGitDir, subDir } from './submodules.ts';
+import { submoduleLog, submodulePaths } from './submodules.ts';
+
+/** The folder of the repository checked out at `pathU` (a UTF-8 path under the root), or why it can't be opened. */
+async function checkedOutSubmodule(git: Git, pathU: unknown): Promise<string> {
+  const path = typeof pathU === 'string' ? fromUtf8(pathU) : '';
+  if (!path || path.startsWith('/') || path.split('/').some((p) => p === '' || p === '.' || p === '..' || p === '.git')) {
+    throw new GitError(`${String(pathU)} isn't a submodule here.`);
+  }
+  if (!(await submoduleGitDir(git, path))) throw new GitError(`${pathU} isn't checked out here, so it can't be opened.`);
+  const dir = subDir(git, path);
+  // It's a repository of its own, not a folder of this one's.
+  const sub = await Git.open(dir).catch(() => null);
+  if (sub?.root !== (await realpath(dir).catch(() => dir))) throw new GitError(`${pathU} isn't a repository of its own.`);
+  return sub.root;
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -131,6 +147,13 @@ async function allIgnored(git: Git, paths: string[]): Promise<boolean> {
 const IGNORE_RULES = /(^|\/)\.gitignore$/;
 /** A nested repository's own git dir: nothing in it is a change to this one. */
 const NESTED_GIT = /(^|[\\/])\.git([\\/]|$)/;
+/** A submodule's (or nested repository's) own git dir, and its refs folders: what's checked out in it, watched. */
+const SUB_GIT_DIRS = /^.+[\\/]\.git(?:[\\/]refs(?:[\\/].*)?)?$/;
+/** What in such a git dir (in the folder, or in the modules folder of a git dir) changes what's checked out: its HEAD, index or refs. */
+const SUB_GIT_STATE = /(?:^.+[\\/]\.git|(?:^|[\\/])modules[\\/].+)[\\/](?:HEAD|index|packed-refs|refs[\\/].+)$/;
+/** Submodules' git dirs in a git dir's modules folder, without what's big and busy in them. */
+const MODULES = /^modules(?:[\\/]|$)/;
+const NOT_STATE = /[\\/](?:objects|logs|hooks|lfs|info|worktrees)(?:[\\/]|$)/;
 
 export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close: () => void }> {
   warmGithub(repo);
@@ -233,9 +256,16 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
   };
   const tree = watchTree(
     repo.git.root,
-    (rel) => !NESTED_GIT.test(rel),
+    (rel) => !NESTED_GIT.test(rel) || SUB_GIT_DIRS.test(rel),
     (name) => {
-      if (name !== undefined && NESTED_GIT.test(name)) return;
+      if (name !== undefined && NESTED_GIT.test(name)) {
+        // A submodule's commit or checkout changing changes how it shows here (another repository's doesn't).
+        if (SUB_GIT_STATE.test(name) && !name.endsWith('.lock')) {
+          const at = name.split(/[\\/]\.git(?:[\\/]|$)/)[0];
+          void submodulePaths(repo.git).then((subs) => subs.has(fromUtf8(at)) && notifyWork(sep === '/' ? at : undefined), () => {});
+        }
+        return;
+      }
       notifyWork(name && sep === '/' ? name : undefined);
       if (name && IGNORE_RULES.test(name)) rescan();
     },
@@ -250,11 +280,13 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     watchers.push(
       watchTree(
         d,
-        (rel) => /^(refs|rebase-merge|rebase-apply|info)(\/|$)/.test(rel),
+        (rel) => /^(refs|rebase-merge|rebase-apply|info)(\/|$)/.test(rel) || (MODULES.test(rel) && !NOT_STATE.test(rel)),
         (name = '') => {
           // A pull request fetched to be read (gh/prdiff.ts) changes nothing shown.
           if (name.endsWith('.lock') || /^refs[\\/]worktree[\\/]legit[\\/]pull[\\/]/.test(name)) return;
-          if (relevant.test(name)) notify();
+          if (MODULES.test(name)) {
+            if (SUB_GIT_STATE.test(name) && !NOT_STATE.test(name)) notifyWork(undefined);
+          } else if (relevant.test(name)) notify();
           else if (name === 'index') notifyWork(undefined);
           else if (/^info([\\/]exclude)?$/.test(name)) rescan();
         },
@@ -289,6 +321,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     copyTo: (b) => copyTo(repo, b),
     resolve: (b) => markResolved(repo, b),
     resolveBlock: (b) => resolveBlock(repo, b),
+    resolveSubmodule: (b) => resolveSubmodule(repo, b),
     unresolveBlock: (b) => unresolveBlock(repo, b),
     continue: () => continueOp(repo),
     abort: () => abortOp(repo),
@@ -311,6 +344,10 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     openWorktree: async (b) => {
       if (!opts.open) throw new GitError('Switching worktree is done by the app here.');
       return { url: await opts.open((await findWorktree(repo, b.path)).path) };
+    },
+    openSubmodule: async (b) => {
+      if (!opts.open) throw new GitError('Opening a submodule is done by the app here.');
+      return { url: await opts.open(await checkedOutSubmodule(repo.git, b.path)) };
     },
     clone: (b) => cloneRepo(repo, b),
     openClone: async (b) => {
@@ -410,6 +447,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (path === '/api/worktrees') return send(res, 200, await worktrees(repo));
     if (path === '/api/clone/info') return send(res, 200, await cloneInfo(repo));
     if (path === '/api/stashes') return send(res, 200, await stashes(repo.git));
+    if (path === '/api/submodule') return send(res, 200, await submoduleLog(repo.git, query.get('path') ?? '', query.get('old'), query.get('new')));
     if (path === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write(blind ? 'data: blind\n\n' : ': hi\n\n');

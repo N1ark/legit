@@ -9,7 +9,7 @@ export const renderedPaths = new Set<string>();
 
 /** The side of file f to show rendered (the old one of a deleted file), when it can be. */
 export const renderSide = (f: FileSummary): 'old' | 'new' | null =>
-  renderKind(f.path) && !f.binary && (f.rows || f.status === 'R' || f.status === 'C') ? (f.status === 'D' ? 'old' : 'new') : null;
+  renderKind(f.path) && !f.binary && !f.submodule && (f.rows || f.status === 'R' || f.status === 'C') ? (f.status === 'D' ? 'old' : 'new') : null;
 
 /** Whether file f shows rendered as the diff of its two versions (an edited markdown file), rather than as one of them. */
 export const renderedDiff = (f: FileSummary): boolean =>
