@@ -20,3 +20,19 @@ test('trimming keeps only the diffs used last, the one on screen among them', as
   assert.notEqual(again, diffs.get(shas[1]));
   assert.deepEqual(again.files.map((f) => f.path), ['f']);
 });
+
+test('trimming keeps the newest working-tree snapshots, the others then out of date', async () => {
+  t.commit('one', { f: '1\n' });
+  const repo = await Repo.open(t.dir);
+  const keys: string[] = [];
+  for (let k = 0; k < 6; k++) {
+    t.write('f', `1\n${k}\n`);
+    keys.push((await repo.work()).sha);
+  }
+  assert.equal(new Set(keys).size, 6);
+  repo.trim();
+  for (const k of keys.slice(2)) assert.equal((await repo.diff(k)).sha, k);
+  for (const k of keys.slice(0, 2)) await assert.rejects(repo.diff(k), /out of date/);
+  // The same changes read again get the newest's key.
+  assert.equal((await repo.work()).sha, keys.at(-1));
+});

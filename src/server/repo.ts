@@ -51,6 +51,8 @@ const RACY = 2000;
 const MAX_SNAPSHOTS = 20;
 const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MIN_SNAPSHOTS = 4;
+/** What `trim` leaves of them, past the newest. */
+const IDLE_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 /** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
 const diffBytes = (d: CommitDiff) => {
@@ -477,6 +479,8 @@ export class Repo {
    */
   trim() {
     this.evictDiffs(IDLE_DIFFS, IDLE_DIFF_BYTES, [...this.diffs.values()].at(-1));
+    // A page that comes back (or connects again) reads its changes again, getting the newest's key if they're the same.
+    this.evictSnapshots(1, MIN_SNAPSHOTS, IDLE_SNAPSHOT_BYTES);
   }
 
   /**
@@ -1207,16 +1211,21 @@ export class Repo {
       const bytes = diffBytes(d);
       this.snapshotBytes.set(key, bytes);
       this.snapshotsBytes += bytes;
-      for (const k of this.snapshots.keys()) {
-        if (this.snapshots.size <= MIN_SNAPSHOTS || (this.snapshots.size <= MAX_SNAPSHOTS && this.snapshotsBytes <= MAX_SNAPSHOT_BYTES)) break;
-        this.snapshots.delete(k);
-        this.snapshotsBytes -= this.snapshotBytes.get(k)!;
-        this.snapshotBytes.delete(k);
-      }
+      this.evictSnapshots(MIN_SNAPSHOTS, MAX_SNAPSHOTS, MAX_SNAPSHOT_BYTES);
       while (this.snapshotIds.size > 40) this.snapshotIds.delete(this.snapshotIds.keys().next().value!);
     }
     d.sha = key;
     return this.snapshots.get(key)!;
+  }
+
+  /** Drop snapshots, least recently used first, down to `max` and about `budget` bytes, but never below `min`. */
+  private evictSnapshots(min: number, max: number, budget: number) {
+    for (const k of this.snapshots.keys()) {
+      if (this.snapshots.size <= min || (this.snapshots.size <= max && this.snapshotsBytes <= budget)) break;
+      this.snapshots.delete(k);
+      this.snapshotsBytes -= this.snapshotBytes.get(k)!;
+      this.snapshotBytes.delete(k);
+    }
   }
 
   /**
