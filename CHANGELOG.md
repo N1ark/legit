@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.28.0 — 2026-11-18
 
 - Submodules are handled: a diff shows a submodule as the commits it moved between instead of *Subproject commit* lines, says when one has changes of its own, isn't checked out or is a nested repository (which staging adds as a submodule), and opens it in legit. Switching branch, rewriting history, pulling, merging, undoing and editing files move the submodules they change, leaving one you moved yourself; before, it stayed behind and showed as a change that, committed, put the old commit back. A submodule's new commit can be discarded (and restored), a submodule conflict is resolved by picking a side, stashing only submodule changes says git can't, clones and new worktrees get their submodules, and committing inside a submodule refreshes the window.
 
