@@ -203,3 +203,25 @@ test('remove a worktree with submodules: asked first when they have something on
   await removeWorktree(repo, { path: other.path });
   assert.equal(existsSync(other.path), false);
 });
+
+test("a bare repository's worktrees are all linked ones: any can be removed, the window going to another", async () => {
+  commit('base', { f: '1\n' });
+  const bare = join(t.tmp(), 'repo.git');
+  git('clone', '-q', '--bare', t.dir, bare);
+  const [one, two, three] = ['one', 'two', 'three'].map((n) => join(dirname(bare), n));
+  t.gitIn(bare, 'worktree', 'add', '-q', one, 'main');
+  t.gitIn(bare, 'worktree', 'add', '-q', '-b', 'b2', two, 'main');
+  t.gitIn(bare, 'worktree', 'add', '-q', '-b', 'b3', three, 'main');
+  const repo = await Repo.open(one);
+  const listed = await worktrees(repo);
+  assert.deepEqual(listed.map((w) => [basename(w.path), w.main, w.current]).sort(), [['one', false, true], ['three', false, false], ['two', false, false]]);
+  const at = (name: string) => listed.find((w) => basename(w.path) === name)!.path;
+  await removeWorktree(repo, { path: at('two') });
+  assert.equal(existsSync(two), false);
+  const moved = (await removeWorktree(repo, { path: at('one') })) as { moved: string };
+  assert.equal(moved.moved, at('three'));
+  assert.equal(existsSync(one), false);
+  const last = await Repo.open(three);
+  await assert.rejects(removeWorktree(last, { path: at('three') }), /only worktree of this bare repository/);
+  assert.equal(existsSync(three), true);
+});
