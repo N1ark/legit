@@ -19,6 +19,9 @@ export function logLine(body: string): LogLine | null {
   return { t: body.slice(m[0].length), k: m[1] as LogLineKind };
 }
 
+/** `s` as a string of its own, not a slice of the (much bigger) one it was cut from. */
+const own = (s: string) => (s.length < 13 ? s : (' ' + s).slice(1));
+
 /** Split `text` into `job`'s steps, keeping the last `cap` lines of each. */
 export function parseJobLog(text: string, job: JobInfo, cap = 3000): JobLog {
   const steps = job.steps.length
@@ -55,7 +58,8 @@ export function parseJobLog(text: string, job: JobInfo, cap = 3000): JobLog {
 
   const out: LogStep[] = steps.map((s, i) => {
     const all = buckets[i];
-    const lines = all.length > cap ? all.slice(-cap) : all;
+    // Copied: a line's text is a slice of the whole log, which kept lines would otherwise keep (logs run to tens of MB).
+    const lines = (all.length > cap ? all.slice(-cap) : all).map((l) => ({ ...l, t: own(l.t) }));
     return {
       number: s.number,
       name: s.name,
