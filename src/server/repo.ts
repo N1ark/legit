@@ -742,10 +742,14 @@ export class Repo {
       if (!req.subject?.trim()) throw new GitError('A commit needs a title.');
       const chain = await this.chain();
       const k = Repo.indexOf(chain, req.sha);
+      const name = String(req.author?.name ?? '').trim();
+      const email = String(req.author?.email ?? '').trim();
+      // Written into the commit's author line as they are: these would make it malformed (or another header).
+      if (/[<>\0\r\n]/.test(name + email)) throw new GitError(`The author is "Name <email>": neither can have <, > or a line break. Nothing was changed.`);
       const orig = parseIdent(chain[k].author);
       const items: Item[] = chain.slice(0, k + 1).map((src) => ({ src }));
       items[k].message = fromUtf8(buildMessage(req.subject, req.body, req.coauthors));
-      items[k].author = formatIdent({ ...orig, name: fromUtf8(req.author.name.trim()), email: fromUtf8(req.author.email.trim()) });
+      items[k].author = formatIdent({ ...orig, name: fromUtf8(name), email: fromUtf8(email) });
       const shas = await this.rewrite('edit', chain, k, items, true);
       return this.result(await this.state(), chain.slice(0, k + 1).map((c, i) => [c, shas[i]]), [shas[k]]);
     });

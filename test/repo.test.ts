@@ -52,6 +52,16 @@ test('edit message, author and co-authors of an old commit', async () => {
   assert.deepEqual(c.coauthors, [{ name: 'Cy', email: 'cy@x.org' }]);
 });
 
+test("an author with <, > or a line break in its name or email is refused: it would make a malformed commit", async () => {
+  const a = commit('one', { f: '1\n' });
+  const head = commit('two', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  for (const author of [{ name: 'Bob <b', email: 'bob@x.org' }, { name: 'Bob', email: 'bob@x.org> <x' }, { name: 'Bob\ncommitter Eve', email: 'e@x.org' }]) {
+    await assert.rejects(repo.edit({ sha: a, subject: 'first', body: '', author, coauthors: [] }), /Name <email>/, author.name);
+  }
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
 test('split lines of a commit into a following commit', async () => {
   const lines = (edit: (l: string[]) => void) => {
     const l = 'abcdefghijklmnopqrst'.split('');
