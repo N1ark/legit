@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { Repo } from '../src/server/repo.ts';
 import { serve } from '../src/server/server.ts';
@@ -23,5 +24,13 @@ test("requests that make no sense are refused as such: a body that isn't JSON, a
     assert.equal((await post('/api/undo', '{}')).status, 409);
   } finally {
     s.close();
+  }
+});
+
+test('the CLI says what --port takes, without a stack trace', () => {
+  for (const port of ['abc', '70000', '-1', '8080x']) {
+    const r = spawnSync(process.execPath, ['bin/legit.ts', '--browser', '--no-open', `--port=${port}`, '.'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, port);
+    assert.equal(r.stderr.trim(), `--port takes a port number from 0 to 65535, not "${port}".`);
   }
 });

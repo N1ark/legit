@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { after, beforeEach, test } from 'node:test';
 import { Repo } from '../src/server/repo.ts';
 import { abortOp } from '../src/server/sync.ts';
+import { autostash, restoreAutostash } from '../src/server/carry.ts';
+import { existsSync } from 'node:fs';
 
 let dir = '';
 const dirs: string[] = [];
@@ -60,6 +62,51 @@ test("an author with <, > or a line break in its name or email is refused: it wo
     await assert.rejects(repo.edit({ sha: a, subject: 'first', body: '', author, coauthors: [] }), /Name <email>/, author.name);
   }
   assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test('co-authors with <, > or a line break are refused too: the trailer would be malformed', async () => {
+  const a = commit('one', { f: '1\n' });
+  const head = commit('two', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  const author = { name: 'Ann', email: 'ann@x.org' };
+  for (const c of [{ name: 'Cy\nSigned-off-by: Eve', email: 'cy@x.org' }, { name: 'Cy', email: 'cy@x.org> <e' }]) {
+    await assert.rejects(repo.edit({ sha: a, subject: 'first', body: '', author, coauthors: [c] }), /co-author [\s\S]*Name <email>/);
+  }
+  write('g', 'staged\n');
+  git('add', 'g');
+  await assert.rejects(repo.commit({ subject: 'c', body: '', coauthors: [{ name: 'Cy <c', email: 'cy@x.org' }] }), /co-author/);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test("uncommitted changes put aside are forgotten only once they're back: a failed restore tries again", async () => {
+  commit('one', { f: '1\n' });
+  write('f', 'mine\n');
+  const repo = await Repo.open(dir);
+  assert.equal(await autostash(repo, 'test'), true);
+  const note = join(dir, '.git', 'legit-autostash');
+  const head = repo.head.bind(repo);
+  repo.head = async () => {
+    throw new Error('interrupted');
+  };
+  await assert.rejects(restoreAutostash(repo), /interrupted/);
+  assert.ok(existsSync(note));
+  repo.head = head;
+  // Gone from the stash list meanwhile (popped by hand): nothing to bring back, and forgotten.
+  git('stash', 'pop', '-q');
+  assert.equal(await restoreAutostash(repo), null);
+  assert.ok(!existsSync(note));
+  assert.equal(read('f'), 'mine\n');
+});
+
+test('a staging selection that names a line twice stages that line, not the whole file', async () => {
+  commit('one', { f: '1\n2\n3\n' });
+  write('f', 'one\n2\n3\n');
+  const repo = await Repo.open(dir);
+  const changes = await repo.work();
+  assert.equal(changes.files[0].added + changes.files[0].removed, 2);
+  // Removing "1" alone (line 0), sent twice.
+  await repo.stage({ key: changes.sha, selection: { f: [0, 0] } });
+  assert.equal(git('show', ':f'), '2\n3');
 });
 
 test('split lines of a commit into a following commit', async () => {
