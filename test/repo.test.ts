@@ -638,6 +638,23 @@ test('old safety refs are pruned, recent and unrelated ones are kept', async () 
   ]);
 });
 
+test("pruning is housekeeping: another git holding a lock doesn't stop opening the repo or an operation", async () => {
+  commit('one', { f: '1\n' });
+  const old = `refs/legit/backups/main/${Date.now() - 20 * 24 * 60 * 60 * 1000}-edit`;
+  git('update-ref', old, 'HEAD');
+  // As when a `git pack-refs` or `git gc` runs meanwhile.
+  git('pack-refs', '--all');
+  write('.git/packed-refs.lock', '');
+  const repo = await Repo.open(dir);
+  commit('two', { f: '2\n' });
+  await repo.uncommit();
+  assert.equal(git('log', '-1', '--format=%s'), 'one');
+  rmSync(join(dir, '.git/packed-refs.lock'));
+  await repo.undo();
+  assert.equal(git('log', '-1', '--format=%s'), 'two');
+  assert.equal(git('for-each-ref', '--format=%(refname)', old), '');
+});
+
 test("locate a commit by name: its place in HEAD's first-parent history, or why it isn't there", async () => {
   const a = commit('a', { 'f.txt': '1\n' });
   const b = commit('b', { 'f.txt': '2\n' });
