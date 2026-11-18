@@ -27,16 +27,18 @@ const cache = new Map<string, Tokens | null>();
 const MAX_CACHED = 1000;
 const MAX_BYTES = 16 << 20;
 let cachedBytes = 0;
-const bytes = (t: Tokens | null | undefined) => (t ? t.offsets.byteLength + t.data.byteLength : 0);
+/** An entry's size: its tokens, and its key, which for a document's code blocks is their whole text. */
+const bytes = (key: string, t: Tokens | null | undefined) => key.length + (t ? t.offsets.byteLength + t.data.byteLength : 0);
 
 function remember(key: string, t: Tokens | null) {
-  cachedBytes += bytes(t) - bytes(cache.get(key));
+  if (cache.has(key)) cachedBytes -= bytes(key, cache.get(key));
+  cachedBytes += bytes(key, t);
   cache.delete(key);
   cache.set(key, t);
   for (const [k, old] of cache) {
     if (cache.size <= MAX_CACHED && cachedBytes <= MAX_BYTES) break;
     cache.delete(k);
-    cachedBytes -= bytes(old);
+    cachedBytes -= bytes(k, old);
   }
 }
 const queue: Job[] = [];
