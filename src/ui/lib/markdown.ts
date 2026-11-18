@@ -55,8 +55,15 @@ const emoji: TokenizerExtension = {
 
 const marked = new Marked({ gfm: true, breaks: false, extensions: [ref, emoji] });
 
-/** A whole message: paragraphs, lists, code blocks... */
-export const lexBlocks = (text: string): Token[] => marked.lexer(text);
+/** Messages lexed lately, weighed by length: a review thread in a diff lexes its comments again each time it scrolls into view. */
+const blocks = new Lru<string, Token[]>(500, 1_000_000);
+
+/** A whole message: paragraphs, lists, code blocks... The tokens are shared: read them, don't change them. */
+export function lexBlocks(text: string): Token[] {
+  let t = blocks.get(text);
+  if (!t) blocks.set(text, (t = marked.lexer(text)), text.length);
+  return t;
+}
 
 /** Titles lexed lately: a list row lexes its commit's title again each time it scrolls into view. */
 const inline = new Lru<string, Token[]>(2000);

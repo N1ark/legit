@@ -4,7 +4,7 @@
 // `DiffTrack` is what one diff view shows of it.
 
 import { toast } from 'purr';
-import { gh, ghPost, ghRequest } from './github.svelte.ts';
+import { gh, ghPost, ghRequest, sameData } from './github.svelte.ts';
 import type { DiffReview } from './gh-review.svelte.ts';
 import { checks } from './gh-checks.svelte.ts';
 import { type OwnerRule, type Owners, ownedBy, ownersOf, parseCodeowners } from './codeowners.ts';
@@ -32,7 +32,8 @@ class Tracking {
     ghRequest<PrFiles>('prFiles', { number, fresh: fresh ? 1 : null }).then(
       (f) => {
         for (const [k, s] of this.sending) if (k.startsWith(`${number}:`)) f.viewed[k.slice(`${number}:`.length)] = s;
-        this.files = { ...this.files, [number]: f };
+        // Reloaded on every refresh: the same again keeps what's shown, so the diffs and their trees don't redraw.
+        if (!sameData(this.files[number], f)) this.files = { ...this.files, [number]: f };
       },
       () => {},
     );
@@ -42,7 +43,7 @@ class Tracking {
   loadNotes(sha: string) {
     if (!this.once(`n${sha}`, `${gh.tick}:${checks.details[sha]?.counts.done ?? ''}`)) return;
     ghRequest<CommitAnnotations>('annotations', { sha }).then(
-      (n) => (this.notes = { ...this.notes, [sha]: n }),
+      (n) => sameData(this.notes[sha], n) || (this.notes = { ...this.notes, [sha]: n }),
       () => {},
     );
   }

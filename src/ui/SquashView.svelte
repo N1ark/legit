@@ -53,7 +53,9 @@
 
   // The squashed commit's changes, read-only; DiffView wants a (never filled) selection per file.
   const diffKey = $derived(squashDiffKey(commits, app.commits));
-  const review = $derived(new DiffReview(diffKey, commits.map((c) => c.sha)));
+  // From the keys, not the commits: the selection is a new array whenever the list changes (older history loading,
+  // a merge expanded), and a new review would have the diff place its threads and track its files over again.
+  const review = $derived(new DiffReview(diffKey, key.split(' ')));
   let changes = $state.raw<{ diff: DiffSummary; sel: Record<string, SvelteSet<number>> } | null>(null);
   let error = $state<string | null>(null);
   $effect(() => {

@@ -11,7 +11,7 @@
   import Markdown from '../Markdown.svelte';
   import { app } from '../lib/app.svelte.ts';
   import { ghAvatar } from '../lib/gh-prview.ts';
-  import { gh, ghPost, ghRequest, keepPrview, keptPrview, loadPrview } from '../lib/github.svelte.ts';
+  import { gh, ghPost, ghRequest, keepPrview, keptPrview, loadPrview, sameData } from '../lib/github.svelte.ts';
   import PrCheckout from './PrCheckout.svelte';
   import PrChanges from './PrChanges.svelte';
   import PrMergeBox from './PrMergeBox.svelte';
@@ -33,6 +33,8 @@
   let loadedAt = kept?.at ?? 0;
   let gen = 0;
   let unknownTries = 0;
+  /** Bumped by each load that comes back, even unchanged (when `pr` stays as it was). */
+  let loads = $state(0);
 
   async function load() {
     if (!gh.ready) return;
@@ -41,7 +43,9 @@
     try {
       const got = await loadPrview(number);
       if (g !== gen) return;
-      pr = got;
+      // Most reloads (each refresh, focus) find it as it was: the conversation shown then isn't laid out again.
+      if (!sameData(got, pr)) pr = got;
+      loads++;
       keepPrview(got);
       error = null;
     } catch (e) {
@@ -60,6 +64,7 @@
 
   // GitHub works out mergeability lazily: ask again shortly while it says it doesn't know yet.
   $effect(() => {
+    void loads;
     if (!pr || pr.state !== 'open' || pr.mergeable !== 'unknown' || unknownTries >= 4) return;
     const t = setTimeout(() => (unknownTries++, load()), 2500);
     return () => clearTimeout(t);

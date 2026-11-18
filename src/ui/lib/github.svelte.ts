@@ -41,6 +41,12 @@ export function ghRequest<T>(name: string, query?: Record<string, string | numbe
 /** POST `body` to `/api/gh/<name>`. */
 export const ghPost = <T,>(name: string, body: unknown = {}) => ghRequest<T>(name, undefined, body);
 
+/**
+ * GitHub's answer is what's already shown. Background reloads (each refresh, every focus) mostly bring the same
+ * data again: keeping what's shown then, rather than a new copy, spares everything derived from it a recompute and a redraw.
+ */
+export const sameData = (a: unknown, b: unknown) => a === b || (a !== undefined && b !== undefined && JSON.stringify(a) === JSON.stringify(b));
+
 const PREFETCHED = 10_000;
 const prviews = new Map<number, { at: number; value: Promise<PrOverview> }>();
 /** An open overview is reloaded about this often anyway, so one this old shows at once when opened again. */
@@ -88,9 +94,10 @@ const UNFOCUSED_EVERY = 5 * 60_000;
 const followKey = () => `${app.repo?.branch}\0${app.repo?.head}\0${app.repo?.push?.tip}`;
 
 class Github {
-  status = $state<GithubStatus | null>(null);
-  /** The current branch's pull request (null: none, or not on GitHub); undefined until looked up. */
-  pr = $state<PullRequest | null | undefined>(undefined);
+  /** Replaced, never changed in place. */
+  status = $state.raw<GithubStatus | null>(null);
+  /** The current branch's pull request (null: none, or not on GitHub); undefined until looked up. Replaced, never changed in place. */
+  pr = $state.raw<PullRequest | null | undefined>(undefined);
   /** Bumped by `refresh()`, for views that keep their own GitHub data to reload it. */
   tick = $state(0);
   /** The branch `pr` is for: until it's the current one, `pr` is the previous branch's. */
@@ -139,7 +146,7 @@ class Github {
       let pr: PullRequest | null | undefined;
       if (status) {
         const s = await status;
-        if (s.n === this.statusN) this.status = s.status;
+        if (s.n === this.statusN && !sameData(s.status, this.status)) this.status = s.status;
         if (s.branch === branch && !opts.fresh) pr = s.status.pr;
       }
       if (!this.ready || !branch) {
@@ -149,8 +156,9 @@ class Github {
       if (pr === undefined) pr = await (early ?? ask(branch));
       this.seen.set(branch, pr);
       if (gen === this.gen) {
-        const changed = JSON.stringify(pr) !== JSON.stringify(this.pr);
-        this.pr = pr;
+        const changed = !sameData(pr, this.pr);
+        // The same pull request again keeps the one shown, so what derives from it (every diff's review) stays as it is.
+        if (changed) this.pr = pr;
         // Every edit here refreshes, but GitHub hasn't changed because of it: the views reload
         // their own data when the pull request did, when asked to, and otherwise at most this often.
         if (changed || opts.fresh || Date.now() - this.tickAt > TICK_EVERY) {
