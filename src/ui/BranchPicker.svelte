@@ -183,8 +183,14 @@
   }
 
   function apply(l: BranchInfo[], r: RemoteBranchInfo[], d: DeletedBranch[], names: string[] | null) {
+    // The cursor stays on its branch as the list reloads (a fetch adding branches above it), so ↵ picks what it shows.
+    const at = rows[active] ? key(rows[active]) : null;
     [local, remote, deleted] = [l, r, d];
     if (names) remoteNames = names;
+    if (at !== null) {
+      const k = rows.findIndex((x) => key(x) === at);
+      active = k >= 0 ? k : Math.max(0, Math.min(active, rows.length - 1));
+    }
     const left = new Set([...l.map((b) => `local:${b.name}`), ...r.map((b) => `remote:${b.ref}`)]);
     for (const k of [...chosen]) if (!left.has(k)) chosen.delete(k);
   }
