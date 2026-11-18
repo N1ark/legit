@@ -236,7 +236,7 @@
   }
 
   function onSplitKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault();
       split();
     }

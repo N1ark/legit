@@ -15,6 +15,8 @@ class Finder {
   /** Index of the current match among all of them. */
   current = $state(0);
   sources = $state.raw<FindSource[]>([]);
+  /** The bar has the focus (it's an overlay only then: see FindBar). */
+  focused = $state(false);
   /** Bumped to ask the bar to take focus again. */
   focusTick = $state(0);
   /** Show the current match once there is one (the query changed). */
@@ -82,6 +84,7 @@ class Finder {
 
   close() {
     this.open = false;
+    this.focused = false;
   }
 }
 

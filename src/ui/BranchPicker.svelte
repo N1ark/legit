@@ -486,6 +486,8 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // An input method's own keys (↵ picks what's being composed).
+    if (e.isComposing) return;
     if (mode === 'commits') return onCommitsKey(e);
     const field = e.currentTarget as HTMLInputElement;
     if (e.key === 'ArrowRight' && mode === 'switch' && field.selectionStart === field.value.length) {

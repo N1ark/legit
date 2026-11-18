@@ -10,9 +10,8 @@
   // An overlay (esc closes it; plain shortcuts stand aside) only while it has the focus: clicking a
   // commit gives ↑/↓ back to the commit list, with the bar still open.
   let bar: HTMLElement;
-  let focused = $state(false);
   $effect(() => {
-    if (focused) return registerOverlay(() => finder.close());
+    if (finder.focused) return registerOverlay(() => finder.close());
   });
 
   $effect(() => {
@@ -40,8 +39,8 @@
   class="find"
   role="search"
   bind:this={bar}
-  onfocusin={() => (focused = true)}
-  onfocusout={(e) => (focused = bar.contains(e.relatedTarget as Node | null))}
+  onfocusin={() => (finder.focused = true)}
+  onfocusout={(e) => (finder.focused = bar.contains(e.relatedTarget as Node | null))}
 >
   <input
     bind:this={input}
