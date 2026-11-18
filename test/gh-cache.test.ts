@@ -169,3 +169,19 @@ test('a cache past a hundred keys drops those gone stale, keeping the fresh ones
   assert.equal(await cached(store, 'new', 1000, async () => -1), -1);
   assert.deepEqual([...store.keys()], [...Array.from({ length: 30 }, (_, i) => `k${120 + i}`), 'new']);
 });
+
+test('a small cache drops what has expired on the next call, hit or not', async () => {
+  const store = new Map<string, { at: number; value: Promise<number> }>();
+  assert.equal(await cached(store, 'a', 200, async () => 1), 1);
+  assert.equal(await cached(store, 'b', 200, async () => 2), 2);
+  await new Promise((r) => setTimeout(r, 220));
+  assert.equal(await cached(store, 'c', 200, async () => 3), 3);
+  assert.deepEqual([...store.keys()], ['c']);
+  // A key asked for again after it expired is worked out again, and goes last.
+  assert.equal(await cached(store, 'd', 200, async () => 4), 4);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(await cached(store, 'c', 200, async () => 0), 3);
+  await new Promise((r) => setTimeout(r, 170));
+  assert.equal(await cached(store, 'd', 200, async () => 5), 5);
+  assert.deepEqual([...store.keys()], ['d']);
+});

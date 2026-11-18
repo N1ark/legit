@@ -364,13 +364,28 @@ export function prune(store: Map<string, { at: number }>, ms: number, over = 100
   for (const [k, v] of store) if (now - v.at >= ms) store.delete(k);
 }
 
-/** `fn()`'s result for `ms`, per key; failures aren't kept, nor (past a few) those gone stale. */
+/**
+ * Drop `store`'s entries older than `ms` from its front, where the oldest are while entries are only
+ * ever added last (as `cached` adds them): cheap enough to do on every call.
+ */
+export function expire(store: Map<string, { at: number }>, ms: number) {
+  const now = Date.now();
+  for (const [k, v] of store) {
+    if (now - v.at < ms) break;
+    store.delete(k);
+  }
+}
+
+/** `fn()`'s result for `ms`, per key; failures aren't kept, nor those gone stale. */
 export function cached<T>(store: Map<string, { at: number; value: Promise<T> }>, key: string, ms: number, fn: () => Promise<T>): Promise<T> {
+  // Keys that are never asked for again (the stack of a branch list since reordered, a pull request
+  // looked at once) would otherwise stay, each with its whole answer.
+  expire(store, ms);
   const hit = store.get(key);
   if (hit && Date.now() - hit.at < ms) return hit.value;
   const value = fn();
-  // Keys that are never asked for again (the stack of a branch list since reordered) would pile up.
-  prune(store, ms);
+  // Added last, so the order stays oldest first.
+  store.delete(key);
   store.set(key, { at: Date.now(), value });
   value.catch(() => store.get(key)?.value === value && store.delete(key));
   return value;
