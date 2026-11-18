@@ -382,12 +382,19 @@ export async function replaceFile(abs: string, path: string, mode: number, befor
   }
 }
 
+/** A file's bytes as text to apply suggestions to; refused when it isn't UTF-8, as writing it back would garble it. */
+export function utf8Text(path: string, bytes: Buffer): string {
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) throw new GitError(`${path} isn't UTF-8 text, so suggestions can't be applied to it here; apply it by hand.`);
+  return text;
+}
+
 async function applySuggestion(repo: Repo, s: ApplySuggestion): Promise<{ line: number }> {
   if (!Array.isArray(s.lines) || !Array.isArray(s.replacement) || !Number.isInteger(s.startLine)) throw new GitError('Bad suggestion.');
   return repo.exclusive(async () => {
     const { abs, mode } = await workFile(repo, s.path);
     const before = await readFile(abs);
-    const r = withSuggestion(before.toString('utf8'), s);
+    const r = withSuggestion(utf8Text(s.path, before), s);
     if ('error' in r) throw new GitError(r.error);
     await replaceFile(abs, s.path, mode, before, r.text);
     return { line: r.at };

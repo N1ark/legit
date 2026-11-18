@@ -35,7 +35,7 @@ export async function worktrees(repo: Repo): Promise<WorktreeInfo[]> {
   const out = (await repo.git.run(['worktree', 'list', '--porcelain', '-z'])).out.toString('utf8');
   const here = real(repo.git.root);
   const list: WorktreeInfo[] = [];
-  for (const block of out.split('\0\0').filter(Boolean)) {
+  for (const [k, block] of out.split('\0\0').filter(Boolean).entries()) {
     const lines = block.split('\0');
     const field = (key: string) => {
       const line = lines.find((l) => l === key || l.startsWith(`${key} `));
@@ -51,7 +51,8 @@ export async function worktrees(repo: Repo): Promise<WorktreeInfo[]> {
       short: short(path),
       branch: branch?.replace(/^refs\/heads\//, '') ?? null,
       head: field('HEAD'),
-      main: !list.length,
+      // The first one listed is the main worktree, unless the repository is bare (then none is).
+      main: k === 0,
       current: !missing && real(path) === here,
       locked: field('locked'),
       missing,
@@ -181,6 +182,9 @@ export function removeWorktree(
     const w = all.find((x) => x.path === req.path);
     if (!w) throw new GitError(`There's no worktree at ${req.path}; refresh.`);
     if (w.main) throw new GitError(`Couldn't remove ${w.name}. That's the main worktree, which holds the repository. Nothing was changed.`);
+    // Where the window goes when it's this one: the main worktree, or (a bare repository's) another.
+    const home = all.find((x) => x.main) ?? all.find((x) => x !== w && !x.missing);
+    if (w.current && !home) throw new GitError(`Couldn't remove ${w.name}. It's the only worktree of this bare repository, so there'd be nothing left to show. Nothing was changed.`);
     const lose = req.force ? null : await wouldLose(w);
     if (lose) throw new GitError(`${lose} Remove it anyway?`, 'worktree-loses');
 
@@ -197,17 +201,16 @@ export function removeWorktree(
     }
     const changes = await saveChanges(repo, w);
     if (changes) notes.push(changes);
-    const main = all[0];
-    const url = w.current && open ? await open(main.path) : undefined;
-    // Twice forced: one with changes, submodules or a lock goes too. Run from the main worktree, as this one may be it.
-    const r = await run(main.path, ['worktree', 'remove', '--force', '--force', w.path], { allowFail: true });
+    const url = w.current && home && open ? await open(home.path) : undefined;
+    // Twice forced: one with changes, submodules or a lock goes too. Run from elsewhere, as this one may be it.
+    const r = await run(home?.path ?? repo.git.commonDir, ['worktree', 'remove', '--force', '--force', w.path], { allowFail: true });
     if (r.code !== 0) {
       if (saved) await repo.git.run(['update-ref', '-d', saved, w.head!], { allowFail: true });
       throw new GitError(`Couldn't remove ${w.name}.${changes ? ` ${changes}` : ''}\n${r.err.trim()}`);
     }
     const note = notes.join(' ') || undefined;
     // This worktree's folder is gone: nothing more runs in it.
-    if (w.current) return { moved: main.path, url, note };
+    if (w.current) return { moved: home!.path, url, note };
     await pruneRefs(repo.git);
     return { ...(await done(repo)), note };
   });

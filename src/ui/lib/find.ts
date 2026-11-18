@@ -9,11 +9,26 @@ interface Segment {
 /** Case-insensitive unless the query has a capital letter (as in Zed and Vim's smartcase). */
 export const caseSensitive = (query: string) => query !== query.toLowerCase();
 
+/**
+ * `s` lowercased, each character keeping its length, so a match's place in it is its place in `s`: the
+ * few whose lowercase is longer (İ becomes i and a combining dot) stay as they are.
+ */
+export function fold(s: string): string {
+  const l = s.toLowerCase();
+  if (l.length === s.length) return l;
+  let out = '';
+  for (const ch of s) {
+    const c = ch.toLowerCase();
+    out += c.length === ch.length ? c : ch;
+  }
+  return out;
+}
+
 /** Starts of the (non-overlapping) matches of `query` in `text`. */
 export function matchesIn(text: string, query: string, sensitive = caseSensitive(query)): number[] {
   if (!query) return [];
-  const hay = sensitive ? text : text.toLowerCase();
-  const needle = sensitive ? query : query.toLowerCase();
+  const hay = sensitive ? text : fold(text);
+  const needle = sensitive ? query : fold(query);
   const out: number[] = [];
   for (let k = hay.indexOf(needle); k >= 0; k = hay.indexOf(needle, k + needle.length)) out.push(k);
   return out;
@@ -52,7 +67,7 @@ export interface Match {
 const lowered = new WeakMap<readonly string[], string[]>();
 function lower(lines: readonly string[]): string[] {
   let l = lowered.get(lines);
-  if (!l) lowered.set(lines, (l = lines.map((t) => t.toLowerCase())));
+  if (!l) lowered.set(lines, (l = lines.map(fold)));
   return l;
 }
 
@@ -71,7 +86,7 @@ export function findAll(
   const out: Match[] = [];
   if (!query) return out;
   const sensitive = caseSensitive(query);
-  const needle = sensitive ? query : query.toLowerCase();
+  const needle = sensitive ? query : fold(query);
   const scan = (i: number, r: number, hay: string) => {
     for (let k = hay.indexOf(needle); k >= 0; k = hay.indexOf(needle, k + needle.length)) out.push({ i, r, start: k });
   };

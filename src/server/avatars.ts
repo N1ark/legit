@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { githubToken } from './gh/client.ts';
 import type { Git } from './git.ts';
+import { githubRepo as repoOf } from './github.ts';
 
 type Entry = { url: string | null; at: number };
 
@@ -20,7 +21,6 @@ const MISS_TTL = 7 * 24 * 3600 * 1000;
 const PARALLEL = 4;
 
 const NOREPLY = /^(?:(\d+)\+)?([^@]+)@users\.noreply\.github\.com$/i;
-const GITHUB_REMOTE = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
 
 let cache: Promise<Map<string, Entry>> | null = null;
 let saveTimer: NodeJS.Timeout | undefined;
@@ -48,8 +48,9 @@ async function githubRepo(git: Git): Promise<string | null> {
   remotes.sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
   for (const r of remotes) {
     const url = await git.text(['remote', 'get-url', r], { allowFail: true });
-    const m = GITHUB_REMOTE.exec(url);
-    if (m) return `${m[1]}/${m[2]}`;
+    // github.com itself, not a host whose name ends like it (a GitHub Enterprise server's).
+    const repo = repoOf(url);
+    if (repo) return repo;
   }
   return null;
 }

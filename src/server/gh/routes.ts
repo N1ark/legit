@@ -94,7 +94,9 @@ async function mockTips(repo: Repo) {
 
 /** Answer `/api/gh/<name>`. */
 export async function githubRoute(repo: Repo, method: string, name: string, input: any): Promise<unknown> {
-  const route = method === 'POST' ? postRoutes[name] : getRoutes[name];
+  const routes = method === 'POST' ? postRoutes : getRoutes;
+  // Its own, not one every object has (`constructor`, `toString`).
+  const route = Object.hasOwn(routes, name) ? routes[name] : undefined;
   if (!route) throw new GithubError(`No GitHub route ${method} ${name}.`, 404);
   if (MOCK) await mockTips(repo);
   return route(repo, input);

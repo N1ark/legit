@@ -37,3 +37,9 @@ test('find: every file, rows skipped, and a longer query only where the shorter 
   assert.deepEqual(findAll('Foo', 3, lines, skip, findAll('f', 3, lines, skip)), [{ i: 0, r: 1, start: 0 }]);
   assert.deepEqual(findAll('', 3, lines, skip), []);
 });
+
+test('find: matches are where they are in the line, even after a letter whose lowercase is longer (İ)', () => {
+  assert.deepEqual(matchesIn('İx foo', 'foo'), [3]);
+  assert.deepEqual(findAll('foo', 1, () => ['İİ foo'], () => false), [{ i: 0, r: 0, start: 3 }]);
+  assert.deepEqual(matchesIn('İstanbul', 'stan'), [1]);
+});

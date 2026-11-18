@@ -33,7 +33,9 @@ export async function pruneRefs(git: Git, now = Date.now()) {
     list.sort((a, b) => b.time - a.time);
     list.forEach((r, i) => (i >= MAX_COUNT || now - r.time > MAX_AGE_MS) && stale.push(r.ref));
   }
+  // Housekeeping: when another git holds a lock it needs (packed-refs', during a gc), it's left for next time
+  // rather than failing what it runs after (opening the repo, an operation's backup, an abort).
   if (stale.length) {
-    await git.run(['update-ref', '--stdin'], { input: stale.map((r) => `delete ${r}\n`).join('') });
+    await git.run(['update-ref', '--stdin'], { input: stale.map((r) => `delete ${r}\n`).join(''), allowFail: true });
   }
 }

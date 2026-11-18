@@ -176,3 +176,26 @@ test('people past the first 100 who can be assigned are found by what is typed',
   assert.deepEqual(found.map((u) => u.login), ['tenderlove']);
   assert.deepEqual(await get('prviewUsers', { number: '13', q: ' ' }), []);
 });
+
+test("a suggestion isn't applied to a file that isn't UTF-8 text, which writing it back would garble", async () => {
+  const file = `${dir}/legacy.txt`;
+  const bytes = Buffer.from('a\ncaf\xe9\n', 'latin1');
+  writeFileSync(file, bytes);
+  try {
+    await assert.rejects(post('reviewApply', { path: 'legacy.txt', startLine: 1, lines: ['a'], replacement: ['b'] }), /isn't UTF-8 text/);
+    assert.deepEqual(readFileSync(file), bytes);
+    // Committed, for the batch (which leaves uncommitted files alone anyway).
+    git('add', 'legacy.txt');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'legacy');
+    const head = git('rev-parse', 'HEAD');
+    const branch = git('branch', '--show-current');
+    await assert.rejects(
+      post('reviewApplyBatch', { branch, head, suggestions: [{ threadId: 'X', path: 'legacy.txt', startLine: 1, lines: ['a'], replacement: ['b'] }] }),
+      /isn't UTF-8 text/,
+    );
+    assert.deepEqual(readFileSync(file), bytes);
+    git('reset', '-q', '--hard', 'HEAD~1');
+  } finally {
+    rmSync(file, { force: true });
+  }
+});

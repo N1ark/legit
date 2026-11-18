@@ -41,3 +41,33 @@ test("issue links go to the repository forked from: upstream's, ahead of the pus
   assert.equal(await issueRepo(remotes, 'origin'), 'up/b');
   assert.equal(await issueRepo(new Map([['origin', 'git@gitlab.com:me/b.git']])), null);
 });
+
+test("avatars: emails are only looked up for a repository on github.com, not a host that just ends like it", async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { Git } = await import('../src/server/git.ts');
+  const { avatars } = await import('../src/server/avatars.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'legit-avatars-'));
+  const asked: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL) => {
+    asked.push(String(url));
+    throw new Error('offline');
+  }) as typeof fetch;
+  try {
+    execFileSync('git', ['init', '-q', dir]);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://corp-github.com/o/r.git']);
+    const email = `someone-${Date.now()}@corp.example`;
+    assert.deepEqual(await avatars(await Git.open(dir), [email]), { [email]: null });
+    assert.deepEqual(asked, []);
+    execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'git@github.com:o/r.git']);
+    await avatars(await Git.open(dir), [email]);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /^https:\/\/api\.github\.com\/repos\/o\/r\/commits\?/);
+  } finally {
+    globalThis.fetch = real;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

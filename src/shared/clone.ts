@@ -1,6 +1,7 @@
 // What a clone of a URL (or GitHub's `owner/name`) is cloned from and named: for the server, and the dialog's placeholder.
 
-const SHORTHAND = /^[\w.-]+\/[\w.-]+$/;
+/** `owner/name`, but not `../name` or `./name` (a folder, relative): no GitHub owner is dots. */
+const SHORTHAND = /^(?!\.\.?\/)[\w.-]+\/[\w.-]+$/;
 
 /** The URL to clone: `url` as given, or GitHub's for `owner/name`. */
 export function cloneUrl(url: string, ssh: boolean): string {

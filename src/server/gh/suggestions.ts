@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { GitError } from '../git.ts';
 import { buildMessage } from '../message.ts';
 import { viewerLogin } from './client.ts';
-import { replaceFile, withSuggestion, workFile } from './review.ts';
+import { replaceFile, utf8Text, withSuggestion, workFile } from './review.ts';
 import type { ApplySuggestion, ApplySuggestions, SuggestionRefused, SuggestionsApplied } from '../../shared/gh-review.ts';
 import type { GhUser } from '../../shared/github.ts';
 import type { OpResult, Person } from '../../shared/types.ts';
@@ -94,7 +94,14 @@ export async function applySuggestions(repo: Repo, b: ApplySuggestions): Promise
         continue;
       }
       const content = await readFile(file.abs);
-      const r = withSuggestions(content.toString('utf8'), mine);
+      let text: string;
+      try {
+        text = utf8Text(path, content);
+      } catch (e) {
+        mine.forEach((s) => refuse(s, (e as Error).message));
+        continue;
+      }
+      const r = withSuggestions(text, mine);
       r.refused.forEach((x) => refuse(mine[x.index], x.why));
       if (!r.applied.length) continue;
       applied.push(...r.applied.map((i) => mine[i]));

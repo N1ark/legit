@@ -78,7 +78,10 @@ export function parseDiff(data: string, sha: string): CommitDiff {
     // A working-tree file listed (stat-dirty) but no different has a record and no patch.
     const at = starts[ci];
     const begins = (s: string) => ci < chunks && s.length < starts[ci + 1] - at && data.startsWith(s, at);
-    if (!begins('diff --git "') && !begins(`diff --git a/${f.oldPath ?? f.path} b/`)) {
+    const from = `a/${f.oldPath ?? f.path}`;
+    // A quoted header (a path with a quote, backslash or control character, or not ASCII) is this file's only if it names it.
+    const quoted = begins('diff --git "') ? unquote(data, at + 'diff --git '.length) : null;
+    if (quoted !== from && !begins(`diff --git ${from} b/`)) {
       f.token = createHash('sha1').update(`${f.oldMode} ${f.newMode} ${f.oldSha} ${f.status}\0`).digest('hex');
       continue;
     }
@@ -122,6 +125,29 @@ export function parseDiff(data: string, sha: string): CommitDiff {
     f.partial = !f.binary && f.status !== 'T' && TEXT_MODES.has(f.oldMode) && TEXT_MODES.has(f.newMode);
   }
   return { sha, files: sortFiles(files) };
+}
+
+const ESCAPES: Record<string, string> = { a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+
+/** The C-quoted string (as git quotes paths) starting with the `"` at `at` of `data`, unquoted to a byte string; null if it isn't one. */
+export function unquote(data: string, at: number): string | null {
+  let out = '';
+  for (let p = at + 1; p < data.length; p++) {
+    const c = data[p];
+    if (c === '"') return out;
+    if (c === '\n') return null;
+    if (c !== '\\') {
+      out += c;
+      continue;
+    }
+    const e = data[++p];
+    if (e >= '0' && e <= '3' && /^[0-7]{3}$/.test(data.slice(p, p + 3))) {
+      out += String.fromCharCode(parseInt(data.slice(p, p + 3), 8));
+      p += 2;
+    } else if (e in ESCAPES) out += ESCAPES[e];
+    else return null;
+  }
+  return null;
 }
 
 /** Files in the order the file tree lists them (folders first, as in Zed). */

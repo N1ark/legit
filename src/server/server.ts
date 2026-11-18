@@ -75,6 +75,9 @@ export interface ServeOpts {
   onGone?: () => void;
 }
 
+/** A request that makes no sense (a body that isn't JSON): answered 400, not as a failure of ours. */
+class BadRequest extends Error {}
+
 function readBody(req: IncomingMessage): Promise<any> {
   return new Promise((done, fail) => {
     const chunks: Buffer[] = [];
@@ -83,7 +86,7 @@ function readBody(req: IncomingMessage): Promise<any> {
       try {
         done(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
       } catch (e) {
-        fail(e);
+        fail(new BadRequest(`The request's body isn't JSON: ${e instanceof Error ? e.message : e}`));
       }
     });
     req.on('error', fail);
@@ -603,7 +606,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       return send(res, 200, {});
     }
     const op = /^\/api\/(\w+)$/.exec(path)?.[1];
-    if (op && ops[op] && req.method === 'POST') {
+    // Its own, not one every object has (`constructor`, `toString`).
+    if (op && Object.hasOwn(ops, op) && req.method === 'POST') {
       // A custom header can't be sent cross-origin without a CORS preflight, which we never grant.
       if (req.headers['x-legit'] !== '1') return send(res, 403, { error: 'Forbidden' });
       return send(res, 200, await ops[op](await readBody(req)));
@@ -640,6 +644,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     } catch (e) {
       // Whatever failed, the reason is that it's gone.
       if (path.startsWith('/api/') && isGone()) return send(res, 410, await gone);
+      if (e instanceof BadRequest) return send(res, 400, { error: e.message });
       const known = e instanceof GitError;
       log(`${req.method} ${path}${url.search}:`, known ? e.message : e);
       send(res, known ? 409 : 500, { error: e instanceof Error ? e.message : String(e), ...(known && e.code ? { code: e.code } : {}) });

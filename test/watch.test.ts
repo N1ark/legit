@@ -137,6 +137,37 @@ test('ignored folders are not watched, until the .gitignore stops ignoring them'
   }
 });
 
+test('folders newly ignored stop being watched', { skip: !perFolder }, async () => {
+  for (let i = 0; i < 5; i++) mkdirSync(join(t.dir, `out/p${i}/lib`), { recursive: true });
+  t.commit('one', { '.gitignore': '', f: '1\n' });
+  const open = new Map<FSWatcher, string>();
+  const real = fs.watch;
+  mock.method(fs, 'watch', (...args: Parameters<typeof fs.watch>) => {
+    const w = real(...args);
+    open.set(w, String(args[0]));
+    w.on('close', () => open.delete(w));
+    return w;
+  });
+  syncBuiltinESMExports();
+  try {
+    const s = await serve(await Repo.open(t.dir), { port: 0, dist: t.tmp() });
+    try {
+      await sleep(300);
+      const watchingOut = () => [...open.values()].filter((p) => p.includes(join(t.dir, 'out'))).length;
+      assert.equal(watchingOut(), 11);
+      t.write('.gitignore', 'out/\n');
+      await sleep(1000);
+      assert.equal(watchingOut(), 0);
+      assert.deepEqual(await eventsDuring(s.url, () => t.write('out/p1/lib/x.js', 'x')), []);
+    } finally {
+      s.close();
+    }
+  } finally {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 test('files changing nonstop (a build) tell the page less and less often, not once per change', async () => {
   t.commit('one', { f: '1\n' });
   mkdirSync(join(t.dir, 'out'));

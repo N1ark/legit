@@ -150,11 +150,12 @@ async function checkApply(git: Git, sha: string): Promise<string[]> {
 
   if (!head || head === c.parents[0]) return [];
   const r = await git.run(
-    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${c.parents[0]}`, head, sha],
+    // -z: paths as they are, not quoted.
+    ['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', `--merge-base=${c.parents[0]}`, head, sha],
     { allowFail: true },
   );
   if (r.code === 1) {
-    const files = r.out.toString('latin1').split('\n').filter(Boolean).slice(1);
+    const files = [...new Set(r.out.toString('latin1').split('\0').filter(Boolean).slice(1))];
     return files.length ? files : tracked;
   }
   if (r.code !== 0) throw new GitError(`Couldn't check the stash against this branch; nothing was changed.\n${r.err.trim()}`);

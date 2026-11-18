@@ -52,6 +52,16 @@ test('edit message, author and co-authors of an old commit', async () => {
   assert.deepEqual(c.coauthors, [{ name: 'Cy', email: 'cy@x.org' }]);
 });
 
+test("an author with <, > or a line break in its name or email is refused: it would make a malformed commit", async () => {
+  const a = commit('one', { f: '1\n' });
+  const head = commit('two', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  for (const author of [{ name: 'Bob <b', email: 'bob@x.org' }, { name: 'Bob', email: 'bob@x.org> <x' }, { name: 'Bob\ncommitter Eve', email: 'e@x.org' }]) {
+    await assert.rejects(repo.edit({ sha: a, subject: 'first', body: '', author, coauthors: [] }), /Name <email>/, author.name);
+  }
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
 test('split lines of a commit into a following commit', async () => {
   const lines = (edit: (l: string[]) => void) => {
     const l = 'abcdefghijklmnopqrst'.split('');
@@ -636,6 +646,31 @@ test('old safety refs are pruned, recent and unrelated ones are kept', async () 
     `refs/legit/backups/main/${now - day}-edit`,
     'refs/legit/backups/main/mine',
   ]);
+});
+
+test('dropping nothing is refused, changing nothing', async () => {
+  commit('one', { f: '1\n' });
+  const head = commit('two', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  await assert.rejects(repo.drop({ shas: [] }), /Select the commits to drop/);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test("pruning is housekeeping: another git holding a lock doesn't stop opening the repo or an operation", async () => {
+  commit('one', { f: '1\n' });
+  const old = `refs/legit/backups/main/${Date.now() - 20 * 24 * 60 * 60 * 1000}-edit`;
+  git('update-ref', old, 'HEAD');
+  // As when a `git pack-refs` or `git gc` runs meanwhile.
+  git('pack-refs', '--all');
+  write('.git/packed-refs.lock', '');
+  const repo = await Repo.open(dir);
+  commit('two', { f: '2\n' });
+  await repo.uncommit();
+  assert.equal(git('log', '-1', '--format=%s'), 'one');
+  rmSync(join(dir, '.git/packed-refs.lock'));
+  await repo.undo();
+  assert.equal(git('log', '-1', '--format=%s'), 'two');
+  assert.equal(git('for-each-ref', '--format=%(refname)', old), '');
 });
 
 test("locate a commit by name: its place in HEAD's first-parent history, or why it isn't there", async () => {
