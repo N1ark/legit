@@ -83,6 +83,7 @@
 
   // Diff + split selection.
   let diff = $state.raw<DiffSummary | null>(null);
+  let diffError = $state<string | null>(null);
   let sel = $state<Record<string, SvelteSet<number>>>({});
   let splitMessage = $state('');
   let where = $state<'before' | 'after'>('after');
@@ -117,7 +118,7 @@
       sel = Object.fromEntries(d.files.map((f) => [f.path, new SvelteSet<number>()]));
       diff = d;
     },
-    (e) => toast.error(e),
+    (e) => (diffError = e instanceof Error ? e.message : String(e)),
   );
 
   const picked = $derived.by(() => {
@@ -403,6 +404,8 @@
         },
       ]}
     />
+  {:else if diffError}
+    <p class="muted loading">Couldn't load the diff: {diffError}</p>
   {:else}
     <p class="muted loading">Loading diff…</p>
   {/if}
