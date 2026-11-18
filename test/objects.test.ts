@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { Git, MAX_RUNNING, type RunOpts, run } from '../src/server/git.ts';
 import { setup } from './util.ts';
@@ -37,4 +39,14 @@ test('git processes past a few at once take turns, the newest first; one with a 
   assert.equal(done[0], 'timed');
   assert.ok(done.indexOf('newer') < done.indexOf('older'));
   assert.ok(done.indexOf('newer') > done.findIndex((d) => d.startsWith('slow')));
+});
+
+test('a git that times out ends then, its own processes too (a remote helper or hook that hangs)', async () => {
+  t.commit('one', { f: '1\n' });
+  const bin = t.tmp('legit-bin-');
+  writeFileSync(join(bin, 'git-remote-stuck'), '#!/bin/sh\nexec sleep 20\n', { mode: 0o755 });
+  const started = Date.now();
+  const r = await run(t.dir, ['fetch', 'stuck::x'], { allowFail: true, timeout: 500, env: { PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(r.code, -1);
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
 });

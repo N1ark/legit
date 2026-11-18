@@ -70,9 +70,13 @@ export function run(cwd: string, args: string[], opts: RunOpts = {}): Promise<Ru
 
 function spawnGit(cwd: string, args: string[], opts: RunOpts): Promise<RunResult> {
   return new Promise((done, fail) => {
+    // One that may time out gets a process group of its own, so its helpers (a remote helper, a hook), which
+    // git leaves running when it's killed and which hold its output open, end with it.
+    const group = !!opts.timeout && process.platform !== 'win32';
     const p = spawn('git', args, {
       cwd,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...opts.env },
+      detached: group,
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -82,7 +86,15 @@ function spawnGit(cwd: string, args: string[], opts: RunOpts): Promise<RunResult
       opts.onErr?.(d.toString('utf8'));
     });
     p.stdin.on('error', () => {});
-    const timer = opts.timeout ? setTimeout(() => p.kill('SIGTERM'), opts.timeout) : undefined;
+    const kill = () => {
+      try {
+        if (group && p.pid) return void process.kill(-p.pid, 'SIGTERM');
+      } catch {
+        // Already gone, or not a group: git alone.
+      }
+      p.kill('SIGTERM');
+    };
+    const timer = opts.timeout ? setTimeout(kill, opts.timeout) : undefined;
     // Spawning in a folder that's gone fails as if git weren't installed.
     p.on('error', (e) => fail(existsSync(cwd) ? e : gitFailure(cwd, args, '', 'ENOENT')));
     p.on('close', (code) => {
