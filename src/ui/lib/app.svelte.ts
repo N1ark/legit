@@ -1111,8 +1111,11 @@ export function shortSha(c: CommitInfo | string) {
 /** A person's avatar at `size` px (doubled for retina), or null for initials. */
 /** Avatars are shown 14 to 22px wide: one size for all, sharp at 2x, so each is downloaded once. */
 const AVATAR_PX = 64;
-/** Downloaded and decoded pictures, held so the browser keeps them ready for every view that shows one. */
-const avatarImages = new Map<string, HTMLImageElement>();
+/**
+ * Downloaded and decoded pictures, held so the browser keeps them ready for every view that shows one;
+ * the most recently shown few hundred (16 KB each decoded), so a long history's thousands of authors don't all stay.
+ */
+const avatarImages = new Lru<string, HTMLImageElement>(500);
 
 /** The one URL an avatar is shown from, once it's downloaded and decoded; null if it won't load. */
 async function preloadAvatar(url: string): Promise<string | null> {
@@ -1131,5 +1134,8 @@ async function preloadAvatar(url: string): Promise<string | null> {
 
 /** Avatar URL for `email`, the same at every size (so a picture loaded once shows everywhere at once). */
 export function avatarUrl(email: string, _size?: number): string | null {
-  return app.avatars[email.trim().toLowerCase()] ?? null;
+  const src = app.avatars[email.trim().toLowerCase()] ?? null;
+  // Shown again: the last to be let go.
+  if (src) avatarImages.get(src);
+  return src;
 }
