@@ -595,6 +595,7 @@
                   : mode === 'upstream'
                     ? 'Remote branch, or a new name…'
                   : 'Branch…'}
+        aria-label={mode === 'commits' ? 'Filter commits' : 'Filter branches'}
         spellcheck="false"
         class="field-input mono"
       />

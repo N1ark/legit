@@ -218,6 +218,7 @@
         oninput={() => (picked = null)}
         {onkeydown}
         placeholder="Filter…"
+        aria-label="Filter"
         spellcheck="false"
         class="field-input"
       />

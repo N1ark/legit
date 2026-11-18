@@ -315,6 +315,7 @@
         class="field-input subject"
         bind:value={subject}
         placeholder="Commit title"
+        aria-label="Commit title"
         spellcheck="true"
         onblur={() => editing === 'subject' && (editing = null)}
         {@attach focusEnd}
@@ -337,6 +338,7 @@
         class="field-input body"
         bind:value={body}
         placeholder="Description"
+        aria-label="Description"
         rows="3"
         spellcheck="true"
         onblur={() => editing === 'body' && (editing = null)}

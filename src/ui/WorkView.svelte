@@ -248,7 +248,7 @@
       }}
       {@attach refComplete}
     />
-    <textarea class="field-input body" bind:value={body} placeholder="Description" rows="2" spellcheck="true" {@attach refComplete}></textarea>
+    <textarea class="field-input body" bind:value={body} placeholder="Description" aria-label="Description" rows="2" spellcheck="true" {@attach refComplete}></textarea>
     <div class="people">
       <span class="muted label">Co-authors</span>
       <Coauthors bind:value={coauthors} />

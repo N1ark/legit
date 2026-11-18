@@ -127,8 +127,8 @@
     {#if editable}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="form" oninput={() => (edited = true)}>
-        <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" {@attach refComplete} />
-        <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true" {@attach refComplete}></textarea>
+        <input class="field-input subject" bind:value={subject} placeholder="Commit title" aria-label="Commit title" spellcheck="true" {@attach refComplete} />
+        <textarea class="field-input body" bind:value={body} placeholder="Description" aria-label="Description" rows="6" spellcheck="true" {@attach refComplete}></textarea>
         <div class="people">
           <span class="muted label">Co-authors</span>
           <Coauthors bind:value={coauthors} oninput={() => (edited = true)} />
