@@ -44,12 +44,16 @@ function saveCache(map: Map<string, Entry>) {
 
 /** owner/repo of the first github.com remote (origin preferred). */
 async function githubRepo(git: Git): Promise<string | null> {
-  const remotes = (await git.text(['remote'], { allowFail: true })).split('\n').filter(Boolean);
-  remotes.sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
+  // Every remote's URL as `remote get-url` gives it (url.<base>.insteadOf applied), from one git: `<name>\t<url> (fetch)`.
+  const urls = new Map<string, string>();
+  for (const line of (await git.text(['remote', '-v'], { allowFail: true })).split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab > 0 && line.endsWith(' (fetch)') && !urls.has(line.slice(0, tab))) urls.set(line.slice(0, tab), line.slice(tab + 1, -' (fetch)'.length));
+  }
+  const remotes = [...urls.keys()].sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
   for (const r of remotes) {
-    const url = await git.text(['remote', 'get-url', r], { allowFail: true });
     // github.com itself, not a host whose name ends like it (a GitHub Enterprise server's).
-    const repo = repoOf(url);
+    const repo = repoOf(urls.get(r)!);
     if (repo) return repo;
   }
   return null;
