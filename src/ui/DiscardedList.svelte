@@ -2,16 +2,23 @@
   // The backups panel's "Discarded changes": what each discard threw away, ready to put back.
   import { Button, ConfirmButton, formatFull, formatRelative, tooltip } from 'purr';
   import type { Discarded } from '../shared/types.ts';
-  import { app } from './lib/app.svelte.ts';
+  import { app, request } from './lib/app.svelte.ts';
   import { names, restoreDiscarded } from './lib/discard.ts';
   import { tip } from './lib/tip.ts';
 
+  let error = $state<string | null>(null);
   let list = $state<Discarded[] | null>(null);
   /** Files that changed since the discard, by ref: putting those back needs a confirmed overwrite. */
   let conflicts = $state<Record<string, string[]>>({});
 
   async function load() {
-    list = await fetch('/api/discarded').then((r) => r.json());
+    // A failure says why, rather than showing as an empty list.
+    try {
+      list = await request<Discarded[]>('/api/discarded');
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
   load();
 
@@ -31,7 +38,9 @@
   <b>Discarded changes</b>
   <span class="muted" use:tooltip={'Saved before every discard, in refs/legit/discarded'}>kept two weeks</span>
 </div>
-{#if list === null}
+{#if error && list === null}
+  <p class="muted">Couldn't load them: {error}</p>
+{:else if list === null}
   <p class="muted">Loading…</p>
 {:else if !list.length}
   <p class="muted">None lately.</p>

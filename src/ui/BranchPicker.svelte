@@ -183,8 +183,14 @@
   }
 
   function apply(l: BranchInfo[], r: RemoteBranchInfo[], d: DeletedBranch[], names: string[] | null) {
+    // The cursor stays on its branch as the list reloads (a fetch adding branches above it), so ↵ picks what it shows.
+    const at = rows[active] ? key(rows[active]) : null;
     [local, remote, deleted] = [l, r, d];
     if (names) remoteNames = names;
+    if (at !== null) {
+      const k = rows.findIndex((x) => key(x) === at);
+      active = k >= 0 ? k : Math.max(0, Math.min(active, rows.length - 1));
+    }
     const left = new Set([...l.map((b) => `local:${b.name}`), ...r.map((b) => `remote:${b.ref}`)]);
     for (const k of [...chosen]) if (!left.has(k)) chosen.delete(k);
   }
@@ -486,6 +492,8 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // An input method's own keys (↵ picks what's being composed).
+    if (e.isComposing) return;
     if (mode === 'commits') return onCommitsKey(e);
     const field = e.currentTarget as HTMLInputElement;
     if (e.key === 'ArrowRight' && mode === 'switch' && field.selectionStart === field.value.length) {
@@ -587,6 +595,7 @@
                   : mode === 'upstream'
                     ? 'Remote branch, or a new name…'
                   : 'Branch…'}
+        aria-label={mode === 'commits' ? 'Filter commits' : 'Filter branches'}
         spellcheck="false"
         class="field-input mono"
       />

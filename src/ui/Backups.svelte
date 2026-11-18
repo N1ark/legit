@@ -4,16 +4,24 @@
   import type { Backup } from '../shared/types.ts';
   import DiscardedList from './DiscardedList.svelte';
   import Markdown from './Markdown.svelte';
-  import { app, shortSha } from './lib/app.svelte.ts';
+  import { app, request, shortSha } from './lib/app.svelte.ts';
 
   let open = $state(false);
+  let error = $state<string | null>(null);
   let list = $state<Backup[] | null>(null);
   let button = $state<HTMLButtonElement | null>(null);
 
   async function toggle(e: MouseEvent & { currentTarget: HTMLButtonElement }) {
     button = e.currentTarget;
     open = !open;
-    if (open) list = await fetch('/api/backups').then((r) => r.json());
+    if (!open) return;
+    // A failure says why, rather than showing as an empty list.
+    try {
+      list = await request<Backup[]>('/api/backups');
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
 
   async function restore(b: Backup) {
@@ -46,7 +54,9 @@
     <div class="head">
       <b use:tooltip={'Taken before every operation, in refs/legit/backups'}>Backups</b>
     </div>
-    {#if list === null}
+    {#if error && list === null}
+      <p class="muted">Couldn't load them: {error}</p>
+    {:else if list === null}
       <p class="muted">Loading…</p>
     {:else if !list.length}
       <p class="muted">None for this branch yet.</p>

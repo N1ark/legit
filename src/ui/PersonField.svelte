@@ -32,6 +32,7 @@
     {oninput}
     list="people"
     placeholder="Name <email@example.com>"
+    aria-label={id ? undefined : 'Co-author'}
     aria-invalid={invalid}
     disabled={readonly}
   />

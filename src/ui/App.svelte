@@ -12,6 +12,7 @@
     ToastHost,
     toast,
     createKeymap,
+    hasOverlay,
     isTyping,
     persisted,
     tooltip,
@@ -225,6 +226,8 @@
     else if (action === 'comment') reviews.commentKey();
     else if (action === 'prs') inbox.toggle();
     else if (action === 'settings') settings = 'syntax';
+    // Over another overlay (the settings, a dialog), ⌘F and ⌘G are its own, or the browser's; the find bar is one itself.
+    else if ((action === 'find' || action === 'findNext' || action === 'findPrev') && hasOverlay() && !finder.focused) return false;
     else if (action === 'find') finder.start();
     else if (action === 'sideBySide') sideBySide.value = !sideBySide.value;
     else if (action === 'findNext' || action === 'findPrev') {

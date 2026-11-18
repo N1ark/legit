@@ -177,6 +177,8 @@
   const switches = (r: Row) => r.kind === 'open' || r.kind === 'clone' || (r.kind === 'recent' && !r.r.current) || (r.kind === 'worktree' && !r.w.current && !r.w.missing);
 
   function onkeydown(e: KeyboardEvent) {
+    // An input method's own keys (↵ picks what's being composed).
+    if (e.isComposing) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const n = rows.length;
@@ -216,6 +218,7 @@
         oninput={() => (picked = null)}
         {onkeydown}
         placeholder="Filter…"
+        aria-label="Filter"
         spellcheck="false"
         class="field-input"
       />

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Avatar, Button, ConfirmButton, Kbd, hasOverlay, matches } from 'purr';
   import { ArrowsMergeRegular, StackRegular, TrashRegular } from 'purr/glyphs';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
@@ -32,6 +32,18 @@
   const people = $derived(parsePeople(coauthors));
   const valid = $derived(subject.trim() !== '' && people !== null);
   $effect(() => app.keep('squash', () => (edited ? { key, subject, body, coauthors } : null)));
+  // Looking at one commit and selecting these again finds the message as it was edited.
+  // (The selection as last shown: by the time it goes, the selection is another.)
+  let shownKey = '';
+  $effect.pre(() => {
+    shownKey = key;
+  });
+  onDestroy(() => {
+    if (!edited) return;
+    const kept: Kept = { key: shownKey, subject, body, coauthors };
+    // Not once they're squashed (gone from the list), checked once the change that took this view away is through.
+    queueMicrotask(() => kept.key.split(' ').every((s) => app.bySha.has(s)) && app.park('squash', kept));
+  });
 
   function reset() {
     const f = squashFields(commits);
@@ -117,8 +129,8 @@
     {#if editable}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="form" oninput={() => (edited = true)}>
-        <input class="field-input subject" bind:value={subject} placeholder="Commit title" spellcheck="true" {@attach refComplete} />
-        <textarea class="field-input body" bind:value={body} placeholder="Description" rows="6" spellcheck="true" {@attach refComplete}></textarea>
+        <input class="field-input subject" bind:value={subject} placeholder="Commit title" aria-label="Commit title" spellcheck="true" {@attach refComplete} />
+        <textarea class="field-input body" bind:value={body} placeholder="Description" aria-label="Description" rows="6" spellcheck="true" {@attach refComplete}></textarea>
         <div class="people">
           <span class="muted label">Co-authors</span>
           <Coauthors bind:value={coauthors} oninput={() => (edited = true)} />
