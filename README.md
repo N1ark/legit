@@ -240,7 +240,7 @@ npm run check      # svelte-check + tsc
   what the page asked the app to keep for coming back): the one kept from showing it before, or else a spare, started
   ahead of need and told the repo on its stdin (another spare starts a few seconds later). The old server keeps running,
   up to three of them, the least recently shown stopped first, so going back to a repo starts nothing and finds the
-  server's caches, and the page's (same origin), warm. A server exits only
+  server's caches, and the page's (same origin), warm (one not shown for a minute keeps only the diffs it showed last). A server exits only
   after any running operation has finished (or when the app dies, since it holds the server's stdin). The recent list
   is `recent-repos` in the app's config dir. The page can call only eight app commands (`capabilities/default.json`):
   list the recent repos, open one *from that list*, open another of the shown repo's worktrees (as `git worktree list`

@@ -59,6 +59,8 @@ export function prefetchPrview(number: number) {
   if (hit && Date.now() - hit.at < PREFETCHED) return;
   const value = ghRequest<PrOverview>('prview', { number });
   value.then(keepPrview, () => {});
+  // One never opened (its card was only shown) would otherwise stay for good, a whole overview each.
+  for (const [n, p] of prviews) if (Date.now() - p.at >= PREFETCHED) prviews.delete(n);
   prviews.set(number, { at: Date.now(), value });
 }
 

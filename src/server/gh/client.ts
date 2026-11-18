@@ -249,8 +249,18 @@ export function rest<T = any>(method: string, path: string, body?: unknown, opts
 /** REST GETs' last answers with their ETags, asked for again with `If-None-Match`: a 304 costs no rate limit. */
 const etags = new Map<string, { etag: string; body: string }>();
 const ETAGS = 200;
-/** Bigger answers aren't kept. */
+/** Bigger answers aren't kept, and those kept take about this much in all (200 big ones would be 50 MB). */
 const ETAG_BODY = 256 * 1024;
+const ETAG_BYTES = 8 * 1024 * 1024;
+let etagBytes = 0;
+
+/** Forget `key`'s kept answer. */
+function dropEtag(key: string) {
+  const e = etags.get(key);
+  if (!e) return;
+  etags.delete(key);
+  etagBytes -= e.body.length;
+}
 
 async function restCall<T>(method: string, path: string, body: unknown, opts: RestOpts): Promise<T> {
   const key = method === 'GET' && !opts.text ? `${path}\0${opts.accept ?? ''}` : null;
@@ -266,8 +276,9 @@ async function restCall<T>(method: string, path: string, body: unknown, opts: Re
   }, method === 'GET' || !!opts.safe);
   if (key && hit && res.status === 304) {
     // Most recently used last, so the oldest is the one dropped.
-    etags.delete(key);
+    dropEtag(key);
     etags.set(key, hit);
+    etagBytes += hit.body.length;
     return JSON.parse(hit.body) as T;
   }
   if (!res.ok) throw await failure(res, path);
@@ -275,10 +286,16 @@ async function restCall<T>(method: string, path: string, body: unknown, opts: Re
   if (opts.text) return (await res.text()) as T;
   const text = await res.text();
   if (key) {
-    etags.delete(key);
+    dropEtag(key);
     const etag = res.headers.get('etag');
-    if (etag && text.length <= ETAG_BODY) etags.set(key, { etag, body: text });
-    if (etags.size > ETAGS) etags.delete(etags.keys().next().value!);
+    if (etag && text.length <= ETAG_BODY) {
+      etags.set(key, { etag, body: text });
+      etagBytes += text.length;
+    }
+    for (const k of etags.keys()) {
+      if (etags.size <= ETAGS && etagBytes <= ETAG_BYTES) break;
+      dropEtag(k);
+    }
   }
   return JSON.parse(text) as T;
 }

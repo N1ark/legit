@@ -720,6 +720,7 @@ const CLOSE = /^>{7}(?: |\r?$)/;
 
 /** What a click on a conflict replaced, per file, so its toast can undo it (one step). */
 const keptBlocks = new Map<string, { before: Buffer; staged: boolean; id: string }>();
+const MAX_KEPT_BLOCKS = 20;
 
 /** A conflicted file of the repo's working tree, as a byte path and a file path, refused unless unmerged. */
 async function conflictedFile(git: Git, path: string): Promise<{ raw: string; file: string }> {
@@ -818,7 +819,11 @@ export function resolveBlock(repo: Repo, req: { path?: string; line?: number; si
     await writeFile(file, Buffer.from(after, 'latin1'));
     const staged = !MARKERS.test(after);
     if (staged) await git.run(['--literal-pathspecs', 'add', '-A', '-f', '--', path]);
-    keptBlocks.set(`${git.root}\0${raw}`, { before, staged, id: String(req.id ?? '') });
+    const key = `${git.root}\0${raw}`;
+    keptBlocks.delete(key);
+    keptBlocks.set(key, { before, staged, id: String(req.id ?? '') });
+    // Each holds a whole file, for a toast's undo: the last few files' are plenty.
+    if (keptBlocks.size > MAX_KEPT_BLOCKS) keptBlocks.delete(keptBlocks.keys().next().value!);
     return done(repo, `Kept ${what} in ${path}${staged ? "; no conflicts are left in it, so it's marked resolved" : ''}.`);
   });
 }

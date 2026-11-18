@@ -122,6 +122,10 @@ const MAX_IMAGE = 50 * 1024 * 1024;
 /** Summaries kept, and how much of their JSON in all. */
 const MAX_SUMMARIES = 100;
 const MAX_SUMMARY_BYTES = 16 * 1024 * 1024;
+/** What's left of them once no page has shown the repository for `IDLE_MS` (see `Repo.trim`). */
+const IDLE_SUMMARIES = 20;
+const IDLE_SUMMARY_BYTES = 2 * 1024 * 1024;
+const IDLE_MS = 60_000;
 
 /** Most changed paths checked for being ignored at once; past that, a change is just assumed to count. */
 const MAX_CHECKED = 2000;
@@ -414,14 +418,32 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
     if (summaries.has(key)) return json;
     summaries.set(key, json);
     summaryBytes += json.length;
+    evictSummaries(MAX_SUMMARIES, MAX_SUMMARY_BYTES, key);
+    return json;
+  }
+
+  /** Drop summaries, least recently used first, down to `max` of them and `budget` bytes, but never `keep`'s. */
+  function evictSummaries(max: number, budget: number, keep: string | undefined) {
     for (const [k, v] of summaries) {
-      if (summaries.size <= MAX_SUMMARIES && summaryBytes <= MAX_SUMMARY_BYTES) break;
-      if (k === key) continue;
+      if (summaries.size <= max && summaryBytes <= budget) break;
+      if (k === keep) continue;
       summaries.delete(k);
       summaryBytes -= v.length;
     }
-    return json;
   }
+
+  // With no page on it for a while (the app's window shows another repository, and keeps this server
+  // for coming back), most of what's cached goes: coming back needs what was on screen, not every diff seen.
+  let idleTimer: NodeJS.Timeout | undefined;
+  const idleSoon = () => {
+    clearTimeout(idleTimer);
+    if (clients.size) return;
+    idleTimer = setTimeout(() => {
+      if (clients.size) return;
+      repo.trim();
+      evictSummaries(IDLE_SUMMARIES, IDLE_SUMMARY_BYTES, [...summaries.keys()].at(-1));
+    }, IDLE_MS).unref();
+  };
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
     if (path === '/api/logs') return send(res, 200, JSON.stringify(logText()));
@@ -430,7 +452,8 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write(`event: gone\ndata: ${JSON.stringify(await gone)}\n\n`);
       clients.add(res);
-      req.on('close', () => (clients.delete(res), leaveIfUnwatched()));
+      clearTimeout(idleTimer);
+      req.on('close', () => (clients.delete(res), leaveIfUnwatched(), idleSoon()));
       return;
     }
     if (path === '/api/state') return send(res, 200, await repo.state());
@@ -636,6 +659,7 @@ export function serve(repo: Repo, opts: ServeOpts): Promise<{ url: string; close
           clearTimeout(rescanTimer);
           clearInterval(checking);
           clearTimeout(goneTimer);
+          clearTimeout(idleTimer);
           stopProgress();
           for (const c of clients) c.end();
           server.close();

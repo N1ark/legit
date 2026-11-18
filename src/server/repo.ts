@@ -38,6 +38,9 @@ const BACKUPS = 'refs/legit/backups';
 /** Parsed diffs kept, and about how much memory they may take together. */
 const MAX_DIFFS = 200;
 const MAX_DIFF_BYTES = 128 * 1024 * 1024;
+/** What `trim` leaves of them: about what coming back to the repository shows first. */
+const IDLE_DIFFS = 20;
+const IDLE_DIFF_BYTES = 16 * 1024 * 1024;
 /** A file changed this recently (ms) may change again within its time's resolution (a second, on some file systems). */
 const RACY = 2000;
 
@@ -48,6 +51,8 @@ const RACY = 2000;
 const MAX_SNAPSHOTS = 20;
 const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MIN_SNAPSHOTS = 4;
+/** What `trim` leaves of them, past the newest. */
+const IDLE_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 /** Roughly what a parsed diff takes in memory: its lines' text, and an object for each. */
 const diffBytes = (d: CommitDiff) => {
@@ -453,16 +458,31 @@ export class Repo {
         entry.bytes = diffBytes(d);
         this.diffsBytes += entry.bytes;
         // A huge commit's parsed diff takes a few times its patch: keep this one, and as many others as fit.
-        for (const [k, e] of this.diffs) {
-          if (this.diffs.size <= MAX_DIFFS && this.diffsBytes <= MAX_DIFF_BYTES) break;
-          if (e === entry) continue;
-          this.diffs.delete(k);
-          this.diffsBytes -= e.bytes;
-        }
+        this.evictDiffs(MAX_DIFFS, MAX_DIFF_BYTES, entry);
       },
       () => this.diffs.get(sha) === entry && this.diffs.delete(sha),
     );
     return diff;
+  }
+
+  /** Drop parsed diffs, least recently used first, down to `max` of them and about `budget` bytes, but never `keep`. */
+  private evictDiffs(max: number, budget: number, keep: unknown) {
+    for (const [k, e] of this.diffs) {
+      if (this.diffs.size <= max && this.diffsBytes <= budget) break;
+      if (e === keep) continue;
+      this.diffs.delete(k);
+      this.diffsBytes -= e.bytes;
+    }
+  }
+
+  /**
+   * Nothing has shown this repository for a while (the app's window went to another, and keeps this
+   * server for coming back): keep only the diffs used last, the one that was on screen among them.
+   */
+  trim() {
+    this.evictDiffs(IDLE_DIFFS, IDLE_DIFF_BYTES, [...this.diffs.values()].at(-1));
+    // A page that comes back (or connects again) reads its changes again, getting the newest's key if they're the same.
+    this.evictSnapshots(1, MIN_SNAPSHOTS, IDLE_SNAPSHOT_BYTES);
   }
 
   /**
@@ -1193,16 +1213,21 @@ export class Repo {
       const bytes = diffBytes(d);
       this.snapshotBytes.set(key, bytes);
       this.snapshotsBytes += bytes;
-      for (const k of this.snapshots.keys()) {
-        if (this.snapshots.size <= MIN_SNAPSHOTS || (this.snapshots.size <= MAX_SNAPSHOTS && this.snapshotsBytes <= MAX_SNAPSHOT_BYTES)) break;
-        this.snapshots.delete(k);
-        this.snapshotsBytes -= this.snapshotBytes.get(k)!;
-        this.snapshotBytes.delete(k);
-      }
+      this.evictSnapshots(MIN_SNAPSHOTS, MAX_SNAPSHOTS, MAX_SNAPSHOT_BYTES);
       while (this.snapshotIds.size > 40) this.snapshotIds.delete(this.snapshotIds.keys().next().value!);
     }
     d.sha = key;
     return this.snapshots.get(key)!;
+  }
+
+  /** Drop snapshots, least recently used first, down to `max` and about `budget` bytes, but never below `min`. */
+  private evictSnapshots(min: number, max: number, budget: number) {
+    for (const k of this.snapshots.keys()) {
+      if (this.snapshots.size <= min || (this.snapshots.size <= max && this.snapshotsBytes <= budget)) break;
+      this.snapshots.delete(k);
+      this.snapshotsBytes -= this.snapshotBytes.get(k)!;
+      this.snapshotBytes.delete(k);
+    }
   }
 
   /**
