@@ -6,7 +6,7 @@
 <script lang="ts">
   import { Button, ConfirmButton, IconButton, Kbd, Segmented, Tag, formatAbsolute, hasOverlay, isTyping, matches, toast, tooltip } from 'purr';
   import { ArrowCounterClockwiseRegular, ArrowUUpLeftRegular, ChatCircleTextRegular, CheckBold, CloudCheckRegular, EraserRegular, GitMergeRegular, PencilSimpleLineRegular, ScissorsRegular, TrashRegular, XRegular } from 'purr/glyphs';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { CommitInfo, DiffSummary, Selection } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
@@ -29,7 +29,7 @@
   // Metadata form, initialised from the commit (the view is re-created when the commit changes), or
   // as it was left when the window last showed this repo.
   const init = untrack(() => commit);
-  const back = app.restore<Kept>('commit', (k) => k.sha === init.sha);
+  const back = app.restore<Kept>(`commit:${init.sha}`) ?? app.restore<Kept>('commit', (k) => k.sha === init.sha);
   let subject = $state(back?.subject ?? init.subject);
   let body = $state(back?.body ?? init.body);
   let author = $state(back?.author ?? fmt(init.author));
@@ -193,6 +193,16 @@
       sha: commit.sha, subject, body, author, coauthors, position: diffView?.position() ?? null,
     })),
   );
+  // Another commit shown with this one's message edited: coming back to it finds the edits (its diff at the top, as
+  // for any commit shown anew). Not once it's gone from the list (saved, so rewritten).
+  onDestroy(() => {
+    const edited = subject !== init.subject || body !== init.body || author.trim() !== fmt(init.author) ||
+      coauthors.filter((s) => s.trim()).join('\n') !== init.coauthors.map(fmt).join('\n');
+    if (!edited) return;
+    const kept: Kept = { sha: init.sha, subject, body, author, coauthors, position: null };
+    // Once the change that took this view away is through (read during it, the list is still as it was).
+    queueMicrotask(() => app.bySha.has(init.sha) && app.park(`commit:${init.sha}`, kept));
+  });
   const isHead = $derived(commit.sha === app.repo?.head);
 
   async function copySha() {

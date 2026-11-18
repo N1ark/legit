@@ -4,7 +4,7 @@
   // it right away (only the index changes). Discarding is in the menus.
   import { Button, Checkbox, ConfirmButton, Kbd, hasOverlay, matches, toast, tooltip } from 'purr';
   import { ArrowDownRegular, ArrowUpRegular, CheckBold, TrashRegular } from 'purr/glyphs';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
@@ -153,6 +153,10 @@
   // Amending starts from the last commit's message; turning it off brings back what was typed.
   let typed: { subject: string; own: boolean; body: string; coauthors: string[] } | null = back?.typed ?? null;
   $effect(() => app.keep('work', (): Kept => ({ subject, own, body, coauthors, amend, typed })));
+  // Looking at a commit and coming back finds the message as it was left.
+  onDestroy(() => {
+    if (subject || body || coauthors.some((c) => c.trim()) || amend) app.park('work', { subject, own, body, coauthors, amend, typed } satisfies Kept);
+  });
   function toggleAmend() {
     if (!head) return;
     amend = !amend;

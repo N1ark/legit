@@ -175,6 +175,14 @@ class App {
     };
   }
 
+  /**
+   * A view going away (another commit selected, say) leaves `value` under `key`, for `restore` to find when
+   * it's shown again in this window, or after a switch to another repo and back (an unsaved message).
+   */
+  park(key: string, value: unknown) {
+    this.kept[key] = value;
+  }
+
   /** What was kept under `key`, once (only if `fits` it). */
   restore<T>(key: string, fits: (v: T) => boolean = () => true): T | undefined {
     const v = this.kept[key] as T | undefined;
@@ -191,7 +199,8 @@ class App {
       anchor: this.anchor,
       stash: this.stash,
       expanded: Object.keys(this.expanded),
-      views: Object.fromEntries([...this.keepers].map(([k, get]) => [k, get()])),
+      // What views left as they went (see `park`), and what those shown would keep.
+      views: { ...this.kept, ...Object.fromEntries([...this.keepers].map(([k, get]) => [k, get()])) },
     };
   }
 
