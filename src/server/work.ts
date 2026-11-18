@@ -248,6 +248,11 @@ export function unstagedPaths(out: Buffer): Set<string> {
 const changedLines = (f: FileDiff) => f.added + f.removed;
 const allLines = (f: FileDiff) => Array.from({ length: Math.max(1, changedLines(f)) }, (_, k) => k);
 const isZero = (sha: string) => /^0+$/.test(sha);
+/** A `diff-index` (HEAD to working tree) record of a file whose stat differs from its index entry's: its new side has no SHA (a submodule's is about what's in it). */
+const touched = (r: Raw) => {
+  const [oldMode, newMode, , newSha, status] = r.meta.split(' ');
+  return isZero(newSha) && status !== 'D' && oldMode !== GITLINK && newMode !== GITLINK;
+};
 
 /**
  * Every uncommitted change as one diff per file, HEAD to the working tree, then untracked
@@ -256,10 +261,9 @@ const isZero = (sha: string) => /^0+$/.test(sha);
  */
 export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDiff; index: string }> {
   const last = listed.get(git);
-  const [raw, cached, files, status, others, subStatus] = await Promise.all([
+  const [raw, cached, status, others, subStatus] = await Promise.all([
     git.run(['diff-index', '-r', '-z', '-M', '--full-index', '--raw', 'HEAD'], { env: NO_LOCKS }),
     git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
-    git.run(['diff-files', '-r', '-z', '--no-renames', '--raw'], { env: NO_LOCKS }),
     git.run(['status', '--porcelain=v2', '-z', '--untracked-files=no', '--no-renames'], { env: NO_LOCKS }),
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
     submoduleStatus(git),
@@ -273,7 +277,8 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
       .filter(Boolean)
       .map((p) => (p.endsWith('/') ? (nested.add(p.slice(0, -1)), p.slice(0, -1)) : p)),
   );
-  const { d, patches } = await headToFiles(git, key, rawList(raw.out), [...untrackedPaths], last?.patches);
+  const rawFiles = rawList(raw.out);
+  const { d, patches } = await headToFiles(git, key, rawFiles, [...untrackedPaths], last?.patches);
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
   const states = submoduleStates(subStatus ?? status.out);
   // A submodule with only untracked files inside: no diff lists it.
@@ -301,7 +306,9 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
   // What differs from the index by content, not just by stat (a touched file), without taking the index's lock.
   const unstaged = unstagedPaths(status.out);
   // Only files that were merely touched are refreshed, the one time: the lock would fail a git the user runs meanwhile.
-  if ([...rawRecords(files.out).keys()].some((p) => !unstaged.has(p))) await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
+  // diff-index names a file whose stat differs from its index entry's with no SHA on the working-tree side (as diff-files
+  // would list it): one whose content doesn't differ (status says) was merely touched. Read so, without another look at every file.
+  if (rawFiles.some((r) => touched(r) && !unstaged.has(r.paths.at(-1)!))) await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const shown = new Set(d.files.map((f) => f.path));
   const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
 
