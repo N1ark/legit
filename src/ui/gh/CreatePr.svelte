@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** Titles and descriptions typed in and closed without creating, by branch: opening it again finds them. */
+  const left = new Map<string, { title: string; body: string; draft: boolean }>();
+</script>
+
 <script lang="ts">
   // "Create pull request" for the current branch: its title and description start from its
   // commits since the base (one commit: its message; several: the branch's name and their
@@ -6,7 +11,7 @@
   // have all of it.
   import { Button, Checkbox, Field, Kbd, Modal, Spinner, TextArea, TextField, matches, toast } from 'purr';
   import { GitPullRequestRegular } from 'purr/glyphs';
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { app } from '../lib/app.svelte.ts';
   import { ghRequest } from '../lib/github.svelte.ts';
   import { prDraft } from '../lib/gh-pr.ts';
@@ -21,13 +26,19 @@
   const branch = app.repo?.branch ?? '';
   let info = $state.raw<PrCreateInfo | null>(null);
   let base = $state('');
-  let title = $state('');
-  let body = $state('');
-  let draft = $state(false);
+  const kept = left.get(branch);
+  let title = $state(kept?.title ?? '');
+  let body = $state(kept?.body ?? '');
+  let draft = $state(kept?.draft ?? false);
   let sending = $state(false);
   let titleInput = $state<HTMLInputElement | null>(null);
   /** Title or description typed in: a new base no longer replaces them. */
-  let edited = false;
+  let edited = !!kept;
+  let created = false;
+  onDestroy(() => {
+    if (edited && !created) left.set(branch, { title, body, draft });
+    else left.delete(branch);
+  });
 
   async function load(wanted?: string) {
     try {
@@ -62,7 +73,10 @@
     if (!title.trim() || !base || sending || empty) return;
     sending = true;
     const pr = await createPr({ title: title.trim(), body, base, draft }).finally(() => (sending = false));
-    if (pr) onclose();
+    if (pr) {
+      created = true;
+      onclose();
+    }
   }
 
   function onkeydown(e: KeyboardEvent) {
