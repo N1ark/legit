@@ -91,3 +91,29 @@ test("listing uncommitted changes takes the index's lock only to refresh files t
   assert.deepEqual(await paths(), [['a', 'none']]);
   assert.equal(refreshes.length, 1);
 });
+
+test('listing uncommitted changes looks at only the staged files a second time, and says the same of them as a look at every file', async () => {
+  const { git, write, commit } = t;
+  commit('base', { a: 'a\n', b: 'b\n', c: 'c\n', d: 'd\n' });
+  const repo = await Git.open(t.dir);
+  const statuses: string[][] = [];
+  const run = repo.run.bind(repo);
+  repo.run = (args: string[], opts?: RunOpts) => {
+    if (args.includes('status')) statuses.push(args.slice(args.indexOf('--') + 1 || args.length));
+    return run(args, opts);
+  };
+  const stages = async () => (await workDiff(repo, '')).diff.files.map((f) => [f.path, f.stage]);
+  // Nothing staged: the diff from HEAD says it all.
+  write('a', 'A\n');
+  assert.deepEqual(await stages(), [['a', 'none']]);
+  assert.deepEqual(statuses.splice(0), []);
+  // Staged wholly, staged and changed again, and staged then changed back.
+  write('b', 'B\n');
+  write('c', 'C\n');
+  write('d', 'D\n');
+  git('add', 'b', 'c', 'd');
+  write('c', 'CC\n');
+  write('d', 'd\n');
+  assert.deepEqual(await stages(), [['a', 'none'], ['b', 'all'], ['c', 'some'], ['d', 'some']]);
+  assert.deepEqual(statuses.splice(0), [['b', 'c', 'd']]);
+});

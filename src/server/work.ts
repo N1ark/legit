@@ -248,11 +248,43 @@ export function unstagedPaths(out: Buffer): Set<string> {
 const changedLines = (f: FileDiff) => f.added + f.removed;
 const allLines = (f: FileDiff) => Array.from({ length: Math.max(1, changedLines(f)) }, (_, k) => k);
 const isZero = (sha: string) => /^0+$/.test(sha);
+/** A `--raw` record of a submodule (on either side). */
+const isLink = (r: Raw) => {
+  const [oldMode, newMode] = r.meta.split(' ');
+  return oldMode === GITLINK || newMode === GITLINK;
+};
 /** A `diff-index` (HEAD to working tree) record of a file whose stat differs from its index entry's: its new side has no SHA (a submodule's is about what's in it). */
 const touched = (r: Raw) => {
-  const [oldMode, newMode, , newSha, status] = r.meta.split(' ');
-  return isZero(newSha) && status !== 'D' && oldMode !== GITLINK && newMode !== GITLINK;
+  const [, , , newSha, status] = r.meta.split(' ');
+  return isZero(newSha) && status !== 'D' && !isLink(r);
 };
+
+/** What's staged, by path, from `diff-index --cached --raw` records (see `rawRecords`). */
+function stagedFiles(records: Map<string, string[]>): Map<string, Staged> {
+  const staged = new Map<string, Staged>();
+  for (const [path, [, mode, , sha, status, from]] of records) {
+    staged.set(path, { mode, sha, gone: status === 'D' });
+    // A staged rename's old path is a staged deletion.
+    if (status[0] === 'R') staged.set(from, { mode: '000000', sha: '0'.repeat(sha.length), gone: true });
+  }
+  return staged;
+}
+
+/** Past this many files, status looks at every file rather than at those named. */
+const MAX_STATUS_PATHS = 1000;
+
+/**
+ * `status --porcelain=v2 -z --untracked-files=no --no-renames` of only `paths` (nothing to run for none),
+ * and which it looked at: null for every file, when they're too many or can't all be named.
+ */
+async function trackedStatus(git: Git, paths: string[]): Promise<{ out: Buffer; asked: Set<string> | null }> {
+  if (!paths.length) return { out: Buffer.alloc(0), asked: new Set() };
+  // Arguments reach git as UTF-8: a path that isn't can't be named.
+  const named = paths.length <= MAX_STATUS_PATHS && paths.every((p) => fromUtf8(toUtf8(p)) === p);
+  const args = ['status', '--porcelain=v2', '-z', '--untracked-files=no', '--no-renames'];
+  const { out } = await git.run(named ? ['--literal-pathspecs', ...args, '--', ...paths.map(toUtf8)] : args, { env: NO_LOCKS });
+  return { out, asked: named ? new Set(paths) : null };
+}
 
 /**
  * Every uncommitted change as one diff per file, HEAD to the working tree, then untracked
@@ -261,13 +293,23 @@ const touched = (r: Raw) => {
  */
 export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDiff; index: string }> {
   const last = listed.get(git);
-  const [raw, cached, status, others, subStatus] = await Promise.all([
+  const listing = git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS });
+  // Status (another look at every file) only of the files staged: any other's index entry is HEAD's, so the diff from HEAD says how its file differs.
+  const staging = listing.then((c) => {
+    const records = rawRecords(c.out);
+    return trackedStatus(git, [...stagedFiles(records).keys()]).then((status) => ({ records, status }));
+  });
+  const [raw, cached, { records, status: first }, others, subStatus] = await Promise.all([
     git.run(['diff-index', '-r', '-z', '-M', '--full-index', '--raw', 'HEAD'], { env: NO_LOCKS }),
-    git.run(['diff-index', '--cached', '-r', '-z', '-M', '--raw', '--full-index', 'HEAD'], { env: NO_LOCKS }),
-    git.run(['status', '--porcelain=v2', '-z', '--untracked-files=no', '--no-renames'], { env: NO_LOCKS }),
+    listing,
+    staging,
     git.run(['ls-files', '--others', '--exclude-standard', '-z'], { env: NO_LOCKS }),
     submoduleStatus(git),
   ]);
+  const rawFiles = rawList(raw.out);
+  // Without .gitmodules, what's going on in a submodule is what status says of it.
+  const links = subStatus || !first.asked ? [] : rawFiles.map((r) => r.paths.at(-1)!).filter((p, k) => isLink(rawFiles[k]) && !first.asked!.has(p));
+  const status = links.length ? await trackedStatus(git, [...first.asked!, ...links]) : first;
   // A folder listed with its slash is a git repository of its own, nested here.
   const nested = new Set<string>();
   const untrackedPaths = new Set(
@@ -277,9 +319,10 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
       .filter(Boolean)
       .map((p) => (p.endsWith('/') ? (nested.add(p.slice(0, -1)), p.slice(0, -1)) : p)),
   );
-  const rawFiles = rawList(raw.out);
   const { d, patches } = await headToFiles(git, key, rawFiles, [...untrackedPaths], last?.patches);
   d.files = d.files.filter((f) => f.hunks.length || f.binary || f.oldMode !== f.newMode || f.status !== 'M');
+  // Paths whose file differs from HEAD's, and so (when nothing of it is staged) from the index's.
+  const differs = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [f.path] : [f.path, f.oldPath])));
   const states = submoduleStates(subStatus ?? status.out);
   // A submodule with only untracked files inside: no diff lists it.
   for (const [path, { state, head }] of states) {
@@ -296,18 +339,13 @@ export async function workDiff(git: Git, key: string): Promise<{ diff: CommitDif
     f.hunks = k.hunks;
     known.set(f.token!, k);
   }
-  const records = rawRecords(cached.out);
-  const staged = new Map<string, Staged>();
-  for (const [path, [, mode, , sha, status, from]] of records) {
-    staged.set(path, { mode, sha, gone: status === 'D' });
-    // A staged rename's old path is a staged deletion.
-    if (status[0] === 'R') staged.set(from, { mode: '000000', sha: '0'.repeat(sha.length), gone: true });
-  }
+  const staged = stagedFiles(records);
   // What differs from the index by content, not just by stat (a touched file), without taking the index's lock.
-  const unstaged = unstagedPaths(status.out);
+  const dirty = unstagedPaths(status.out);
+  const unstaged = { has: (p: string) => (!status.asked || status.asked.has(p) ? dirty.has(p) : differs.has(p)) };
   // Only files that were merely touched are refreshed, the one time: the lock would fail a git the user runs meanwhile.
   // diff-index names a file whose stat differs from its index entry's with no SHA on the working-tree side (as diff-files
-  // would list it): one whose content doesn't differ (status says) was merely touched. Read so, without another look at every file.
+  // would list it): one whose content doesn't differ was merely touched. Read so, without another look at every file.
   if (rawFiles.some((r) => touched(r) && !unstaged.has(r.paths.at(-1)!))) await git.run(['update-index', '-q', '--refresh'], { allowFail: true });
   const shown = new Set(d.files.map((f) => f.path));
   const renamed = new Set(d.files.flatMap((f) => (f.oldPath === undefined ? [] : [f.oldPath])));
