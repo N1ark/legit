@@ -8,7 +8,7 @@
   // in another worktree switches to that worktree.
   // In upstream mode, it lists the remote branches a local one can track, and names not on a remote yet.
   import {
-    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, VirtualList, formatRelative, isMac, menu, rank, toast, tooltip, type MaybeEntry,
+    Button, ConfirmButton, Highlight, IconButton, Kbd, Popover, VirtualList, formatRelative, fuzzyMatch, isMac, matchScore, menu, rank, toast, tooltip, type MaybeEntry,
   } from 'purr';
   import { ArrowCounterClockwiseRegular, ArrowLeftRegular, ArrowsLeftRightRegular, CaretDownRegular, CaretRightRegular, CheckBold, CheckSquareFill, CloudArrowDownRegular, CloudArrowUpRegular, CopyRegular, CopySimpleRegular, FolderPlusRegular, FolderSimpleRegular, GitBranchRegular, GitMergeRegular, GitPullRequestRegular, LinkBreakRegular, PencilSimpleRegular, PlusBold, PlusRegular, SquareRegular, StackRegular, TrashRegular, XRegular } from 'purr/glyphs';
   import { untrack } from 'svelte';
@@ -21,6 +21,7 @@
   } from './lib/branches.svelte.ts';
   import { integrateEntries } from './lib/integrate.ts';
   import { pick } from './lib/picker.ts';
+  import { type Hit, ListRanker, type Scorer } from './lib/ranking.ts';
   import { tip } from './lib/tip.ts';
   import { aheadBehind, trackTip } from './lib/track.ts';
   import { newWorktree, openWorktree } from './lib/worktrees.svelte.ts';
@@ -76,11 +77,23 @@
     const on = remoteNames.find((r) => typed.startsWith(`${r}/`));
     const name = on ? typed.slice(on.length + 1) : typed || (tracker ?? '');
     if (!name || /\s/.test(name)) return [];
-    const there = new Set(remote.map((b) => `${b.remote}/${b.name}`));
     return (on ? [on] : [...remoteNames].sort())
       .filter((r) => !there.has(`${r}/${name}`))
       .map((r): Row => ({ kind: 'publish', remote: r, name }));
   }
+
+  // Each list ranked as it's typed in, with thousands of branches (see lib/ranking.ts); the same order as purr's `rank`.
+  const scorer: Scorer = { score: matchScore, indices: (q, t) => fuzzyMatch(q, t)?.indices ?? [] };
+  const remoteName = (b: RemoteBranchInfo) => `${b.remote}/${b.name}`;
+  const there = $derived(new Set(remote.map(remoteName)));
+  const allLocal = $derived(new ListRanker(local ?? [], (b) => b.name, scorer));
+  const otherLocal = $derived(new ListRanker((local ?? []).filter((b) => !b.current), (b) => b.name, scorer));
+  const remotes = $derived(new ListRanker(remote, remoteName, scorer));
+  const gone = $derived(new ListRanker(deleted, (b) => b.name, scorer));
+  // A row's matched letters are worked out once it shows (most of thousands never do).
+  const localRows = (hits: Hit<BranchInfo>[]) => hits.map((h): Row => ({ kind: 'local', b: h.item, get indices() { return h.indices; } }));
+  const remoteRows = (hits: Hit<RemoteBranchInfo>[]) => hits.map((h): Row => ({ kind: 'remote', b: h.item, get indices() { return h.indices; } }));
+  const deletedRows = (hits: Hit<DeletedBranch>[]) => hits.map((h): Row => ({ kind: 'deleted', b: h.item, get indices() { return h.indices; } }));
 
   const rowName = (r: Row) => (r.kind === 'local' ? r.b.name : r.kind === 'remote' ? `${r.b.remote}/${r.b.name}` : null);
 
@@ -88,24 +101,21 @@
     if (!local) return [];
     const typed = filter.trim();
     if (mode === 'upstream') {
-      const out = rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] }).map(({ item, indices }): Row => ({ kind: 'remote', b: item, indices }));
+      const out = remoteRows(remotes.rank(filter));
       if (!typed) out.sort((a, b) => Number(current(b)) - Number(current(a)));
       return [...out, ...publishRows(typed)];
     }
-    const shown = mode === 'switch' ? local : local.filter((b) => !b.current);
-    const out: Row[] = rank(shown, filter, { keys: [(b) => b.name] }).map(({ item, indices }) => ({ kind: 'local', b: item, indices }));
+    const out: Row[] = localRows((mode === 'switch' ? allLocal : otherLocal).rank(filter));
     if (mode === 'copy' || mode === 'commits') return out;
     if (mode !== 'switch') {
-      for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) out.push({ kind: 'remote', b: item, indices });
+      out.push(...remoteRows(remotes.rank(filter)));
       const base = mode === 'rebuild' && !typed ? out.findIndex((r) => rowName(r) === app.repo?.base?.name) : -1;
       return base > 0 ? [out[base], ...out.slice(0, base), ...out.slice(base + 1)] : out;
     }
     if (typed && !names.has(typed) && !/\s/.test(typed)) out.push({ kind: 'create', name: typed });
-    for (const { item, indices } of rank(remote, filter, { keys: [(b) => `${b.remote}/${b.name}`] })) {
-      out.push({ kind: 'remote', b: item, indices });
-    }
-    const gone = rank(deleted, filter, { keys: [(b) => b.name] });
-    for (const { item, indices } of typed ? gone : gone.slice(0, DELETED_SHOWN)) out.push({ kind: 'deleted', b: item, indices });
+    out.push(...remoteRows(remotes.rank(filter)));
+    const hits = gone.rank(filter);
+    out.push(...deletedRows(typed ? hits : hits.slice(0, DELETED_SHOWN)));
     return out;
   });
   /** The default branch is listed first (and so picked by ↵) when rebuilding. */

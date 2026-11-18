@@ -4,7 +4,7 @@
 import { toast } from 'purr';
 import { app } from './app.svelte.ts';
 import { checks } from './gh-checks.svelte.ts';
-import { gh, ghPost, ghRequest } from './github.svelte.ts';
+import { gh, ghPost, ghRequest, sameData } from './github.svelte.ts';
 import type { GhNotification, GhNotifications } from '../../shared/gh-notifications.ts';
 
 /** The branch a CI notification is about: GitHub titles them "CI workflow run failed for main branch". */
@@ -36,7 +36,8 @@ class Notifications {
     try {
       const r = await ghRequest<GhNotifications>('notifs', { fresh: fresh ? 1 : null });
       if (gen !== this.gen) return;
-      this.items = r.items;
+      // Polled while focused: the same list again keeps the one shown, which then doesn't redraw.
+      if (!sameData(this.items, r.items)) this.items = r.items;
       this.poll = Math.max(r.poll, 30);
       this.error = null;
     } catch (e) {
