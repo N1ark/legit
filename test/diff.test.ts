@@ -98,6 +98,12 @@ test("parsing: a type change's two patches, binary files, quoted paths, missing 
   const patch = `:100644 100644 ${z} ${z} M\0a\0:100644 100644 ${z} ${z} M\0b\0\0diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-x\n+y\n`;
   const [a, b] = parseDiff(patch, 'x').files;
   assert.deepEqual([a.hunks, b.hunks[0].lines.map((l) => l.t + l.s)], [[], ['-x', '+y']]);
+  // Even when the next one's header is quoted (a path with a quote, a tab, or not ASCII).
+  for (const [path, header] of [['b"q', '"a/b\\"q" "b/b\\"q"'], ['\xc3\xa9\tx', '"a/\\303\\251\\tx" "b/\\303\\251\\tx"']]) {
+    const quoted = `:100644 100644 ${z} ${z} M\0a\0:100644 100644 ${z} ${z} M\0${path}\0\0diff --git ${header}\n--- x\n+++ y\n@@ -1 +1 @@\n-x\n+y\n`;
+    const [qa, qb] = parseDiff(quoted, 'x').files;
+    assert.deepEqual([qa.path, qa.hunks, qb.path, qb.hunks[0]?.lines.map((l) => l.t + l.s)], ['a', [], path, ['-x', '+y']], path);
+  }
 });
 
 test("a file's token is the same whether its patch comes last or not", () => {
