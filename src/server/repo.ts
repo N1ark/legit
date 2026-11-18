@@ -18,7 +18,7 @@ import { Git, GitError, type Merger, type RawCommit, formatIdent, fromUtf8, pars
 import { pickGithubRepo } from './github.ts';
 import { issueRepo } from './gh/context.ts';
 import { knownPr } from './gh/pulls.ts';
-import { buildMessage, parseMessage } from './message.ts';
+import { BAD_IDENT, buildMessage, parseMessage } from './message.ts';
 import { runWithProgress } from './progress.ts';
 import { pruneRefs } from './retention.ts';
 import { STASH_NOTE, fetchFrom, networkEnv, syncState } from './sync.ts';
@@ -767,7 +767,7 @@ export class Repo {
       const name = String(req.author?.name ?? '').trim();
       const email = String(req.author?.email ?? '').trim();
       // Written into the commit's author line as they are: these would make it malformed (or another header).
-      if (/[<>\0\r\n]/.test(name + email)) throw new GitError(`The author is "Name <email>": neither can have <, > or a line break. Nothing was changed.`);
+      if (BAD_IDENT.test(name + email)) throw new GitError(`The author is "Name <email>": neither can have <, > or a line break. Nothing was changed.`);
       const orig = parseIdent(chain[k].author);
       const items: Item[] = chain.slice(0, k + 1).map((src) => ({ src }));
       items[k].message = fromUtf8(buildMessage(req.subject, req.body, req.coauthors));
@@ -1253,10 +1253,12 @@ export class Repo {
         throw new GitError(`${pathU} changed since it was shown; nothing was changed. Look again and reselect.`);
       }
       const n = f.added + f.removed;
-      if (sel === 'all' || n === 0 || sel.length >= n || (f.submodule && sel.length)) whole.push(f);
-      else if (sel.length) {
+      // Each line once, and only lines the file has: a repeat can't make a part look like all of it.
+      const picked = sel === 'all' ? null : new Set((Array.isArray(sel) ? sel : []).filter((i) => Number.isInteger(i) && i >= 0 && i < n));
+      if (!picked || n === 0 || picked.size >= n || (f.submodule && picked.size)) whole.push(f);
+      else if (picked.size) {
         if (!f.partial) throw new GitError(`${pathU} can only be staged as a whole file.`);
-        partial.push({ f, picked: new Set(sel) });
+        partial.push({ f, picked });
       }
     }
     return { whole, partial };
