@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.29.0 — 2026-11-18
 
 - The branch list shows each local branch's pull request whichever branch is checked out: on a fork, while on `main` (which tracks `upstream`), branches pushed to the fork showed none, as only pull requests from `upstream` were taken for theirs.
 - A message being typed (a commit's, a squash's, the uncommitted changes' commit form) is kept when another commit is shown and back, not only across repositories; so are an unsent pull request comment or review, and a new pull request's title and description when its dialog is closed.
