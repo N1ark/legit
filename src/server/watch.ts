@@ -105,7 +105,9 @@ export function watchTree(
       const next: string[] = [];
       await Promise.all(
         level.map(async (rel) => {
-          if (stopped || skipped.has(rel)) return;
+          if (stopped) return;
+          // Ignored now (a .gitignore changed): no longer watched, nor anything under it.
+          if (skipped.has(rel)) return remove(rel);
           const fresh = !folders.has(rel);
           if (fresh && !watchFolder(rel)) return;
           if (!fresh && !again) return;
