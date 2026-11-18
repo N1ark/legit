@@ -638,6 +638,14 @@ test('old safety refs are pruned, recent and unrelated ones are kept', async () 
   ]);
 });
 
+test('dropping nothing is refused, changing nothing', async () => {
+  commit('one', { f: '1\n' });
+  const head = commit('two', { f: '2\n' });
+  const repo = await Repo.open(dir);
+  await assert.rejects(repo.drop({ shas: [] }), /Select the commits to drop/);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
 test("pruning is housekeeping: another git holding a lock doesn't stop opening the repo or an operation", async () => {
   commit('one', { f: '1\n' });
   const old = `refs/legit/backups/main/${Date.now() - 20 * 24 * 60 * 60 * 1000}-edit`;

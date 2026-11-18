@@ -1066,6 +1066,7 @@ export class Repo {
   drop(req: DropRequest): Promise<OpResult> {
     return this.exclusive(async () => {
       const chain = await this.chain();
+      if (!Array.isArray(req.shas) || !req.shas.length) throw new GitError('Select the commits to drop first.');
       const idx = req.shas.map((s) => Repo.indexOf(chain, s));
       const k = Math.max(...idx);
       const kept = chain.slice(0, k + 1).filter((_, i) => !idx.includes(i));
