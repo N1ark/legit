@@ -21,23 +21,28 @@ const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 /** A file changed more recently than this could change again without its stat showing it (timestamps are coarse). */
 const SETTLED_MS = 2000;
 
-/** Files with staged changes, unstaged changes, and untracked files. */
-export async function workCounts(git: Git): Promise<{ staged: number; unstaged: number; untracked: number }> {
+/**
+ * Files with staged changes, unstaged changes, and untracked files; and whether any is conflicted
+ * (unmerged in the index), null when status couldn't say.
+ */
+export async function workCounts(git: Git): Promise<{ counts: { staged: number; unstaged: number; untracked: number }; unmerged: boolean | null }> {
   const r = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=normal'], {
     env: NO_LOCKS,
     allowFail: true,
   });
   const counts = { staged: 0, unstaged: 0, untracked: 0 };
-  if (r.code !== 0) return counts;
+  if (r.code !== 0) return { counts, unmerged: null };
+  let unmerged = false;
   for (const entry of r.out.toString('latin1').split('\0')) {
     if (entry.startsWith('? ')) counts.untracked++;
     else if (entry.startsWith('1 ') || entry.startsWith('2 ') || entry.startsWith('u ')) {
+      if (entry[0] === 'u') unmerged = true;
       const xy = entry.slice(2, 4);
       if (xy[0] !== '.') counts.staged++;
       if (xy[1] !== '.') counts.unstaged++;
     }
   }
-  return counts;
+  return { counts, unmerged };
 }
 
 /** An index entry that differs from HEAD's: `diff-index --cached --raw`. */

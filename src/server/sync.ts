@@ -47,8 +47,9 @@ export async function done(repo: Repo, message: string, focus: string[] = [], re
 // ---- state ----
 
 /** The fetch time and any merge/rebase/cherry-pick/revert in progress, for RepoState. */
-export async function syncState(repo: Repo): Promise<Pick<RepoState, 'fetchedAt' | 'conflict'>> {
-  const [fetchedAt, conflict] = await Promise.all([lastFetch(repo.git), conflictState(repo.git)]);
+/** `unmerged`: whether any file is conflicted, if already known (null: it isn't). */
+export async function syncState(repo: Repo, unmerged?: Promise<boolean | null>): Promise<Pick<RepoState, 'fetchedAt' | 'conflict'>> {
+  const [fetchedAt, conflict] = await Promise.all([lastFetch(repo.git), conflictState(repo.git, unmerged)]);
   return { fetchedAt, conflict };
 }
 
@@ -183,7 +184,9 @@ async function inspect(git: Git, path: string): Promise<Pick<ConflictFile, 'exis
   }
 }
 
-async function conflictState(git: Git): Promise<Conflict | null> {
+async function conflictState(git: Git, conflicted?: Promise<boolean | null>): Promise<Conflict | null> {
+  // Nothing in progress and no file conflicted: there's no conflict, without asking git again.
+  if (!inProgress(git) && conflicted && (await conflicted) === false) return null;
   const { stages: unmerged, links } = await unmergedEntries(git);
   const kind = inProgress(git) ?? (unmerged.size ? 'stash' : null);
   if (!kind) return null;

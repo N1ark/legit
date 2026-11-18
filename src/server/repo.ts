@@ -213,11 +213,13 @@ export class Repo {
   async state(): Promise<RepoState> {
     const { branch, head } = await this.git.headState();
     const stacks = this.stacksFor(branch);
-    const [view, remotes, work, sync, stashed, list] = await Promise.all([
+    // Status says whether any file is conflicted, so with nothing in progress, the conflict needn't be looked for again.
+    const counting = workCounts(this.git);
+    const [view, remotes, { counts: work }, sync, stashed, list] = await Promise.all([
       this.refView(branch),
       this.git.remotes(),
-      workCounts(this.git),
-      syncState(this),
+      counting,
+      syncState(this, counting.then((c) => c.unmerged)),
       stashFor(this.git, branch),
       head ? this.git.firstParent(head, LIMIT) : [],
     ]);
