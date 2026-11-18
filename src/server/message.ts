@@ -1,6 +1,7 @@
 // Commit message <-> (subject, body, co-authors).
 
 import type { Person } from '../shared/types.ts';
+import { GitError } from './git.ts';
 
 const COAUTHOR = /^co-authored-by:\s*(.*?)\s*<([^>]*)>\s*$/i;
 const TRAILER = /^[A-Za-z0-9-]+:\s/;
@@ -18,11 +19,16 @@ export function parseMessage(msg: string): { subject: string; body: string; coau
   return { subject, body: rest.join('\n').replace(LEADING_BLANK, '').trimEnd(), coauthors };
 }
 
+/** `Name <email>` as a trailer has it: neither part can hold <, > or a line break. */
+export const BAD_IDENT = /[<>\0\r\n]/;
+
 export function buildMessage(subject: string, body: string, coauthors: Person[]): string {
   let msg = subject.trim();
   body = body.replace(LEADING_BLANK, '').trimEnd();
   if (body) msg += '\n\n' + body;
-  const people = coauthors.filter((c) => c.name.trim() || c.email.trim());
+  const people = (coauthors ?? []).filter((c) => String(c?.name ?? '').trim() || String(c?.email ?? '').trim());
+  const bad = people.find((c) => BAD_IDENT.test(String(c.name ?? '') + String(c.email ?? '')));
+  if (bad) throw new GitError(`The co-author "${String(bad.name).trim()}" is "Name <email>": neither can have <, > or a line break. Nothing was changed.`);
   if (people.length) {
     const trailers = people.map((c) => `Co-authored-by: ${c.name.trim()} <${c.email.trim()}>`).join('\n');
     // Join an existing trailer block (e.g. Signed-off-by) so git still parses them as trailers.
