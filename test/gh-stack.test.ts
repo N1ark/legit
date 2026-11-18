@@ -170,4 +170,13 @@ test("the branch list's pull requests: every branch shown, however many, and a n
   const remote = await get('prRemoteBranches', names.map((b) => `origin/${b}`));
   assert.equal(Object.keys(remote).length, 70);
   assert.equal(remote['origin/many/69'].number, 1069);
+
+  // A branch pushed to a fork (as on a fork, where main tracks upstream): its pull request is the
+  // fork owner's, whichever branch is checked out.
+  git('remote', 'add', 'mine', 'git@github.com:me/widgets.git');
+  git('branch', 'from-fork', 'main');
+  git('config', 'branch.from-fork.pushremote', 'mine');
+  pull(3000, 'from-fork', { headRepositoryOwner: { login: 'me' } });
+  pull(3001, 'from-fork', { headRepositoryOwner: { login: 'acme' }, state: 'CLOSED' });
+  assert.equal((await get('prBranches', ['from-fork']))['from-fork']?.number, 3000);
 });

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The branch list shows each local branch's pull request whichever branch is checked out: on a fork, while on `main` (which tracks `upstream`), branches pushed to the fork showed none, as only pull requests from `upstream` were taken for theirs.
 - A message being typed (a commit's, a squash's, the uncommitted changes' commit form) is kept when another commit is shown and back, not only across repositories; so are an unsent pull request comment or review, and a new pull request's title and description when its dialog is closed.
 - GitHub's background refreshes (each focus, each change, the poll) no longer redraw open diffs, their review threads and pull request conversations when nothing changed; the squash view no longer lays its threads out again as older history loads.
 - Uncommitted changes in a big working tree list two to three times faster (about 50 ms instead of 120 with 50,000 files), with fewer git runs on every refresh.

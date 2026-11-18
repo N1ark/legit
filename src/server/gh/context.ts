@@ -30,7 +30,24 @@ async function ghConfig(repo: Repo): Promise<Map<string, string>> {
 /** The repos for `branch` (default: the current one), or null when nothing is on GitHub. */
 export async function ghRepos(repo: Repo, branch?: string | null): Promise<GhRepos | null> {
   const [config, current] = await Promise.all([ghConfig(repo), branch === undefined || branch === null ? repo.currentBranch() : branch]);
-  branch = current;
+  return reposFor(config, current);
+}
+
+/**
+ * The repos for each of `branches` (local branches), from one read of the config: each pushes to
+ * its own remote, so whose pull requests are its own depends on the branch, not on the one checked out.
+ */
+export async function ghReposOf(repo: Repo, branches: string[]): Promise<Map<string, GhRepos>> {
+  const config = await ghConfig(repo);
+  const out = new Map<string, GhRepos>();
+  await Promise.all(branches.map(async (b) => {
+    const r = await reposFor(config, b);
+    if (r) out.set(b, r);
+  }));
+  return out;
+}
+
+async function reposFor(config: Map<string, string>, branch: string | null): Promise<GhRepos | null> {
   const remotes = new Map([...config].flatMap(([k, v]) => (k.startsWith('remote.') && k.endsWith('.url') ? [[k.slice(7, -4), v] as const] : [])));
   const pushRemote = branch
     ? config.get(`branch.${branch}.pushremote`) || config.get('remote.pushdefault') || config.get(`branch.${branch}.remote`) || ''

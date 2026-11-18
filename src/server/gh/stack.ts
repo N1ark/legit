@@ -5,7 +5,7 @@
 import { freshest } from '../base.ts';
 import { githubRepo } from '../github.ts';
 import { GithubError, cached, graphql, prune, rest } from './client.ts';
-import { ghRepos, needGhRepos, type GhRepos } from './context.ts';
+import { ghRepos, ghReposOf, needGhRepos, type GhRepos } from './context.ts';
 import { PR_FIELDS, forgetPrs, headCache, pickPr, toPullRequest } from './pulls.ts';
 import { byHead, missingBase, stackAround } from './stacks.ts';
 import type { CreatePrRequest, PrCreateInfo, PrStack, RestackPlan, StackEntry } from '../../shared/gh-stack.ts';
@@ -182,10 +182,18 @@ async function branchPrs(repo: Repo, names: string[], fresh: boolean): Promise<R
   const c = await context(repo, r);
   const wanted = new Set(names);
   const locals = c.locals.filter((l) => wanted.has(l.name));
-  const heads = [...new Set(locals.map((l) => l.head))];
+  // Each branch's own push remote says whose pull requests are its: on a fork, `main` tracks
+  // `upstream` while the other branches push to the fork, so the current branch's owner won't do.
+  const own = await ghReposOf(repo, locals.map((l) => l.name));
+  const target = (l: Local) => {
+    const b = own.get(l.name);
+    return { head: b?.head ?? l.head, owner: b?.headOwner ?? r.headOwner };
+  };
+  const heads = [...new Set(locals.map((l) => target(l).head))];
   const nodes = new Map((await headNodes(r, heads, fresh)).map((n, i) => [heads[i], n]));
   return Object.fromEntries(locals.flatMap((l) => {
-    const pr = pickPr(nodes.get(l.head) ?? [], r.headOwner);
+    const t = target(l);
+    const pr = pickPr(nodes.get(t.head) ?? [], t.owner);
     return pr ? [[l.name, pr]] : [];
   }));
 }
