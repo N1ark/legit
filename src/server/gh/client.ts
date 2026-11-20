@@ -309,19 +309,35 @@ export async function restSince<T = any>(path: string, since: string | null): Pr
   return { data: (await res.json()) as T, modified: res.headers.get('last-modified'), poll: Number(res.headers.get('x-poll-interval')) || 60 };
 }
 
-/** A GraphQL query or mutation; it must be named (`query Name(…)`), which is how the mock finds it. */
-export function graphql<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  if (!/^\s*query\b/.test(query)) return graphqlCall(query, variables);
-  return once(`${query}\0${JSON.stringify(variables)}`, () => graphqlCall<T>(query, variables));
+/** Errors a query expects, dropped rather than failing it: GitHub answers null there (see `graphql`'s `missing`). */
+type Missing = (path: readonly (string | number)[]) => boolean;
+
+/**
+ * A GraphQL query or mutation; it must be named (`query Name(…)`), which is how the mock finds it.
+ * `missing`: the fields (by path) a NOT_FOUND error may come back for, which then just read null
+ * (a `file(path:)` that isn't there is an error, not a null).
+ */
+export function graphql<T = any>(query: string, variables: Record<string, unknown> = {}, missing?: Missing): Promise<T> {
+  if (!/^\s*query\b/.test(query)) return graphqlCall(query, variables, missing);
+  return once(`${query}\0${JSON.stringify(variables)}`, () => graphqlCall<T>(query, variables, missing));
 }
 
-async function graphqlCall<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+type GraphqlError = { message: string; type?: string; path?: (string | number)[] };
+
+/** A GraphQL answer's errors, less those of fields `missing` allows to be absent. */
+export function unexpected(res: { data?: unknown; errors?: GraphqlError[] }, missing?: Missing): GraphqlError[] {
+  const absent = (e: GraphqlError) => (e.type === 'NOT_FOUND' || /could not resolve/i.test(e.message)) && !!e.path && !!missing?.(e.path);
+  return (res.errors ?? []).filter((e) => !(res.data && absent(e)));
+}
+
+async function graphqlCall<T>(query: string, variables: Record<string, unknown>, missing?: Missing): Promise<T> {
   if (MOCK) return mockGraphql(query, variables) as T;
-  const res = await rest<{ data?: T; errors?: { message: string; type?: string }[] }>('POST', '/graphql', { query, variables }, { safe: /^\s*query\b/.test(query) });
-  if (res.errors?.length) {
-    const msg = res.errors.map((e) => e.message).join('; ');
+  const res = await rest<{ data?: T; errors?: GraphqlError[] }>('POST', '/graphql', { query, variables }, { safe: /^\s*query\b/.test(query) });
+  const errors = unexpected(res, missing);
+  if (errors.length) {
+    const msg = errors.map((e) => e.message).join('; ');
     log(`GitHub GraphQL ${queryName(query)}: ${msg}`);
-    throw new GithubError(`GitHub: ${msg}`, 200, res.errors.some((e) => e.type === 'RATE_LIMITED') ? 'github-limit' : undefined);
+    throw new GithubError(`GitHub: ${msg}`, 200, errors.some((e) => e.type === 'RATE_LIMITED') ? 'github-limit' : undefined);
   }
   return res.data as T;
 }

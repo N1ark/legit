@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Amending no longer gives the last commit another commit's message: with **Amend last commit** on, moving commits (or an undo, a pull) that put another one on top left the old one's message in the form, and amending renamed the new one to it. The form now follows the new last commit, or, if you'd edited the message, turns amending off and says so.
+- A pull request's files load again in repositories without a CODEOWNERS in each of GitHub's three places (most of them), instead of failing with *Could not resolve file for path 'CODEOWNERS'*.
+
 ## 0.29.0 — 2026-11-18
 
 - The branch list shows each local branch's pull request whichever branch is checked out: on a fork, while on `main` (which tracks `upstream`), branches pushed to the fork showed none, as only pull requests from `upstream` were taken for theirs.

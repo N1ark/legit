@@ -25,6 +25,9 @@ const FILES_QUERY = `query PrFiles($owner: String!, $name: String!, $number: Int
   }
 }`;
 
+/** A CODEOWNERS place without one is a NOT_FOUND error (most repositories have none in two of them, if not all three). */
+export const noCodeowners = (path: readonly (string | number)[]) => path.includes('baseRef') && path.some((p) => typeof p === 'string' && /^o\d$/.test(p));
+
 /** GitHub allows 3000 files in a pull request's diff. */
 const PAGES = 30;
 
@@ -78,7 +81,7 @@ async function load(repo: Repo, number: number, fresh = false): Promise<Loaded> 
     let prId = '';
     let after: string | null = null;
     for (let page = 0; page < PAGES; page++) {
-      const d: any = await graphql(FILES_QUERY, { owner: r.owner, name: r.name, number, after, first: page === 0 });
+      const d: any = await graphql(FILES_QUERY, { owner: r.owner, name: r.name, number, after, first: page === 0 }, noCodeowners);
       const pr = d.repository?.pullRequest;
       if (!pr) throw new GithubError(`Pull request #${number} isn't on GitHub.`, 404);
       if (page === 0) {

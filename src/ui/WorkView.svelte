@@ -6,7 +6,7 @@
   import { ArrowDownRegular, ArrowUpRegular, CheckBold, TrashRegular } from 'purr/glyphs';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
+  import type { CommitInfo, DiffSummary, FileSummary, OpResult, Selection, WorkState } from '../shared/types.ts';
   import Coauthors from './Coauthors.svelte';
   import DiffView from './DiffView.svelte';
   import { type DiffPosition, app, request, shortSha } from './lib/app.svelte.ts';
@@ -138,7 +138,12 @@
   }
 
   // Commit form, as it was left if the window has shown this repo before.
-  type Kept = { subject: string; own: boolean; body: string; coauthors: string[]; amend: boolean; typed: typeof typed };
+  type Amended = { sha: string; subject: string; body: string; coauthors: string[] };
+  type Kept = {
+    subject: string; own: boolean; body: string; coauthors: string[]; amend: boolean; typed: typeof typed;
+    /** The last commit the message being amended was taken from (missing when kept by an older version). */
+    amendOf?: Amended | null;
+  };
   const back = app.restore<Kept>('work');
   let subject = $state(back?.subject ?? '');
   // The title starts as a default naming what's staged, until typed over (or set by amending).
@@ -150,32 +155,56 @@
   const people = $derived(parsePeople(coauthors));
   const head = $derived(app.commits.find((c) => c.sha === app.repo?.head) ?? null);
   let amend = $state(back?.amend ?? false);
+  let amendOf: Amended | null = back?.amend ? (back.amendOf ?? null) : null;
   const canCommit = $derived(
     title.trim() !== '' && people !== null && !app.repo?.blocked && (amend ? !!head : stagedFiles > 0),
   );
 
   // Amending starts from the last commit's message; turning it off brings back what was typed.
   let typed: { subject: string; own: boolean; body: string; coauthors: string[] } | null = back?.typed ?? null;
-  $effect(() => app.keep('work', (): Kept => ({ subject, own, body, coauthors, amend, typed })));
+  const kept = (): Kept => ({ subject, own, body, coauthors, amend, typed, amendOf });
+  $effect(() => app.keep('work', kept));
   // Looking at a commit and coming back finds the message as it was left.
   onDestroy(() => {
-    if (subject || body || coauthors.some((c) => c.trim()) || amend) app.park('work', { subject, own, body, coauthors, amend, typed } satisfies Kept);
+    if (subject || body || coauthors.some((c) => c.trim()) || amend) app.park('work', kept());
   });
-  function toggleAmend() {
-    if (!head) return;
-    amend = !amend;
-    if (amend) {
-      typed = { subject, own, body, coauthors: [...coauthors] };
-      subject = head.subject;
-      own = true;
-      body = head.body;
-      coauthors = head.coauthors.map(formatPerson);
-    } else if (typed) {
+  function amendFrom(h: CommitInfo) {
+    amendOf = { sha: h.sha, subject: h.subject, body: h.body, coauthors: h.coauthors.map(formatPerson) };
+    ({ subject, body } = amendOf);
+    coauthors = [...amendOf.coauthors];
+    own = true;
+  }
+  function stopAmend() {
+    amend = false;
+    amendOf = null;
+    if (typed) {
       ({ subject, own, body } = typed);
       coauthors = typed.coauthors;
       typed = null;
     }
   }
+  function toggleAmend() {
+    if (!head) return;
+    if (amend) return stopAmend();
+    amend = true;
+    typed = { subject, own, body, coauthors: [...coauthors] };
+    amendFrom(head);
+  }
+
+  let committing = false;
+  // The last commit changed under the form (commits moved, an undo, a pull): the message shown is another commit's.
+  // Left as it was, it's that one's, so it follows; edited, amending is turned off rather than rename the new one.
+  $effect(() => {
+    const h = head;
+    untrack(() => {
+      if (!amend || !h || committing || amendOf?.sha === h.sha) return;
+      const untouched =
+        amendOf && subject === amendOf.subject && body === amendOf.body && coauthors.join('\n') === amendOf.coauthors.join('\n');
+      if (untouched) return amendFrom(h);
+      stopAmend();
+      toast(`The last commit is now "${h.subject}": amending was turned off, so its message isn't replaced.`, { timeout: 10_000 });
+    });
+  });
 
   // A message handed over by the app (the commit that was just undone).
   $effect(() => {
@@ -187,6 +216,7 @@
       body = d.body;
       coauthors = d.coauthors.map(formatPerson);
       amend = false;
+      amendOf = null;
       typed = null;
       app.workDraft = null;
     });
@@ -195,15 +225,20 @@
   async function commit() {
     if (!canCommit || app.busy) return;
     await queue;
-    if (await app.op('commit', { subject: title, body, coauthors: people, amend })) {
+    committing = true;
+    try {
+      if (!(await app.op('commit', { subject: title, body, coauthors: people, amend }))) return;
       subject = '';
       own = false;
       body = '';
       coauthors = [];
       amend = false;
+      amendOf = null;
       typed = null;
       // Stay here while there's more to commit; otherwise show the new commit.
       if (!app.hasWork && app.repo?.head) app.select(app.repo.head);
+    } finally {
+      committing = false;
     }
   }
 
