@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.29.1 — 2026-11-20
 
 - Amending no longer gives the last commit another commit's message: with **Amend last commit** on, moving commits (or an undo, a pull) that put another one on top left the old one's message in the form, and amending renamed the new one to it. The form now follows the new last commit, or, if you'd edited the message, turns amending off and says so.
 - A pull request's files load again in repositories without a CODEOWNERS in each of GitHub's three places (most of them), instead of failing with *Could not resolve file for path 'CODEOWNERS'*.
