@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.29.2 — 2026-11-23
 
 - Operations finish sooner, with fewer git runs one after another: commits, amends and every rewrite no longer wait for old backups to be pruned (that's done once things are quiet), and the state they come back with asks git for its parts as soon as each can be asked, not once a slow `git status` is in. Removing a worktree no longer runs `git submodule foreach` when it has no submodules, and checks for changes to save meanwhile.
 
