@@ -328,6 +328,24 @@ export class Git {
     }
   }
 
+  /** What `ref` pointed at, newest first, as `git reflog show --format=%H` lists it, read from its file; null when only git can say. */
+  async reflogShas(ref: string): Promise<string[] | null> {
+    if (this.reftable || !fileRef(ref)) return null;
+    let text: string;
+    try {
+      text = await readFile(join(this.commonDir, 'logs', ref), 'latin1');
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' || code === 'ENOTDIR' ? [] : null;
+    }
+    const shas: string[] = [];
+    for (const line of text.split('\n')) {
+      const sha = line.split(' ', 2)[1];
+      if (sha && HEX.test(sha) && !/^0+$/.test(sha)) shas.push(sha);
+    }
+    return shas.reverse();
+  }
+
   /** Where a symbolic ref such as `refs/remotes/origin/HEAD` points (null if it isn't one); undefined when only git can say. */
   async readSymref(ref: string): Promise<string | null | undefined> {
     if (this.reftable || !fileRef(ref)) return undefined;

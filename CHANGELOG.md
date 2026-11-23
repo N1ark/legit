@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Operations finish sooner, with fewer git runs one after another: commits, amends and every rewrite no longer wait for old backups to be pruned (that's done once things are quiet), and the state they come back with asks git for its parts as soon as each can be asked, not once a slow `git status` is in. Removing a worktree no longer runs `git submodule foreach` when it has no submodules, and checks for changes to save meanwhile.
+
 ## 0.29.1 — 2026-11-20
 
 - Amending no longer gives the last commit another commit's message: with **Amend last commit** on, moving commits (or an undo, a pull) that put another one on top left the old one's message in the form, and amending renamed the new one to it. The form now follows the new last commit, or, if you'd edited the message, turns amending off and says so.

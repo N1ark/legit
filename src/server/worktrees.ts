@@ -13,7 +13,6 @@ import type { OpResult, WorktreeInfo, WorktreeRequest } from '../shared/types.ts
 import { DELETED } from './branches.ts';
 import { GitError, fromUtf8, run } from './git.ts';
 import type { Repo } from './repo.ts';
-import { pruneRefs } from './retention.ts';
 import { networkEnv } from './sync.ts';
 
 const real = (p: string) => {
@@ -121,7 +120,8 @@ export function addWorktree(repo: Repo, req: WorktreeRequest): Promise<OpResult 
 
 /** What removing a worktree would lose for good: its submodules' uncommitted changes and commits on no remote. */
 async function wouldLose(w: WorktreeInfo): Promise<string | null> {
-  if (w.missing) return null;
+  // Without a .gitmodules, foreach finds nothing (it can't name a submodule), and it's the slowest of the checks.
+  if (w.missing || !existsSync(join(w.path, '.gitmodules'))) return null;
   const subs = await run(
     w.path,
     ['submodule', 'foreach', '--quiet', '--recursive', 'test -z "$(git status --porcelain)$(git rev-list -n1 HEAD --not --remotes --tags)" || echo "$displaypath"'],
@@ -138,10 +138,8 @@ async function wouldLose(w: WorktreeInfo): Promise<string | null> {
  * leaving its branch, so switching to it offers them back), or, when git won't stash them (in the
  * middle of a merge, say), committed on top of its HEAD under refs/legit/deleted. Returns what was done.
  */
-async function saveChanges(repo: Repo, w: WorktreeInfo): Promise<string | null> {
-  if (w.missing) return null;
-  const status = await run(w.path, ['status', '--porcelain', '-z', '--untracked-files=all', '--ignore-submodules=all']);
-  if (!status.out.length) return null;
+async function saveChanges(repo: Repo, w: WorktreeInfo, changed: Promise<boolean>): Promise<string | null> {
+  if (w.missing || !(await changed)) return null;
   const label = w.branch ? `legit: on ${w.branch}` : `legit: worktree ${w.name}`;
   const stashed = await run(w.path, ['stash', 'push', '--include-untracked', '-m', label], { allowFail: true });
   if (stashed.code === 0) return w.branch ? `Its changes are stashed on ${w.branch}.` : 'Its changes are in the stash list.';
@@ -185,6 +183,11 @@ export function removeWorktree(
     // Where the window goes when it's this one: the main worktree, or (a bare repository's) another.
     const home = all.find((x) => x.main) ?? all.find((x) => x !== w && !x.missing);
     if (w.current && !home) throw new GitError(`Couldn't remove ${w.name}. It's the only worktree of this bare repository, so there'd be nothing left to show. Nothing was changed.`);
+    // Whether it has changes to save, asked meanwhile.
+    const changed = w.missing
+      ? Promise.resolve(false)
+      : run(w.path, ['status', '--porcelain', '-z', '--untracked-files=all', '--ignore-submodules=all']).then((r) => r.out.length > 0);
+    changed.catch(() => {});
     const lose = req.force ? null : await wouldLose(w);
     if (lose) throw new GitError(`${lose} Remove it anyway?`, 'worktree-loses');
 
@@ -199,7 +202,7 @@ export function removeWorktree(
         notes.push('Its commits are under Recently deleted branches.');
       }
     }
-    const changes = await saveChanges(repo, w);
+    const changes = await saveChanges(repo, w, changed);
     if (changes) notes.push(changes);
     const url = w.current && home && open ? await open(home.path) : undefined;
     // Twice forced: one with changes, submodules or a lock goes too. Run from elsewhere, as this one may be it.
@@ -211,7 +214,7 @@ export function removeWorktree(
     const note = notes.join(' ') || undefined;
     // This worktree's folder is gone: nothing more runs in it.
     if (w.current) return { moved: home!.path, url, note };
-    await pruneRefs(repo.git);
+    repo.pruneLater();
     return { ...(await done(repo)), note };
   });
 }

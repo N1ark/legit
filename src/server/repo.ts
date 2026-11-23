@@ -220,26 +220,23 @@ export class Repo {
     const stacks = this.stacksFor(branch);
     // Status says whether any file is conflicted, so with nothing in progress, the conflict needn't be looked for again.
     const counting = workCounts(this.git);
-    const [view, remotes, { counts: work }, sync, stashed, list] = await Promise.all([
-      this.refView(branch),
-      this.git.remotes(),
+    // Each part starts as soon as what it needs is in, not once everything before it is (a big tree's status, say).
+    const refs = Promise.all([this.refView(branch), this.git.remotes()]);
+    const pushing = head && branch ? refs.then(([view, remotes]) => this.pushInfo(branch, view, remotes.names)) : Promise.resolve(null);
+    const basing = refs.then(([view, remotes]) => baseBranch(this.git, branch, head, { remote: remoteOf(view, remotes.names), refs: view.remotes }));
+    const [[, remotes], { counts: work }, sync, stashed, push, canUndo, canRedo, base, upstreamMain, unpushed, commits, github] = await Promise.all([
+      refs,
       counting,
       syncState(this, counting.then((c) => c.unmerged)),
       stashFor(this.git, branch),
-      head ? this.git.firstParent(head, LIMIT) : [],
-    ]);
-    const pushing = head && branch ? this.pushInfo(branch, view, remotes.names) : Promise.resolve(null);
-    const remote = remoteOf(view, remotes.names);
-    const basing = baseBranch(this.git, branch, head, { remote, refs: view.remotes });
-    const [push, canUndo, canRedo, base, upstreamMain, unpushed, commits, github] = await Promise.all([
       pushing,
       this.applies(stacks.undo.at(-1), 'after', head),
       this.applies(stacks.redo.at(-1), 'before', head),
       basing,
-      branch ? basing.then((b) => upstreamBase(this.git, head, b, remote, view.remotes)) : null,
-      head ? this.unpushed(head, LIMIT, view) : [],
-      this.git.loadCommits(list),
-      pushing.then((p) => issueRepo(remotes.urls, p?.remote)),
+      branch ? Promise.all([refs, basing]).then(([[view, remotes], b]) => upstreamBase(this.git, head, b, remoteOf(view, remotes.names), view.remotes)) : null,
+      head ? refs.then(([view]) => this.unpushed(head, LIMIT, view)) : [],
+      head ? this.git.firstParent(head, LIMIT).then((list) => this.git.loadCommits(list)) : [],
+      Promise.all([refs, pushing]).then(([[, r], p]) => issueRepo(r.urls, p?.remote)),
     ]);
     const state: RepoState = {
       root: this.git.root,
@@ -716,7 +713,24 @@ export class Repo {
     const time = Math.max(Date.now(), this.lastBackup + 1);
     this.lastBackup = time;
     await this.git.run(['update-ref', '-m', `legit: backup before ${label}`, `${prefix}${time}-${label}`, sha, '']);
-    await pruneRefs(this.git);
+    this.pruneLater();
+  }
+
+  private pruning: NodeJS.Timeout | undefined;
+
+  /** Prune old safety refs (see retention.ts) once things are quiet, rather than in the way of an operation. */
+  pruneLater() {
+    clearTimeout(this.pruning);
+    this.pruning = setTimeout(() => this.pruneNow().catch(() => {}), 3000);
+    this.pruning.unref();
+  }
+
+  /** Run the prune `pruneLater` is waiting to do, if any, now. */
+  async pruneNow() {
+    if (!this.pruning) return;
+    clearTimeout(this.pruning);
+    this.pruning = undefined;
+    await this.exclusive(() => pruneRefs(this.git), { follow: false });
   }
 
   async backups(): Promise<Backup[]> {
@@ -1444,10 +1458,13 @@ export class Repo {
     const { sha, upstream, remote, remoteRef } = view;
     const tip = !upstream ? null : upstream.startsWith('refs/remotes/') ? (view.remotes.get(upstream) ?? null) : await this.git.resolve(upstream);
     if (sha && upstream && remote && remoteRef && tip) {
+      // Asked alongside the counts, which say whether it's needed, rather than after them.
+      const had = this.hadTip(branch, tip);
+      had.catch(() => {});
       const [ahead, behind] = await this.git.memo(`ahead-behind ${sha} ${tip}`, async () =>
         (await this.git.text(['rev-list', '--left-right', '--count', `${sha}...${tip}`])).split(/\s+/).map(Number),
       );
-      const rewritten = ahead > 0 && behind > 0 && (await this.hadTip(branch, tip));
+      const rewritten = ahead > 0 && behind > 0 && (await had);
       return { remote, branch: remoteRef.replace(/^refs\/heads\//, ''), publish: false, ahead, behind, rewritten, tip };
     }
     // An upstream that isn't on the remote (yet, or any more) is where publishing goes.
@@ -1473,8 +1490,8 @@ export class Repo {
   private async hadTip(branch: string, tip: string): Promise<boolean> {
     const ref = `refs/heads/${branch}`;
     const read = async () => {
-      const log = await this.git.text(['reflog', 'show', '--format=%H', ref, '--'], { allowFail: true });
-      const shas = [...new Set(log.split('\n').filter(Boolean))].slice(0, 1000);
+      const listed = (await this.git.reflogShas(ref)) ?? (await this.git.text(['reflog', 'show', '--format=%H', ref, '--'], { allowFail: true })).split('\n');
+      const shas = [...new Set(listed.filter(Boolean))].slice(0, 1000);
       if (!shas.length) return false;
       const r = await this.git.run(['rev-list', '-1', '--stdin'], {
         input: `${tip}\n${shas.map((s) => `^${s}`).join('\n')}\n`,

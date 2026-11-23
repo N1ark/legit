@@ -717,6 +717,9 @@ test("pruning is housekeeping: another git holding a lock doesn't stop opening t
   rmSync(join(dir, '.git/packed-refs.lock'));
   await repo.undo();
   assert.equal(git('log', '-1', '--format=%s'), 'two');
+  // Pruned once things are quiet, after the operation.
+  assert.notEqual(git('for-each-ref', '--format=%(refname)', old), '');
+  await repo.pruneNow();
   assert.equal(git('for-each-ref', '--format=%(refname)', old), '');
 });
 

@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import type { BranchInfo, CreateBranchRequest, DeleteBranchesResult, DeletedBranch, OpResult, RemoteBranchInfo } from '../shared/types.ts';
 import { type Git, GitError } from './git.ts';
 import type { Repo } from './repo.ts';
-import { pruneRefs } from './retention.ts';
 import { baseBranch } from './base.ts';
 import { pushTracked, reapply } from './carry.ts';
 import { restoreStash, stashPush, unstash } from './stash.ts';
@@ -148,7 +147,7 @@ export function deleteBranch(repo: Repo, req: { branch: string }): Promise<OpRes
       await leave(repo, req.branch, new Set([req.branch]));
     }
     await deleteOne(repo, req.branch, await repo.currentBranch());
-    await pruneRefs(repo.git);
+    repo.pruneLater();
   });
 }
 
@@ -243,7 +242,7 @@ export async function deleteBranches(repo: Repo, req: { branches: string[] }): P
     if (here && names.includes(here) && (await localExists(repo, here))) await leave(repo, here, new Set(names));
     const current = await repo.currentBranch();
     result = await each(req.branches, async (name) => (await deleteOne(repo, name, current), name), 'branches');
-    await pruneRefs(repo.git);
+    repo.pruneLater();
   });
   return { ...done, ...result };
 }
@@ -267,7 +266,7 @@ async function parseRemoteRef(repo: Repo, ref: string) {
 export function deleteRemoteBranch(repo: Repo, req: { ref: string }): Promise<OpResult> {
   return guarded(repo, async () => {
     await deleteRemoteOne(repo, req.ref);
-    await pruneRefs(repo.git);
+    repo.pruneLater();
   });
 }
 
@@ -276,7 +275,7 @@ export async function deleteRemoteBranches(repo: Repo, req: { refs: string[] }):
   let result: Pick<DeleteBranchesResult, 'deleted' | 'skipped'> = { deleted: [], skipped: [] };
   const done = await guarded(repo, async () => {
     result = await each(req.refs, (ref) => deleteRemoteOne(repo, ref), 'remote branches', (ref) => ref.replace(/^refs\/remotes\//, ''));
-    await pruneRefs(repo.git);
+    repo.pruneLater();
   });
   return { ...done, ...result };
 }
